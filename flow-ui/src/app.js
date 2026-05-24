@@ -163,6 +163,12 @@ async function setupListeners() {
   await listen("file-sent", function (e) { addClip("sent", "File sent: " + e.payload); });
   await listen("file-complete", function (e) { addClip("received", "Transfer done: " + e.payload); });
 
+  await listen("direction-changed", function (e) {
+    currentDirection = e.payload;
+    updateDirectionUI();
+    addClip("received", "Peer set direction — yours auto-set to: " + e.payload);
+  });
+
   await listen("scan-started", function (e) {
     document.getElementById("connect-hint").textContent = "Scanning " + e.payload + ".0/24...";
   });

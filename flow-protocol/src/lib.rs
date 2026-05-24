@@ -154,6 +154,10 @@ pub enum FlowMessage {
         peer_id: PeerId,
         monitors: Vec<MonitorInfo>,
     },
+    DirectionSet {
+        peer_id: PeerId,
+        direction: String,
+    },
     Goodbye(PeerId),
 }
 

@@ -108,7 +108,24 @@ async fn get_peers(state: tauri::State<'_, FlowState>) -> Result<Vec<PeerUi>, St
 async fn set_peer_direction(direction: String, state: tauri::State<'_, FlowState>) -> Result<String, String> {
     *state.peer_direction.write().await = direction.clone();
     info!("Peer direction set to: {direction}");
+
+    let msg = FlowMessage::DirectionSet {
+        peer_id: state.peer_info.id.clone(),
+        direction: direction.clone(),
+    };
+    state.mesh.broadcast(&msg).await.map_err(|e| format!("{e}"))?;
+
     Ok(direction)
+}
+
+fn invert_direction(dir: &str) -> &str {
+    match dir {
+        "right" => "left",
+        "left" => "right",
+        "above" => "below",
+        "below" => "above",
+        _ => "right",
+    }
 }
 
 #[tauri::command]
@@ -333,6 +350,7 @@ pub fn run() {
             let clipboard_remote = clipboard.clone();
             let transfers_msg = transfers.clone();
             let peers_msg = connected_peers.clone();
+            let peer_direction_msg = peer_direction.clone();
             let handle_msg = handle.clone();
             let my_id = peer_info.id.0.to_string();
             let mesh_respond = mesh.clone();
@@ -391,6 +409,13 @@ pub fn run() {
                             if let Some(overlay) = handle_msg.get_webview_window("cursor-overlay") {
                                 let _ = overlay.hide();
                             }
+                        }
+                        FlowMessage::DirectionSet { peer_id: pid, direction } => {
+                            if pid.0.to_string() == my_id { continue; }
+                            let inv = invert_direction(&direction).to_string();
+                            info!("Peer set direction to {direction}, auto-setting ours to {inv}");
+                            *peer_direction_msg.write().await = inv.clone();
+                            let _ = handle_msg.emit("direction-changed", &inv);
                         }
                         FlowMessage::FileOffer { transfer_id, file_name, file_size, from_peer } => {
                             if from_peer.0.to_string() == my_id { continue; }
