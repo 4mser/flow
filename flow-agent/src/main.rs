@@ -1,8 +1,13 @@
 use clap::Parser;
+use flow_core::clipboard::ClipboardSync;
 use flow_core::discovery::{Discovery, DiscoveryEvent};
+use flow_core::mesh::MeshNode;
 use flow_core::monitor::detect_monitors;
-use flow_protocol::{CursorColor, OsType, PeerId, PeerInfo};
-use tracing::{info, error};
+use flow_protocol::{
+    ClipboardContentType, CursorColor, FlowMessage, OsType, PeerId, PeerInfo,
+};
+use std::sync::Arc;
+use tracing::{error, info};
 
 #[derive(Parser)]
 #[command(name = "flow", about = "FLOW — Multiplayer Operating System")]
@@ -36,19 +41,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let color = CursorColor::pick(cli.color);
 
     let monitors = detect_monitors();
-    info!(
-        "FLOW agent starting as '{}' with {} monitor(s)",
-        peer_name,
-        monitors.len()
-    );
+
+    println!();
+    println!("  ╔═══════════════════════════════════════╗");
+    println!("  ║        FLOW — Multiplayer OS          ║");
+    println!("  ╚═══════════════════════════════════════╝");
+    println!();
+    println!("  Name:    {peer_name}");
+    println!("  OS:      {:?}", OsType::current());
+    println!("  Color:   rgb({}, {}, {})", color.r, color.g, color.b);
+    println!("  Peer ID: {}", &peer_id.0.to_string()[..8]);
+    println!();
+
     for m in &monitors {
-        info!(
-            "  {} — {}x{} @ ({}, {}) scale={}",
+        println!(
+            "  Monitor: {} — {}x{} @ ({}, {}) scale={:.1}",
             m.name, m.width, m.height, m.position.x, m.position.y, m.scale_factor
         );
     }
+    println!();
 
-    let _peer_info = PeerInfo {
+    let peer_info = PeerInfo {
         id: peer_id.clone(),
         name: peer_name.clone(),
         color,
@@ -56,40 +69,116 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         os: OsType::current(),
     };
 
+    let mesh = Arc::new(MeshNode::new());
+    let clipboard = Arc::new(ClipboardSync::new());
     let discovery = Discovery::new(&peer_name, &peer_id, color)?;
-    let mut events = discovery.subscribe();
+    let mut discovery_events = discovery.subscribe();
+    let mut mesh_messages = mesh.subscribe();
+    let mut clipboard_changes = clipboard.subscribe();
 
-    info!("Searching for peers on the network...");
+    // Listen for incoming TCP connections
+    let mesh_listen = mesh.clone();
+    tokio::spawn(async move {
+        if let Err(e) = mesh_listen.listen().await {
+            error!("Mesh listen error: {e}");
+        }
+    });
 
-    let discovery_handle = tokio::spawn(async move {
+    // Run mDNS discovery
+    tokio::spawn(async move {
         if let Err(e) = discovery.run().await {
             error!("Discovery error: {e}");
         }
     });
 
-    let events_handle = tokio::spawn(async move {
-        while let Ok(event) = events.recv().await {
+    // When a peer is discovered, connect to them via TCP
+    let mesh_connect = mesh.clone();
+    let my_peer_info = peer_info.clone();
+    tokio::spawn(async move {
+        while let Ok(event) = discovery_events.recv().await {
             match event {
-                DiscoveryEvent::PeerFound(peer) => {
-                    info!(
-                        ">>> Peer joined: {} ({}:{:?}) — color: rgb({},{},{})",
-                        peer.name,
-                        peer.id.0,
-                        peer.os,
-                        peer.color.r,
-                        peer.color.g,
-                        peer.color.b,
+                DiscoveryEvent::PeerFound { peer, addresses } => {
+                    println!(
+                        "  >>> Peer joined: {} ({:?}) at {:?}",
+                        peer.name, peer.os, addresses
                     );
+
+                    // Connect to peer's first IPv4 address
+                    for addr in &addresses {
+                        if addr.is_ipv4() {
+                            let ip = addr.to_string();
+                            if let Err(e) = mesh_connect.connect_to(&ip).await {
+                                info!("Could not connect to {ip}: {e}");
+                            } else {
+                                // Send our info
+                                let announce = FlowMessage::Announce(my_peer_info.clone());
+                                let _ = mesh_connect.broadcast(&announce).await;
+                                println!("  === Connected and syncing with {} ===", peer.name);
+                            }
+                            break;
+                        }
+                    }
                 }
                 DiscoveryEvent::PeerLost(id) => {
-                    info!("<<< Peer left: {id}");
+                    println!("  <<< Peer left: {id}");
                 }
             }
         }
     });
 
+    // Handle incoming mesh messages
+    let clipboard_for_remote = clipboard.clone();
+    let my_id = peer_id.0.to_string();
+    tokio::spawn(async move {
+        while let Ok(msg) = mesh_messages.recv().await {
+            match msg {
+                FlowMessage::Announce(peer) => {
+                    info!("Received announce from: {} ({:?})", peer.name, peer.os);
+                }
+                FlowMessage::ClipboardData { peer_id, data, .. } => {
+                    if peer_id.0.to_string() == my_id {
+                        continue;
+                    }
+                    if let Ok(text) = String::from_utf8(data) {
+                        println!("  [clipboard] Received from peer: {}...", &text[..text.len().min(60)]);
+                        clipboard_for_remote.apply_remote(text).await;
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+
+    // Monitor local clipboard and broadcast changes
+    let mesh_clipboard = mesh.clone();
+    let clipboard_id = PeerId(peer_id.0);
+    tokio::spawn(async move {
+        while let Ok(text) = clipboard_changes.recv().await {
+            println!("  [clipboard] Sending to peers: {}...", &text[..text.len().min(60)]);
+            let msg = FlowMessage::ClipboardData {
+                peer_id: clipboard_id.clone(),
+                content_type: ClipboardContentType::PlainText,
+                data: text.into_bytes(),
+            };
+            if let Err(e) = mesh_clipboard.broadcast(&msg).await {
+                error!("Failed to broadcast clipboard: {e}");
+            }
+        }
+    });
+
+    // Start watching clipboard
+    let clipboard_watcher = clipboard.clone();
+    tokio::spawn(async move {
+        clipboard_watcher.watch().await;
+    });
+
+    println!("  Searching for peers on the network...");
+    println!("  Clipboard sync is active.");
+    println!("  Press Ctrl+C to stop.");
+    println!();
+
     tokio::signal::ctrl_c().await?;
-    info!("Shutting down FLOW agent...");
+    println!("\n  FLOW agent stopped.");
 
     Ok(())
 }

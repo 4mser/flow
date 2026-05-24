@@ -1,6 +1,7 @@
 use flow_protocol::{CursorColor, OsType, PeerId, PeerInfo};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use tracing::{info, warn};
@@ -17,7 +18,7 @@ pub struct Discovery {
 
 #[derive(Debug, Clone)]
 pub enum DiscoveryEvent {
-    PeerFound(PeerInfo),
+    PeerFound { peer: PeerInfo, addresses: Vec<IpAddr> },
     PeerLost(String),
 }
 
@@ -63,10 +64,6 @@ impl Discovery {
         self.events_tx.subscribe()
     }
 
-    pub async fn peers(&self) -> Vec<PeerInfo> {
-        self.peers.read().await.values().cloned().collect()
-    }
-
     pub async fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
         let receiver = self.daemon.browse(SERVICE_TYPE)?;
         let peers = self.peers.clone();
@@ -103,17 +100,31 @@ impl Discovery {
                                 .unwrap_or(255),
                         };
 
+                        let addresses: Vec<IpAddr> = service
+                            .get_addresses()
+                            .iter()
+                            .copied()
+                            .collect();
+
                         let peer_info = PeerInfo {
                             id: PeerId(peer_id_str.parse().unwrap_or_else(|_| uuid::Uuid::new_v4())),
                             name: name.clone(),
                             color,
                             monitors: vec![],
-                            os: OsType::current(),
+                            os: serde_json::from_str(
+                                props.get_property_val_str("os").unwrap_or("\"Linux\""),
+                            ).unwrap_or(OsType::Linux),
                         };
 
-                        info!("Peer found: {name} ({peer_id_str})");
+                        info!(
+                            "Peer found: {name} ({peer_id_str}) at {:?} — {:?}",
+                            addresses, peer_info.os
+                        );
                         peers.write().await.insert(peer_id_str.to_string(), peer_info.clone());
-                        let _ = events_tx.send(DiscoveryEvent::PeerFound(peer_info));
+                        let _ = events_tx.send(DiscoveryEvent::PeerFound {
+                            peer: peer_info,
+                            addresses,
+                        });
                     }
                     ServiceEvent::ServiceRemoved(_, fullname) => {
                         info!("Peer left: {fullname}");
