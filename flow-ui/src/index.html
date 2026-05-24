@@ -19,19 +19,18 @@
     </header>
 
     <div class="body">
-      <!-- Top Row -->
       <div class="top-row">
         <section class="card card-info">
           <h3 class="card-title">This Machine</h3>
           <div class="info-grid">
             <span class="label">Name</span>
-            <span class="value" id="my-name">—</span>
+            <span class="value" id="my-name">-</span>
             <span class="label">OS</span>
-            <span class="value" id="my-os">—</span>
+            <span class="value" id="my-os">-</span>
             <span class="label">IP</span>
-            <span class="value ip-value" id="my-ip">—</span>
+            <span class="value ip-value" id="my-ip">-</span>
             <span class="label">Monitors</span>
-            <span class="value" id="my-monitors">—</span>
+            <span class="value" id="my-monitors">-</span>
           </div>
         </section>
 
@@ -55,23 +54,29 @@
         </section>
       </div>
 
-      <!-- Monitor Layout -->
-      <section class="card card-monitors">
-        <h3 class="card-title">
-          Monitor Layout
-          <button class="save-layout-btn" id="save-layout-btn" onclick="saveLayout()" style="display:none">Save Layout</button>
-        </h3>
-        <p class="layout-hint">Drag monitors to match your physical desk layout</p>
-        <div class="monitor-canvas" id="monitor-canvas">
-          <div class="empty-state">Detecting monitors...</div>
+      <!-- Peer Direction -->
+      <section class="card card-direction">
+        <h3 class="card-title">Peer Screen Position</h3>
+        <p class="direction-hint">Where is the other PC's screen relative to yours?</p>
+        <div class="direction-grid">
+          <div></div>
+          <button class="dir-btn" data-dir="above" onclick="setDirection('above')">Above</button>
+          <div></div>
+          <button class="dir-btn" data-dir="left" onclick="setDirection('left')">Left</button>
+          <button class="dir-btn dir-center" disabled>YOU</button>
+          <button class="dir-btn active" data-dir="right" onclick="setDirection('right')">Right</button>
+          <div></div>
+          <button class="dir-btn" data-dir="below" onclick="setDirection('below')">Below</button>
+          <div></div>
         </div>
+        <p class="direction-status" id="direction-status">Cursor will cross to peer from the right edge</p>
       </section>
 
-      <!-- Bottom Row: Send File + Clipboard -->
+      <!-- Bottom Row -->
       <div class="bottom-row">
         <section class="card card-file">
           <h3 class="card-title">Send File</h3>
-          <button class="send-file-btn" id="send-file-btn" onclick="pickAndSend()">
+          <button class="send-file-btn" id="send-file-btn" onclick="pickAndSend()" disabled>
             <span class="send-icon">+</span>
             Choose file to send
           </button>

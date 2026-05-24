@@ -272,6 +272,65 @@ body {
   padding: 12px 0;
 }
 
+/* ── Peer Direction ── */
+.card-direction {
+  flex-shrink: 0;
+}
+
+.direction-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  margin-top: -6px;
+}
+
+.direction-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px;
+  max-width: 260px;
+  margin: 0 auto;
+}
+
+.dir-btn {
+  padding: 8px 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dir-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.dir-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.dir-btn.dir-center {
+  background: var(--bg-card);
+  border-color: var(--border);
+  color: var(--text-dim);
+  cursor: default;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.direction-status {
+  font-size: 10px;
+  color: var(--accent);
+  text-align: center;
+  margin-top: 8px;
+}
+
 /* ── Monitor Canvas ── */
 .layout-hint {
   font-size: 10px;
