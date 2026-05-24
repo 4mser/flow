@@ -3,6 +3,7 @@ members = [
     "flow-core",
     "flow-protocol",
     "flow-agent",
+    "flow-ui/src-tauri",
 ]
 resolver = "2"
 

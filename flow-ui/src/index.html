@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FLOW</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo">FLOW</div>
+        <span class="badge" id="status-badge">starting...</span>
+      </div>
+      <div class="header-right">
+        <span class="peer-id" id="my-peer-id"></span>
+      </div>
+    </header>
+
+    <!-- Main Grid -->
+    <div class="main">
+      <!-- Left Panel: My Info + Peers -->
+      <aside class="sidebar">
+        <!-- My Machine -->
+        <section class="card">
+          <h3 class="card-title">This Machine</h3>
+          <div class="machine-info">
+            <div class="info-row">
+              <span class="label">Name</span>
+              <span class="value" id="my-name">—</span>
+            </div>
+            <div class="info-row">
+              <span class="label">OS</span>
+              <span class="value" id="my-os">—</span>
+            </div>
+            <div class="info-row">
+              <span class="label">Monitors</span>
+              <span class="value" id="my-monitors">—</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Connect -->
+        <section class="card">
+          <h3 class="card-title">Connect</h3>
+          <div class="connect-form">
+            <input type="text" id="peer-ip" placeholder="IP address (e.g. 192.168.1.50)" />
+            <button id="connect-btn" onclick="connectPeer()">Connect</button>
+          </div>
+          <p class="hint">Or wait for auto-discovery on LAN</p>
+        </section>
+
+        <!-- Connected Peers -->
+        <section class="card">
+          <h3 class="card-title">
+            Peers
+            <span class="peer-count" id="peer-count">0</span>
+          </h3>
+          <div id="peers-list" class="peers-list">
+            <div class="empty-state">No peers connected</div>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Center: Monitor Layout -->
+      <main class="content">
+        <section class="card monitor-card">
+          <h3 class="card-title">Monitor Layout</h3>
+          <div class="monitor-canvas" id="monitor-canvas"></div>
+        </section>
+
+        <!-- Clipboard Activity -->
+        <section class="card">
+          <h3 class="card-title">
+            Clipboard Activity
+            <span class="sync-dot" id="sync-dot"></span>
+          </h3>
+          <div id="clipboard-log" class="clipboard-log">
+            <div class="empty-state">Clipboard sync active — copy something to see it here</div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

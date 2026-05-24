@@ -1,0 +1,40 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicovrc/tauri-plugin-schema/v2/schemas/config.schema.json",
+  "productName": "FLOW",
+  "version": "0.1.0",
+  "identifier": "cl.fidelya.flow",
+  "build": {
+    "frontendDist": "../src",
+    "devUrl": "http://localhost:1420"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "FLOW",
+        "width": 900,
+        "height": 640,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "center": true,
+        "minWidth": 700,
+        "minHeight": 500
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

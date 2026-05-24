@@ -17,6 +17,10 @@ struct Cli {
 
     #[arg(short, long, default_value_t = 0)]
     color: usize,
+
+    /// Connect directly to a peer by IP (skip mDNS). Example: --peer 192.168.1.50
+    #[arg(short, long)]
+    peer: Option<String>,
 }
 
 #[tokio::main]
@@ -81,8 +85,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         if let Err(e) = mesh_listen.listen().await {
             error!("Mesh listen error: {e}");
+            std::process::exit(1);
         }
     });
+
+    // Direct connection if --peer flag is provided
+    if let Some(ref peer_ip) = cli.peer {
+        let mesh_direct = mesh.clone();
+        let ip = peer_ip.clone();
+        let pi = peer_info.clone();
+        tokio::spawn(async move {
+            println!("  Connecting directly to {ip}...");
+            match mesh_direct.connect_to(&ip).await {
+                Ok(_) => {
+                    let announce = FlowMessage::Announce(pi);
+                    let _ = mesh_direct.broadcast(&announce).await;
+                    println!("  === Connected to {ip} ===");
+                }
+                Err(e) => {
+                    error!("Failed to connect to {ip}: {e}");
+                    std::process::exit(1);
+                }
+            }
+        });
+    }
 
     // Run mDNS discovery
     tokio::spawn(async move {
@@ -103,14 +129,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         peer.name, peer.os, addresses
                     );
 
-                    // Connect to peer's first IPv4 address
                     for addr in &addresses {
                         if addr.is_ipv4() {
                             let ip = addr.to_string();
                             if let Err(e) = mesh_connect.connect_to(&ip).await {
                                 info!("Could not connect to {ip}: {e}");
                             } else {
-                                // Send our info
                                 let announce = FlowMessage::Announce(my_peer_info.clone());
                                 let _ = mesh_connect.broadcast(&announce).await;
                                 println!("  === Connected and syncing with {} ===", peer.name);
