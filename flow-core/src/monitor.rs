@@ -34,6 +34,7 @@ pub fn detect_monitors() -> Vec<MonitorInfo> {
 #[cfg(target_os = "windows")]
 pub fn detect_monitors() -> Vec<MonitorInfo> {
     use std::mem;
+    use windows::core::PCWSTR;
     use windows::Win32::Graphics::Gdi::{
         EnumDisplayDevicesW, EnumDisplaySettingsW, DEVMODEW, DISPLAY_DEVICEW,
         ENUM_CURRENT_SETTINGS,
@@ -61,7 +62,7 @@ pub fn detect_monitors() -> Vec<MonitorInfo> {
 
         let ok = unsafe {
             EnumDisplaySettingsW(
-                Some(&device.DeviceName as *const _),
+                PCWSTR(device.DeviceName.as_ptr()),
                 ENUM_CURRENT_SETTINGS,
                 &mut devmode,
             )
