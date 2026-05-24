@@ -417,6 +417,73 @@ body {
   50% { opacity: 0.3; }
 }
 
+/* ── Local IP ── */
+.local-ip {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.ip-value {
+  color: var(--accent);
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-weight: 700;
+}
+
+/* ── Bottom Row ── */
+.bottom-row {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 750px) {
+  .bottom-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Send File ── */
+.send-file-btn {
+  width: 100%;
+  padding: 14px;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.send-file-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.send-file-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.send-icon {
+  font-size: 18px;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.file-status {
+  font-size: 11px;
+  color: var(--green);
+  margin-top: 6px;
+  min-height: 16px;
+}
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar {
   width: 3px;

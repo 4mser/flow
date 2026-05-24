@@ -1,11 +1,15 @@
 use clap::Parser;
 use flow_core::clipboard::ClipboardSync;
+use flow_core::cursor::capture::MouseCapture;
+use flow_core::cursor::overlay::CursorOverlay;
+use flow_core::cursor::CursorManager;
 use flow_core::discovery::{Discovery, DiscoveryEvent};
 use flow_core::mesh::MeshNode;
 use flow_core::monitor::detect_monitors;
 use flow_core::transfer::FileTransferManager;
 use flow_protocol::{
-    ClipboardContentType, CursorColor, FlowMessage, OsType, PeerId, PeerInfo,
+    ClipboardContentType, CursorColor, CursorPosition, FlowMessage, OsType, PeerId, PeerInfo,
+    SpatialLayout,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -162,13 +166,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Cursor overlay (renders remote cursors on our screen)
+    let overlay = Arc::new(CursorOverlay::new());
+    overlay.start_render_loop();
+
+    // Cursor manager (spatial layout + edge detection)
+    let cursor_mgr = Arc::new(CursorManager::new(PeerId(peer_id.0)));
+    {
+        let mut layout = cursor_mgr.layout.write().await;
+        layout.add_peer_monitors(&peer_info);
+    }
+
+    // Mouse capture (polls cursor position at 60fps)
+    let mouse_capture = Arc::new(MouseCapture::new());
+    mouse_capture.start_polling();
+
     // Handle incoming messages
+    let overlay_ref = overlay.clone();
     let clipboard_remote = clipboard.clone();
     let transfers_recv = transfers.clone();
     let mesh_respond = mesh.clone();
     let my_info_for_announce = peer_info.clone();
     let my_id = peer_id.0.to_string();
     let announced = announced_to.clone();
+    let cursor_mgr_msg = cursor_mgr.clone();
     tokio::spawn(async move {
         while let Ok(msg) = mesh_messages.recv().await {
             match msg {
@@ -177,7 +198,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if pid == my_id {
                         continue;
                     }
-                    println!("  Connected: {} ({:?})", peer.name, peer.os);
+                    println!("  Connected: {} ({:?}) — {} monitors", peer.name, peer.os, peer.monitors.len());
+
+                    // Add peer monitors to spatial layout
+                    if !peer.monitors.is_empty() {
+                        let mut layout = cursor_mgr_msg.layout.write().await;
+                        layout.add_peer_monitors(&peer);
+                    }
 
                     // Respond with our announce if we haven't already
                     let mut set = announced.write().await;
@@ -215,6 +242,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 FlowMessage::FileComplete { file_name, .. } => {
                     println!("  [file] Transfer complete: {file_name}");
+                }
+                FlowMessage::CursorMove { peer_id: pid, name, color, position, visible, .. } => {
+                    if pid.0.to_string() == my_id {
+                        continue;
+                    }
+                    overlay_ref.update(position.x, position.y, color, &name, visible);
+                }
+                FlowMessage::CursorReturn { peer_id: pid } => {
+                    if pid.0.to_string() == my_id {
+                        continue;
+                    }
+                    overlay_ref.hide();
                 }
                 _ => {}
             }
@@ -267,6 +306,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Cursor edge detection → send position to peers
+    let mesh_cursor = mesh.clone();
+    let cursor_mgr_edge = cursor_mgr.clone();
+    let mut mouse_events = mouse_capture.subscribe();
+    let cursor_peer_name = peer_info.name.clone();
+    let cursor_peer_color = peer_info.color;
+    let cursor_peer_id = PeerId(peer_id.0);
+    let mouse_captured = mouse_capture.captured.clone();
+    tokio::spawn(async move {
+        let mut is_on_remote = false;
+        while let Ok(pos) = mouse_events.recv().await {
+            if let Some(event) = cursor_mgr_edge.check_edge(
+                pos.x, pos.y, pos.screen_width, pos.screen_height, pos.monitor_id
+            ).await {
+                match event {
+                    flow_core::cursor::CursorEvent::CrossedEdge { to_peer_id: _, to_monitor, position } => {
+                        if !is_on_remote {
+                            is_on_remote = true;
+                            println!("  [cursor] → Cursor crossed to remote monitor");
+                        }
+                        let msg = FlowMessage::CursorMove {
+                            peer_id: cursor_peer_id.clone(),
+                            name: cursor_peer_name.clone(),
+                            color: cursor_peer_color,
+                            monitor_id: to_monitor,
+                            position,
+                            visible: true,
+                        };
+                        let _ = mesh_cursor.broadcast(&msg).await;
+                    }
+                    _ => {}
+                }
+            } else if is_on_remote {
+                is_on_remote = false;
+                let msg = FlowMessage::CursorReturn {
+                    peer_id: cursor_peer_id.clone(),
+                };
+                let _ = mesh_cursor.broadcast(&msg).await;
+            }
+        }
+    });
+
+    println!("  Cursor sharing active.");
     println!("  Clipboard sync active. File transfer ready.");
     if cli.peer.is_none() {
         println!("  Searching for peers on the network...");

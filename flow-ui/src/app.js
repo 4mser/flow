@@ -19,118 +19,108 @@ async function init() {
 function renderStatus() {
   document.getElementById("my-name").textContent = status.name;
   document.getElementById("my-os").textContent = status.os;
-  document.getElementById("my-monitors").textContent = status.monitors.length + " display" + (status.monitors.length !== 1 ? "s" : "");
-  document.getElementById("my-peer-id").textContent = status.peer_id;
+  document.getElementById("my-ip").textContent = status.local_ip;
+  document.getElementById("local-ip").textContent = status.peer_id;
+  document.getElementById("my-monitors").textContent =
+    status.monitors.length + " display" + (status.monitors.length !== 1 ? "s" : "");
   renderPeers(status.peers);
 }
 
 function renderMonitors() {
-  const canvas = document.getElementById("monitor-canvas");
+  var canvas = document.getElementById("monitor-canvas");
   canvas.innerHTML = "";
 
-  const allMonitors = [];
-
-  status.monitors.forEach((m) => {
-    allMonitors.push({ ...m, owner: status.name, mine: true, color: status.color });
+  var all = [];
+  status.monitors.forEach(function (m) {
+    all.push({ name: m.name, width: m.width, height: m.height, x: m.x, y: m.y, owner: status.name, mine: true, color: status.color });
   });
-
-  status.peers.forEach((peer) => {
-    if (peer.monitors) {
-      peer.monitors.forEach((m) => {
-        allMonitors.push({ ...m, owner: peer.name, mine: false, color: peer.color });
+  status.peers.forEach(function (p) {
+    if (p.monitors) {
+      p.monitors.forEach(function (m) {
+        all.push({ name: m.name, width: m.width, height: m.height, x: m.x, y: m.y, owner: p.name, mine: false, color: p.color });
       });
     }
   });
 
-  if (allMonitors.length === 0) {
-    canvas.innerHTML = '<div class="empty-state">No monitors detected</div>';
+  if (all.length === 0) {
+    canvas.innerHTML = '<div class="empty-state">No monitors</div>';
     return;
   }
 
-  const minX = Math.min(...allMonitors.map((m) => m.x));
-  const minY = Math.min(...allMonitors.map((m) => m.y));
-  const maxX = Math.max(...allMonitors.map((m) => m.x + m.width));
-  const maxY = Math.max(...allMonitors.map((m) => m.y + m.height));
+  var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  all.forEach(function (m) {
+    if (m.x < minX) minX = m.x;
+    if (m.y < minY) minY = m.y;
+    if (m.x + m.width > maxX) maxX = m.x + m.width;
+    if (m.y + m.height > maxY) maxY = m.y + m.height;
+  });
 
-  const totalW = maxX - minX || 1;
-  const totalH = maxY - minY || 1;
-
-  const rect = canvas.getBoundingClientRect();
-  const pad = 20;
-  const availW = rect.width - pad * 2;
-  const availH = rect.height - pad * 2;
-
+  var totalW = maxX - minX || 1;
+  var totalH = maxY - minY || 1;
+  var rect = canvas.getBoundingClientRect();
+  var availW = rect.width - 40;
+  var availH = rect.height - 40;
   if (availW <= 0 || availH <= 0) return;
 
-  const scale = Math.min(availW / totalW, availH / totalH);
+  var scale = Math.min(availW / totalW, availH / totalH);
+  var renderedW = totalW * scale;
+  var renderedH = totalH * scale;
+  var offsetX = (rect.width - renderedW) / 2;
+  var offsetY = (rect.height - renderedH) / 2;
 
-  const renderedW = totalW * scale;
-  const renderedH = totalH * scale;
-  const offsetX = (rect.width - renderedW) / 2;
-  const offsetY = (rect.height - renderedH) / 2;
-
-  allMonitors.forEach((m) => {
-    const el = document.createElement("div");
+  all.forEach(function (m) {
+    var el = document.createElement("div");
     el.className = "monitor-block " + (m.mine ? "mine" : "peer");
-
-    const w = m.width * scale;
-    const h = m.height * scale;
-    const x = offsetX + (m.x - minX) * scale;
-    const y = offsetY + (m.y - minY) * scale;
-
+    var w = m.width * scale;
+    var h = m.height * scale;
     el.style.width = w + "px";
     el.style.height = h + "px";
-    el.style.left = x + "px";
-    el.style.top = y + "px";
+    el.style.left = (offsetX + (m.x - minX) * scale) + "px";
+    el.style.top = (offsetY + (m.y - minY) * scale) + "px";
+    if (!m.mine) el.style.borderColor = m.color;
 
-    if (!m.mine) {
-      el.style.borderColor = m.color;
-    }
-
-    const showRes = w > 80 && h > 50;
-
+    var showRes = w > 80 && h > 50;
     el.innerHTML =
       '<span class="monitor-label">' + esc(m.name) + '</span>' +
       (showRes ? '<span class="monitor-res">' + m.width + 'x' + m.height + '</span>' : '') +
       '<span class="monitor-owner">' + esc(m.owner) + '</span>';
-
     canvas.appendChild(el);
   });
 }
 
 function renderPeers(peers) {
-  const list = document.getElementById("peers-list");
-  const count = document.getElementById("peer-count");
+  var list = document.getElementById("peers-list");
+  var count = document.getElementById("peer-count");
   count.textContent = peers.length;
 
   if (peers.length === 0) {
     list.innerHTML = '<div class="empty-state">Waiting for peers...</div>';
+    document.getElementById("send-file-btn").disabled = true;
     return;
   }
 
-  list.innerHTML = peers
-    .map(function (p) {
-      return '<div class="peer-item">' +
-        '<div class="peer-dot" style="background:' + esc(p.color) + '"></div>' +
-        '<div class="peer-info">' +
-          '<div class="peer-name">' + esc(p.name) + '</div>' +
-          '<div class="peer-os">' + esc(p.os) + ' · ' + esc(p.peer_id) + '</div>' +
-        '</div>' +
-      '</div>';
-    })
-    .join("");
+  document.getElementById("send-file-btn").disabled = false;
+  list.innerHTML = peers.map(function (p) {
+    return '<div class="peer-item">' +
+      '<div class="peer-dot" style="background:' + esc(p.color) + '"></div>' +
+      '<div class="peer-info">' +
+        '<div class="peer-name">' + esc(p.name) + '</div>' +
+        '<div class="peer-os">' + esc(p.os) + ' · ' + esc(p.peer_id) + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join("");
 }
 
 function updateBadge(cls, text) {
-  const badge = document.getElementById("status-badge");
+  var badge = document.getElementById("status-badge");
   badge.className = "badge " + cls;
   badge.textContent = text;
 }
 
 async function connectPeer() {
-  const input = document.getElementById("peer-ip");
-  const btn = document.getElementById("connect-btn");
-  const ip = input.value.trim();
+  var input = document.getElementById("peer-ip");
+  var btn = document.getElementById("connect-btn");
+  var ip = input.value.trim();
   if (!ip) return;
 
   btn.disabled = true;
@@ -140,7 +130,7 @@ async function connectPeer() {
     await invoke("connect_peer", { ip: ip });
     input.value = "";
     addClip("sent", "Connected to " + ip);
-    const peers = await invoke("get_peers");
+    var peers = await invoke("get_peers");
     renderPeers(peers);
   } catch (e) {
     addClip("received", "Failed: " + e);
@@ -150,15 +140,33 @@ async function connectPeer() {
   }
 }
 
+async function pickAndSend() {
+  var btn = document.getElementById("send-file-btn");
+  var statusEl = document.getElementById("file-status");
+  btn.disabled = true;
+  statusEl.textContent = "Selecting file...";
+
+  try {
+    var name = await invoke("pick_and_send");
+    statusEl.textContent = "Sent: " + name;
+    addClip("sent", "File sent: " + name);
+    setTimeout(function () { statusEl.textContent = ""; }, 5000);
+  } catch (e) {
+    statusEl.textContent = e === "No file selected" ? "" : "Error: " + e;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function addClip(dir, text) {
-  const log = document.getElementById("clipboard-log");
-  const empty = log.querySelector(".empty-state");
+  var log = document.getElementById("clipboard-log");
+  var empty = log.querySelector(".empty-state");
   if (empty) empty.remove();
 
-  const now = new Date();
-  const t = pad2(now.getHours()) + ":" + pad2(now.getMinutes()) + ":" + pad2(now.getSeconds());
+  var now = new Date();
+  var t = pad2(now.getHours()) + ":" + pad2(now.getMinutes()) + ":" + pad2(now.getSeconds());
 
-  const entry = document.createElement("div");
+  var entry = document.createElement("div");
   entry.className = "clip-entry";
   entry.innerHTML =
     '<span class="clip-dir ' + dir + '">' + (dir === "sent" ? "SENT" : "RECV") + '</span>' +
@@ -166,47 +174,37 @@ function addClip(dir, text) {
     '<span class="clip-time">' + t + '</span>';
 
   log.insertBefore(entry, log.firstChild);
-
-  while (log.children.length > 30) {
-    log.removeChild(log.lastChild);
-  }
+  while (log.children.length > 30) log.removeChild(log.lastChild);
 }
 
-function pad2(n) {
-  return n < 10 ? "0" + n : "" + n;
-}
-
-function esc(s) {
-  var d = document.createElement("div");
-  d.textContent = s;
-  return d.innerHTML;
-}
+function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
 async function setupListeners() {
-  await listen("peer-joined", function (event) {
-    var peer = event.payload;
+  await listen("peer-joined", function (e) {
+    var peer = e.payload;
     addClip("received", peer.name + " joined (" + peer.os + ")");
     invoke("get_peers").then(renderPeers);
-    invoke("get_status").then(function (s) {
-      status = s;
-      renderMonitors();
-    });
+    invoke("get_status").then(function (s) { status = s; renderMonitors(); });
     updateBadge("online", peer.name + " connected");
     setTimeout(function () { updateBadge("online", "online"); }, 3000);
   });
 
-  await listen("peer-left", function (event) {
-    addClip("sent", "Peer left: " + event.payload);
+  await listen("peer-left", function (e) {
+    addClip("sent", "Peer left: " + e.payload);
     invoke("get_peers").then(renderPeers);
   });
 
-  await listen("clipboard-sent", function (event) {
-    addClip("sent", event.payload);
-  });
+  await listen("clipboard-sent", function (e) { addClip("sent", e.payload); });
+  await listen("clipboard-received", function (e) { addClip("received", e.payload); });
 
-  await listen("clipboard-received", function (event) {
-    addClip("received", event.payload);
+  await listen("file-incoming", function (e) { addClip("received", "Incoming: " + e.payload); });
+  await listen("file-received", function (e) {
+    addClip("received", "File saved: " + e.payload);
+    document.getElementById("file-status").textContent = "Received: " + e.payload;
   });
+  await listen("file-sent", function (e) { addClip("sent", "File sent: " + e.payload); });
+  await listen("file-complete", function (e) { addClip("received", "Transfer done: " + e.payload); });
 }
 
 document.getElementById("peer-ip").addEventListener("keydown", function (e) {

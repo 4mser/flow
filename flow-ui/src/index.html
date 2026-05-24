@@ -8,20 +8,18 @@
 </head>
 <body>
   <div id="app">
-    <!-- Header -->
     <header class="header">
       <div class="header-left">
         <div class="logo">FLOW</div>
         <span class="badge" id="status-badge">starting...</span>
       </div>
       <div class="header-right">
-        <span class="peer-id" id="my-peer-id"></span>
+        <span class="local-ip" id="local-ip"></span>
       </div>
     </header>
 
-    <!-- Body -->
     <div class="body">
-      <!-- Top Row: Info + Connect + Peers -->
+      <!-- Top Row -->
       <div class="top-row">
         <section class="card card-info">
           <h3 class="card-title">This Machine</h3>
@@ -30,6 +28,8 @@
             <span class="value" id="my-name">—</span>
             <span class="label">OS</span>
             <span class="value" id="my-os">—</span>
+            <span class="label">IP</span>
+            <span class="value ip-value" id="my-ip">—</span>
             <span class="label">Monitors</span>
             <span class="value" id="my-monitors">—</span>
           </div>
@@ -38,10 +38,10 @@
         <section class="card card-connect">
           <h3 class="card-title">Connect to Peer</h3>
           <div class="connect-form">
-            <input type="text" id="peer-ip" placeholder="192.168.1.50" />
+            <input type="text" id="peer-ip" placeholder="Peer's IP address" />
             <button id="connect-btn" onclick="connectPeer()">Connect</button>
           </div>
-          <p class="hint">Enter IP or wait for auto-discovery</p>
+          <p class="hint">Enter the IP shown on the other machine</p>
         </section>
 
         <section class="card card-peers">
@@ -63,16 +63,27 @@
         </div>
       </section>
 
-      <!-- Clipboard -->
-      <section class="card card-clipboard">
-        <h3 class="card-title">
-          Clipboard
-          <span class="sync-dot"></span>
-        </h3>
-        <div id="clipboard-log" class="clipboard-log">
-          <div class="empty-state">Copy something to see it here</div>
-        </div>
-      </section>
+      <!-- Bottom Row: Send File + Clipboard -->
+      <div class="bottom-row">
+        <section class="card card-file">
+          <h3 class="card-title">Send File</h3>
+          <button class="send-file-btn" id="send-file-btn" onclick="pickAndSend()">
+            <span class="send-icon">+</span>
+            Choose file to send
+          </button>
+          <div id="file-status" class="file-status"></div>
+        </section>
+
+        <section class="card card-clipboard">
+          <h3 class="card-title">
+            Clipboard
+            <span class="sync-dot"></span>
+          </h3>
+          <div id="clipboard-log" class="clipboard-log">
+            <div class="empty-state">Copy something to see it here</div>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
 

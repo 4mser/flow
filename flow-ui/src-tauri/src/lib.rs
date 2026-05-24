@@ -8,6 +8,7 @@ use flow_protocol::{
 };
 use serde::Serialize;
 use std::collections::HashSet;
+use std::net::UdpSocket;
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -47,6 +48,17 @@ struct StatusUi {
     peer_id: String,
     monitors: Vec<MonitorUi>,
     peers: Vec<PeerUi>,
+    local_ip: String,
+}
+
+fn get_local_ip() -> String {
+    UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| {
+            s.connect("8.8.8.8:80")?;
+            s.local_addr()
+        })
+        .map(|a| a.ip().to_string())
+        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 #[tauri::command]
@@ -72,6 +84,7 @@ async fn get_status(state: tauri::State<'_, FlowState>) -> Result<StatusUi, Stri
             })
             .collect(),
         peers,
+        local_ip: get_local_ip(),
     })
 }
 
@@ -104,12 +117,60 @@ async fn send_file(path: String, state: tauri::State<'_, FlowState>) -> Result<S
     if !p.exists() {
         return Err(format!("File not found: {path}"));
     }
+    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     state
         .transfers
         .send_file(p, &state.peer_info.id, &state.mesh)
         .await
         .map_err(|e| format!("Send failed: {e}"))?;
-    Ok(format!("Sent: {path}"))
+    Ok(name)
+}
+
+#[tauri::command]
+async fn pick_and_send(app: tauri::AppHandle, state: tauri::State<'_, FlowState>) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let path = app.dialog()
+        .file()
+        .blocking_pick_file()
+        .ok_or("No file selected".to_string())?;
+
+    let file_path = path.into_path().map_err(|e| format!("Invalid path: {e}"))?;
+    let name = file_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+
+    state
+        .transfers
+        .send_file(&file_path, &state.peer_info.id, &state.mesh)
+        .await
+        .map_err(|e| format!("Send failed: {e}"))?;
+
+    let _ = app.emit("file-sent", &name);
+    Ok(name)
+}
+
+#[tauri::command]
+async fn setup_firewall() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let rules = [
+            ("FLOW-TCP-IN", "in", "TCP", "19847"),
+            ("FLOW-TCP-OUT", "out", "TCP", "19847"),
+            ("FLOW-mDNS", "in", "UDP", "5353"),
+        ];
+        for (name, dir, proto, port) in &rules {
+            let _ = std::process::Command::new("netsh")
+                .args(["advfirewall", "firewall", "add", "rule",
+                    &format!("name={name}"), &format!("dir={dir}"),
+                    "action=allow", &format!("protocol={proto}"),
+                    &format!("localport={port}")])
+                .output();
+        }
+        Ok("Firewall rules configured".to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok("Not needed on this OS".to_string())
+    }
 }
 
 pub fn run() {
@@ -150,13 +211,28 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(state)
-        .invoke_handler(tauri::generate_handler![get_status, connect_peer, get_peers, send_file])
+        .invoke_handler(tauri::generate_handler![get_status, connect_peer, get_peers, send_file, pick_and_send, setup_firewall])
         .setup(move |app| {
             #[cfg(debug_assertions)]
             {
                 let window = app.get_webview_window("main").unwrap();
                 window.open_devtools();
+            }
+
+            // Auto-configure firewall on Windows
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("netsh")
+                    .args(["advfirewall", "firewall", "add", "rule", "name=FLOW-TCP-IN", "dir=in", "action=allow", "protocol=TCP", "localport=19847"])
+                    .output();
+                let _ = std::process::Command::new("netsh")
+                    .args(["advfirewall", "firewall", "add", "rule", "name=FLOW-TCP-OUT", "dir=out", "action=allow", "protocol=TCP", "localport=19847"])
+                    .output();
+                let _ = std::process::Command::new("netsh")
+                    .args(["advfirewall", "firewall", "add", "rule", "name=FLOW-mDNS", "dir=in", "action=allow", "protocol=UDP", "localport=5353"])
+                    .output();
             }
 
             let handle = app.handle().clone();

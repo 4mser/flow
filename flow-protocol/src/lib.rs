@@ -97,14 +97,20 @@ pub enum FlowMessage {
     Announce(PeerInfo),
     CursorMove {
         peer_id: PeerId,
+        name: String,
+        color: CursorColor,
         monitor_id: u32,
         position: CursorPosition,
+        visible: bool,
     },
     CursorHandoff {
         from_peer: PeerId,
         to_peer: PeerId,
         to_monitor: u32,
-        position: CursorPosition,
+        entry_position: CursorPosition,
+    },
+    CursorReturn {
+        peer_id: PeerId,
     },
     ClipboardOffer {
         peer_id: PeerId,
