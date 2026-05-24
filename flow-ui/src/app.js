@@ -296,6 +296,17 @@ async function setupListeners() {
   });
   await listen("file-sent", function (e) { addClip("sent", "File sent: " + e.payload); });
   await listen("file-complete", function (e) { addClip("received", "Transfer done: " + e.payload); });
+
+  await listen("scan-started", function (e) {
+    document.getElementById("connect-hint").textContent = "Scanning " + e.payload + ".0/24...";
+  });
+  await listen("scan-complete", function () {
+    document.getElementById("connect-hint").textContent = "Or enter IP manually";
+  });
+  await listen("peer-found-scan", function (e) {
+    addClip("received", "Found peer at " + e.payload);
+    document.getElementById("connect-hint").textContent = "Auto-connected to " + e.payload;
+  });
 }
 
 document.getElementById("peer-ip").addEventListener("keydown", function (e) {

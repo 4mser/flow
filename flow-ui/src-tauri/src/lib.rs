@@ -290,13 +290,7 @@ pub fn run() {
     }).collect();
     let all_monitors: Arc<RwLock<Vec<LayoutMonitor>>> = Arc::new(RwLock::new(initial_layout));
     let cursor_mgr = Arc::new(CursorManager::new(PeerId(peer_id.0)));
-    {
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            let mut layout = cursor_mgr.layout.write().await;
-            layout.add_peer_monitors(&peer_info);
-        });
-    }
+    // Layout will be initialized in setup() where async is available
 
     let state = FlowState {
         peer_info: peer_info.clone(),
@@ -333,6 +327,14 @@ pub fn run() {
                     .output();
             }
 
+            // Initialize cursor manager layout
+            let cursor_init = cursor_mgr.clone();
+            let pi_init = peer_info.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut layout = cursor_init.layout.write().await;
+                layout.add_peer_monitors(&pi_init);
+            });
+
             let handle = app.handle().clone();
 
             let discovery =
@@ -352,6 +354,66 @@ pub fn run() {
                 if let Err(e) = discovery.run().await {
                     error!("Discovery error: {e}");
                 }
+            });
+
+            // Auto-scan local network for FLOW peers
+            let mesh_scan = mesh.clone();
+            let pi_scan = peer_info.clone();
+            let handle_scan = handle.clone();
+            let peers_scan = connected_peers.clone();
+            tauri::async_runtime::spawn(async move {
+                // Wait a bit for the listener to be ready
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+                let local_ip = get_local_ip();
+                if local_ip == "unknown" { return; }
+
+                // Extract subnet (e.g. 192.168.1)
+                let parts: Vec<&str> = local_ip.split('.').collect();
+                if parts.len() != 4 { return; }
+                let subnet = format!("{}.{}.{}", parts[0], parts[1], parts[2]);
+                let my_last: u8 = parts[3].parse().unwrap_or(0);
+
+                info!("Scanning network {subnet}.0/24 for FLOW peers...");
+                let _ = handle_scan.emit("scan-started", &subnet);
+
+                let mesh_ref = mesh_scan.clone();
+                let mut handles = Vec::new();
+
+                for i in 1u8..=254 {
+                    if i == my_last { continue; }
+                    let ip = format!("{subnet}.{i}");
+                    let mesh_try = mesh_ref.clone();
+                    let h = tokio::spawn(async move {
+                        let addr = format!("{ip}:19847");
+                        match tokio::time::timeout(
+                            std::time::Duration::from_millis(300),
+                            tokio::net::TcpStream::connect(&addr),
+                        ).await {
+                            Ok(Ok(_stream)) => {
+                                drop(_stream);
+                                // Found a FLOW peer, connect properly
+                                Some(ip)
+                            }
+                            _ => None,
+                        }
+                    });
+                    handles.push(h);
+                }
+
+                for h in handles {
+                    if let Ok(Some(ip)) = h.await {
+                        info!("Found FLOW peer at {ip}");
+                        if mesh_scan.connect_to(&ip).await.is_ok() {
+                            let announce = FlowMessage::Announce(pi_scan.clone());
+                            let _ = mesh_scan.broadcast(&announce).await;
+                            let _ = handle_scan.emit("peer-found-scan", &ip);
+                        }
+                    }
+                }
+
+                let _ = handle_scan.emit("scan-complete", "");
+                info!("Network scan complete");
             });
 
             let mesh_connect = mesh.clone();
