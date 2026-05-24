@@ -56,11 +56,13 @@ impl MouseCapture {
     pub fn exit_capture(&self) {
         if !self.captured.swap(false, Ordering::SeqCst) { return; }
         info!("Mouse released — back to local mode");
-        #[cfg(target_os = "macos")]
-        {
-            let d = core_graphics::display::CGDisplay::main();
-            let _ = d.show_cursor();
-        }
+        force_show_cursor();
+    }
+
+    pub fn force_release(&self) {
+        self.captured.store(false, Ordering::SeqCst);
+        force_show_cursor();
+        info!("Mouse force-released");
     }
 
     pub fn is_captured(&self) -> bool {
@@ -100,13 +102,34 @@ impl MouseCapture {
             let sw = (total_w - min_x) as u32;
             let sh = (total_h - min_y) as u32;
 
-            let mut last_x: f64 = 0.0;
-            let mut last_y: f64 = 0.0;
-            let mut warp_center_x: f64 = total_w / 2.0;
+            let warp_center_x: f64 = total_w / 2.0;
             let warp_center_y: f64 = total_h / 2.0;
+            let mut capture_start = std::time::Instant::now();
 
             loop {
-                std::thread::sleep(std::time::Duration::from_millis(8)); // ~120fps for smooth deltas
+                std::thread::sleep(std::time::Duration::from_millis(8));
+
+                // SAFETY: Escape key = force release (key code 53 on macOS)
+                if captured.load(Ordering::Relaxed) {
+                    unsafe extern "C" {
+                        fn CGEventSourceKeyState(stateID: u32, key: u16) -> bool;
+                    }
+                    let esc_pressed = unsafe { CGEventSourceKeyState(1, 53) }; // 1 = CombinedSessionState, 53 = Escape
+                    if esc_pressed {
+                        captured.store(false, Ordering::SeqCst);
+                        force_show_cursor();
+                        info!("Escape pressed — mouse force-released");
+                        capture_start = std::time::Instant::now();
+                        continue;
+                    }
+                    // Safety timeout: auto-release after 30 seconds
+                    if capture_start.elapsed() > std::time::Duration::from_secs(30) {
+                        captured.store(false, Ordering::SeqCst);
+                        force_show_cursor();
+                        info!("Safety timeout — mouse auto-released");
+                        continue;
+                    }
+                }
 
                 let source = match CGEventSource::new(CGEventSourceStateID::CombinedSessionState) {
                     Ok(s) => s,
@@ -121,19 +144,17 @@ impl MouseCapture {
                 let y = loc.y;
 
                 if captured.load(Ordering::Relaxed) {
-                    // In capture mode: compute delta from center, warp back to center
                     let dx = x - warp_center_x;
                     let dy = y - warp_center_y;
 
                     if dx != 0.0 || dy != 0.0 {
                         let _ = delta_tx.send(MouseDelta { dx, dy });
-                        // Warp cursor back to center
                         let _ = CGDisplay::warp_mouse_cursor_position(
                             core_graphics::geometry::CGPoint::new(warp_center_x, warp_center_y)
                         );
                     }
                 } else {
-                    // Normal mode: report position
+                    capture_start = std::time::Instant::now();
                     let _ = pos_tx.send(MousePosition {
                         x: x - min_x,
                         y: y - min_y,
@@ -142,9 +163,6 @@ impl MouseCapture {
                         monitor_id: 0,
                     });
                 }
-
-                last_x = x;
-                last_y = y;
             }
         });
     }
@@ -202,6 +220,28 @@ impl MouseCapture {
         info!("Mouse capture not yet implemented on Linux");
     }
 }
+
+#[cfg(target_os = "macos")]
+pub fn force_show_cursor() {
+    let d = core_graphics::display::CGDisplay::main();
+    // Call show_cursor multiple times to counteract multiple hide_cursor calls
+    for _ in 0..5 {
+        let _ = d.show_cursor();
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn force_show_cursor() {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::ShowCursor;
+        for _ in 0..5 {
+            ShowCursor(true);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn force_show_cursor() {}
 
 #[cfg(target_os = "macos")]
 pub fn warp_cursor(x: f64, y: f64) {

@@ -9,7 +9,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 flow-core = { path = "../../flow-core" }
 flow-protocol = { path = "../../flow-protocol" }
-tauri = { version = "2", features = ["tray-icon", "devtools"] }
+tauri = { version = "2", features = ["tray-icon", "devtools", "macos-private-api"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["full"] }

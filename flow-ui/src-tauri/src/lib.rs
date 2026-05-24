@@ -549,6 +549,11 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running FLOW");
+        .build(tauri::generate_context!())
+        .expect("error while building FLOW")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                flow_core::cursor::capture::force_show_cursor();
+            }
+        });
 }
