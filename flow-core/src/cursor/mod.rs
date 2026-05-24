@@ -1,4 +1,5 @@
 pub mod capture;
+pub mod input;
 pub mod overlay;
 
 use flow_protocol::{CursorColor, CursorPosition, Edge, PeerId, SpatialLayout};

@@ -1,5 +1,6 @@
 use flow_core::clipboard::ClipboardSync;
 use flow_core::cursor::capture::MouseCapture;
+use flow_core::cursor::input;
 use flow_core::discovery::{Discovery, DiscoveryEvent};
 use flow_core::mesh::MeshNode;
 use flow_core::monitor::detect_monitors;
@@ -244,9 +245,9 @@ pub fn run() {
                     .output();
             }
 
-            // Set up overlay window
+            // Hide overlay window — we now inject input directly into the real cursor
             if let Some(overlay) = app.get_webview_window("cursor-overlay") {
-                let _ = overlay.set_ignore_cursor_events(true);
+                let _ = overlay.hide();
             }
 
             let handle = app.handle().clone();
@@ -387,28 +388,23 @@ pub fn run() {
                                 clipboard_remote.apply_remote(text).await;
                             }
                         }
-                        FlowMessage::CursorMove { peer_id: pid, name, color, position, visible, .. } => {
+                        FlowMessage::CursorMove { peer_id: pid, position, visible, .. } => {
                             if pid.0.to_string() == my_id { continue; }
-                            if let Some(overlay) = handle_msg.get_webview_window("cursor-overlay") {
-                                if visible {
-                                    let _ = overlay.set_position(tauri::Position::Physical(
-                                        tauri::PhysicalPosition::new(position.x as i32, position.y as i32)
-                                    ));
-                                    let _ = overlay.show();
-                                    let _ = overlay.emit("update-cursor-overlay", serde_json::json!({
-                                        "name": name,
-                                        "color": format!("rgb({},{},{})", color.r, color.g, color.b)
-                                    }));
-                                } else {
-                                    let _ = overlay.hide();
-                                }
+                            if visible {
+                                input::inject_mouse_move(position.x, position.y);
                             }
+                        }
+                        FlowMessage::MouseClick { peer_id: pid, button, pressed, position } => {
+                            if pid.0.to_string() == my_id { continue; }
+                            input::inject_mouse_click(button, pressed, position.x, position.y);
+                        }
+                        FlowMessage::KeyEvent { peer_id: pid, key_code, pressed, flags } => {
+                            if pid.0.to_string() == my_id { continue; }
+                            input::inject_key(key_code, pressed, flags);
                         }
                         FlowMessage::CursorReturn { peer_id: pid } => {
                             if pid.0.to_string() == my_id { continue; }
-                            if let Some(overlay) = handle_msg.get_webview_window("cursor-overlay") {
-                                let _ = overlay.hide();
-                            }
+                            // No overlay to hide anymore — real cursor is controlled directly
                         }
                         FlowMessage::DirectionSet { peer_id: pid, direction } => {
                             if pid.0.to_string() == my_id { continue; }
@@ -498,13 +494,17 @@ pub fn run() {
             let cursor_pid = PeerId(peer_info.id.0);
             let dir_delta = peer_direction.clone();
             let on_remote_delta = cursor_on_remote.clone();
+            let vx_shared = Arc::new(RwLock::new(0.0f64));
+            let vy_shared = Arc::new(RwLock::new(0.0f64));
+            let vx_for_clicks = vx_shared.clone();
+            let vy_for_clicks = vy_shared.clone();
             tauri::async_runtime::spawn(async move {
-                let mut vx: f64 = 0.0;
-                let mut vy: f64 = 0.0;
                 let remote_w: f64 = 1920.0;
                 let remote_h: f64 = 1080.0;
 
                 while let Ok(delta) = delta_rx.recv().await {
+                    let mut vx = *vx_shared.read().await;
+                    let mut vy = *vy_shared.read().await;
                     vx += delta.dx;
                     vy += delta.dy;
 
@@ -525,8 +525,8 @@ pub fn run() {
                     if returned {
                         on_remote_delta.store(false, Ordering::Relaxed);
                         capture_delta.exit_capture();
-                        vx = 0.0;
-                        vy = 0.0;
+                        *vx_shared.write().await = 0.0;
+                        *vy_shared.write().await = 0.0;
                         let msg = FlowMessage::CursorReturn { peer_id: cursor_pid.clone() };
                         let _ = mesh_cursor.broadcast(&msg).await;
                         continue;
@@ -534,6 +534,9 @@ pub fn run() {
 
                     // Clamp x to remote screen
                     vx = vx.clamp(0.0, remote_w);
+
+                    *vx_shared.write().await = vx;
+                    *vy_shared.write().await = vy;
 
                     let msg = FlowMessage::CursorMove {
                         peer_id: cursor_pid.clone(),
@@ -544,6 +547,24 @@ pub fn run() {
                         visible: true,
                     };
                     let _ = mesh_cursor.broadcast(&msg).await;
+                }
+            });
+
+            // Click forwarding: when captured, send clicks to remote
+            let mesh_clicks = mesh.clone();
+            let mut click_rx = mouse_capture.subscribe_clicks();
+            let click_pid = PeerId(peer_info.id.0);
+            tauri::async_runtime::spawn(async move {
+                while let Ok(click) = click_rx.recv().await {
+                    let vx = *vx_for_clicks.read().await;
+                    let vy = *vy_for_clicks.read().await;
+                    let msg = FlowMessage::MouseClick {
+                        peer_id: click_pid.clone(),
+                        button: click.button,
+                        pressed: click.pressed,
+                        position: CursorPosition { x: vx, y: vy },
+                    };
+                    let _ = mesh_clicks.broadcast(&msg).await;
                 }
             });
 

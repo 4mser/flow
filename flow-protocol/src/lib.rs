@@ -158,6 +158,18 @@ pub enum FlowMessage {
         peer_id: PeerId,
         direction: String,
     },
+    MouseClick {
+        peer_id: PeerId,
+        button: u8, // 0=left, 1=right, 2=middle
+        pressed: bool,
+        position: CursorPosition,
+    },
+    KeyEvent {
+        peer_id: PeerId,
+        key_code: u16,
+        pressed: bool,
+        flags: u64,
+    },
     Goodbye(PeerId),
 }
 

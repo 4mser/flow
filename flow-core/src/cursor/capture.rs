@@ -18,9 +18,16 @@ pub struct MouseDelta {
     pub dy: f64,
 }
 
+#[derive(Debug, Clone)]
+pub struct ClickEvent {
+    pub button: u8,
+    pub pressed: bool,
+}
+
 pub struct MouseCapture {
     pos_tx: broadcast::Sender<MousePosition>,
     delta_tx: broadcast::Sender<MouseDelta>,
+    click_tx: broadcast::Sender<ClickEvent>,
     pub captured: Arc<AtomicBool>,
 }
 
@@ -28,9 +35,11 @@ impl MouseCapture {
     pub fn new() -> Self {
         let (pos_tx, _) = broadcast::channel(128);
         let (delta_tx, _) = broadcast::channel(128);
+        let (click_tx, _) = broadcast::channel(64);
         Self {
             pos_tx,
             delta_tx,
+            click_tx,
             captured: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -41,6 +50,10 @@ impl MouseCapture {
 
     pub fn subscribe_delta(&self) -> broadcast::Receiver<MouseDelta> {
         self.delta_tx.subscribe()
+    }
+
+    pub fn subscribe_clicks(&self) -> broadcast::Receiver<ClickEvent> {
+        self.click_tx.subscribe()
     }
 
     pub fn enter_capture(&self) {
@@ -77,6 +90,7 @@ impl MouseCapture {
 
         let pos_tx = self.pos_tx.clone();
         let delta_tx = self.delta_tx.clone();
+        let click_tx = self.click_tx.clone();
         let captured = self.captured.clone();
 
         std::thread::spawn(move || {
@@ -105,6 +119,14 @@ impl MouseCapture {
             let warp_center_x: f64 = total_w / 2.0;
             let warp_center_y: f64 = total_h / 2.0;
             let mut capture_start = std::time::Instant::now();
+
+            // Button state tracking for click detection
+            unsafe extern "C" {
+                fn CGEventSourceButtonState(stateID: u32, button: u32) -> bool;
+            }
+            let mut prev_left = false;
+            let mut prev_right = false;
+            let mut prev_middle = false;
 
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(8));
@@ -153,6 +175,24 @@ impl MouseCapture {
                             core_graphics::geometry::CGPoint::new(warp_center_x, warp_center_y)
                         );
                     }
+
+                    // Detect mouse button state changes during capture
+                    let left = unsafe { CGEventSourceButtonState(1, 0) };
+                    let right = unsafe { CGEventSourceButtonState(1, 1) };
+                    let middle = unsafe { CGEventSourceButtonState(1, 2) };
+
+                    if left != prev_left {
+                        prev_left = left;
+                        let _ = click_tx.send(ClickEvent { button: 0, pressed: left });
+                    }
+                    if right != prev_right {
+                        prev_right = right;
+                        let _ = click_tx.send(ClickEvent { button: 1, pressed: right });
+                    }
+                    if middle != prev_middle {
+                        prev_middle = middle;
+                        let _ = click_tx.send(ClickEvent { button: 2, pressed: middle });
+                    }
                 } else {
                     capture_start = std::time::Instant::now();
                     let _ = pos_tx.send(MousePosition {
@@ -171,10 +211,16 @@ impl MouseCapture {
     pub fn start_polling(&self) {
         let pos_tx = self.pos_tx.clone();
         let delta_tx = self.delta_tx.clone();
+        let click_tx = self.click_tx.clone();
         let captured = self.captured.clone();
 
         std::thread::spawn(move || {
             info!("Mouse polling started (Windows)");
+
+            let mut prev_left = false;
+            let mut prev_right = false;
+            let mut prev_middle = false;
+
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(8));
 
@@ -199,6 +245,25 @@ impl MouseCapture {
                                 let _ = delta_tx.send(MouseDelta { dx: dx as f64, dy: dy as f64 });
                                 use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
                                 let _ = SetCursorPos(cx, cy);
+                            }
+
+                            // Detect mouse button state changes during capture
+                            use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+                            let left = GetAsyncKeyState(0x01) < 0;   // VK_LBUTTON
+                            let right = GetAsyncKeyState(0x02) < 0;  // VK_RBUTTON
+                            let middle = GetAsyncKeyState(0x04) < 0; // VK_MBUTTON
+
+                            if left != prev_left {
+                                prev_left = left;
+                                let _ = click_tx.send(ClickEvent { button: 0, pressed: left });
+                            }
+                            if right != prev_right {
+                                prev_right = right;
+                                let _ = click_tx.send(ClickEvent { button: 1, pressed: right });
+                            }
+                            if middle != prev_middle {
+                                prev_middle = middle;
+                                let _ = click_tx.send(ClickEvent { button: 2, pressed: middle });
                             }
                         } else {
                             let _ = pos_tx.send(MousePosition {
