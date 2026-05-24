@@ -309,7 +309,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Cursor edge detection → send position to peers
     let mesh_cursor = mesh.clone();
     let cursor_mgr_edge = cursor_mgr.clone();
-    let mut mouse_events = mouse_capture.subscribe();
+    let mut mouse_events = mouse_capture.subscribe_pos();
     let cursor_peer_name = peer_info.name.clone();
     let cursor_peer_color = peer_info.color;
     let cursor_peer_id = PeerId(peer_id.0);

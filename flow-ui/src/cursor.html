@@ -4,44 +4,52 @@
 <meta charset="UTF-8" />
 <style>
   * { margin: 0; padding: 0; }
-  html, body { background: transparent; overflow: hidden; height: 100%; }
-  .cursor-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: var(--color, #3b82f6);
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    box-shadow: 0 0 8px var(--color, #3b82f6);
+  html, body {
+    background: transparent;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
   }
-  .cursor-name {
+  .cursor-arrow {
     position: absolute;
-    top: 4px;
-    left: 20px;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    border-left: 7px solid var(--c, #3b82f6);
+    border-right: 7px solid transparent;
+    border-bottom: 12px solid transparent;
+    border-top: 12px solid var(--c, #3b82f6);
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.5));
+  }
+  .cursor-label {
+    position: absolute;
+    top: 18px;
+    left: 14px;
     font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     color: white;
-    background: var(--color, #3b82f6);
-    padding: 1px 8px;
-    border-radius: 4px;
+    background: var(--c, #3b82f6);
+    padding: 1px 6px;
+    border-radius: 3px;
     white-space: nowrap;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
   }
 </style>
 </head>
 <body>
-  <div class="cursor-dot" id="dot"></div>
-  <div class="cursor-name" id="name">Remote</div>
+  <div class="cursor-arrow" id="arrow"></div>
+  <div class="cursor-label" id="label">Remote</div>
   <script>
-    const { listen } = window.__TAURI__.event;
-
-    listen("update-cursor-overlay", function(e) {
-      var d = e.payload;
-      document.getElementById("name").textContent = d.name;
-      document.documentElement.style.setProperty("--color", d.color);
-    });
+    if (window.__TAURI__) {
+      const { listen } = window.__TAURI__.event;
+      listen("update-cursor-overlay", function(e) {
+        var d = e.payload;
+        document.getElementById("label").textContent = d.name;
+        document.documentElement.style.setProperty("--c", d.color);
+      });
+    }
   </script>
 </body>
 </html>

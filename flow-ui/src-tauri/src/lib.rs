@@ -456,25 +456,21 @@ pub fn run() {
                 clipboard_w.watch().await;
             });
 
-            // --- CURSOR SHARING (simple direction-based) ---
+            // --- CURSOR SHARING ---
             let mouse_capture = Arc::new(MouseCapture::new());
             mouse_capture.start_polling();
 
-            let mesh_cursor = mesh.clone();
-            let mut mouse_rx = mouse_capture.subscribe();
-            let cursor_name = peer_info.name.clone();
-            let cursor_color = peer_info.color;
-            let cursor_pid = PeerId(peer_info.id.0);
-            let dir_ref = peer_direction.clone();
-            let on_remote = cursor_on_remote.clone();
+            // Edge detection: enter capture mode when cursor hits the configured edge
+            let capture_edge = mouse_capture.clone();
+            let mut pos_rx = mouse_capture.subscribe_pos();
+            let dir_edge = peer_direction.clone();
+            let on_remote_edge = cursor_on_remote.clone();
             tauri::async_runtime::spawn(async move {
-                let mut skip: u32 = 0;
-                while let Ok(pos) = mouse_rx.recv().await {
-                    skip += 1;
-                    if skip % 3 != 0 { continue; }
+                while let Ok(pos) = pos_rx.recv().await {
+                    if on_remote_edge.load(Ordering::Relaxed) { continue; }
 
-                    let dir = dir_ref.read().await.clone();
-                    let margin = 2.0;
+                    let dir = dir_edge.read().await.clone();
+                    let margin = 3.0;
                     let sw = pos.screen_width as f64;
                     let sh = pos.screen_height as f64;
 
@@ -487,30 +483,67 @@ pub fn run() {
                     };
 
                     if at_edge {
-                        // Map cursor position proportionally to the remote screen
-                        let (rx, ry) = match dir.as_str() {
-                            "right" => (margin, pos.y),         // enter from left
-                            "left" => (sw - margin, pos.y),     // enter from right
-                            "above" => (pos.x, sh - margin),    // enter from bottom
-                            "below" => (pos.x, margin),         // enter from top
-                            _ => (pos.x, pos.y),
-                        };
+                        on_remote_edge.store(true, Ordering::Relaxed);
+                        capture_edge.enter_capture();
+                    }
+                }
+            });
 
-                        on_remote.store(true, Ordering::Relaxed);
-                        let msg = FlowMessage::CursorMove {
-                            peer_id: cursor_pid.clone(),
-                            name: cursor_name.clone(),
-                            color: cursor_color,
-                            monitor_id: 0,
-                            position: CursorPosition { x: rx, y: ry },
-                            visible: true,
-                        };
-                        let _ = mesh_cursor.broadcast(&msg).await;
-                    } else if on_remote.load(Ordering::Relaxed) {
-                        on_remote.store(false, Ordering::Relaxed);
+            // Delta tracking: when captured, send deltas as cursor movement
+            let mesh_cursor = mesh.clone();
+            let capture_delta = mouse_capture.clone();
+            let mut delta_rx = mouse_capture.subscribe_delta();
+            let cursor_name = peer_info.name.clone();
+            let cursor_color = peer_info.color;
+            let cursor_pid = PeerId(peer_info.id.0);
+            let dir_delta = peer_direction.clone();
+            let on_remote_delta = cursor_on_remote.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut vx: f64 = 0.0;
+                let mut vy: f64 = 0.0;
+                let remote_w: f64 = 1920.0;
+                let remote_h: f64 = 1080.0;
+
+                while let Ok(delta) = delta_rx.recv().await {
+                    vx += delta.dx;
+                    vy += delta.dy;
+
+                    // Clamp to reasonable bounds
+                    vy = vy.clamp(0.0, remote_h);
+
+                    let dir = dir_delta.read().await.clone();
+
+                    // Check if cursor returned to our side
+                    let returned = match dir.as_str() {
+                        "right" => vx < 0.0,
+                        "left" => vx > remote_w,
+                        "above" => vy > remote_h,
+                        "below" => vy < 0.0,
+                        _ => false,
+                    };
+
+                    if returned {
+                        on_remote_delta.store(false, Ordering::Relaxed);
+                        capture_delta.exit_capture();
+                        vx = 0.0;
+                        vy = 0.0;
                         let msg = FlowMessage::CursorReturn { peer_id: cursor_pid.clone() };
                         let _ = mesh_cursor.broadcast(&msg).await;
+                        continue;
                     }
+
+                    // Clamp x to remote screen
+                    vx = vx.clamp(0.0, remote_w);
+
+                    let msg = FlowMessage::CursorMove {
+                        peer_id: cursor_pid.clone(),
+                        name: cursor_name.clone(),
+                        color: cursor_color,
+                        monitor_id: 0,
+                        position: CursorPosition { x: vx, y: vy },
+                        visible: true,
+                    };
+                    let _ = mesh_cursor.broadcast(&msg).await;
                 }
             });
 
