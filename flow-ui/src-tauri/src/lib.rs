@@ -2,19 +2,22 @@ use flow_core::clipboard::ClipboardSync;
 use flow_core::discovery::{Discovery, DiscoveryEvent};
 use flow_core::mesh::MeshNode;
 use flow_core::monitor::detect_monitors;
+use flow_core::transfer::FileTransferManager;
 use flow_protocol::{
     ClipboardContentType, CursorColor, FlowMessage, OsType, PeerId, PeerInfo,
 };
 use serde::Serialize;
+use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::sync::RwLock;
 use tracing::error;
 
 struct FlowState {
     peer_info: PeerInfo,
     mesh: Arc<MeshNode>,
-    clipboard: Arc<ClipboardSync>,
+    transfers: Arc<FileTransferManager>,
     connected_peers: Arc<RwLock<Vec<PeerUi>>>,
 }
 
@@ -95,6 +98,20 @@ async fn get_peers(state: tauri::State<'_, FlowState>) -> Result<Vec<PeerUi>, St
     Ok(state.connected_peers.read().await.clone())
 }
 
+#[tauri::command]
+async fn send_file(path: String, state: tauri::State<'_, FlowState>) -> Result<String, String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("File not found: {path}"));
+    }
+    state
+        .transfers
+        .send_file(p, &state.peer_info.id, &state.mesh)
+        .await
+        .map_err(|e| format!("Send failed: {e}"))?;
+    Ok(format!("Sent: {path}"))
+}
+
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -120,20 +137,28 @@ pub fn run() {
 
     let mesh = Arc::new(MeshNode::new());
     let clipboard = Arc::new(ClipboardSync::new());
+    let transfers = Arc::new(FileTransferManager::new());
     let connected_peers: Arc<RwLock<Vec<PeerUi>>> = Arc::new(RwLock::new(Vec::new()));
+    let announced_to: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
 
     let state = FlowState {
         peer_info: peer_info.clone(),
         mesh: mesh.clone(),
-        clipboard: clipboard.clone(),
+        transfers: transfers.clone(),
         connected_peers: connected_peers.clone(),
     };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(state)
-        .invoke_handler(tauri::generate_handler![get_status, connect_peer, get_peers])
+        .invoke_handler(tauri::generate_handler![get_status, connect_peer, get_peers, send_file])
         .setup(move |app| {
+            #[cfg(debug_assertions)]
+            {
+                let window = app.get_webview_window("main").unwrap();
+                window.open_devtools();
+            }
+
             let handle = app.handle().clone();
 
             let discovery =
@@ -142,7 +167,6 @@ pub fn run() {
             let mut mesh_messages = mesh.subscribe();
             let mut clipboard_changes = clipboard.subscribe();
 
-            // Mesh listener
             let mesh_listen = mesh.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = mesh_listen.listen().await {
@@ -150,14 +174,12 @@ pub fn run() {
                 }
             });
 
-            // mDNS discovery
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = discovery.run().await {
                     error!("Discovery error: {e}");
                 }
             });
 
-            // Discovery → connect + emit to frontend
             let mesh_connect = mesh.clone();
             let pi = peer_info.clone();
             let peers_disc = connected_peers.clone();
@@ -169,7 +191,7 @@ pub fn run() {
                             for addr in &addresses {
                                 if addr.is_ipv4() {
                                     let ip = addr.to_string();
-                                    if let Ok(_) = mesh_connect.connect_to(&ip).await {
+                                    if mesh_connect.connect_to(&ip).await.is_ok() {
                                         let announce = FlowMessage::Announce(pi.clone());
                                         let _ = mesh_connect.broadcast(&announce).await;
 
@@ -196,15 +218,22 @@ pub fn run() {
                 }
             });
 
-            // Incoming messages
             let clipboard_remote = clipboard.clone();
+            let transfers_msg = transfers.clone();
             let peers_msg = connected_peers.clone();
             let handle_msg = handle.clone();
             let my_id = peer_info.id.0.to_string();
+            let mesh_respond = mesh.clone();
+            let my_info = peer_info.clone();
+            let announced = announced_to.clone();
             tauri::async_runtime::spawn(async move {
                 while let Ok(msg) = mesh_messages.recv().await {
                     match msg {
                         FlowMessage::Announce(peer) => {
+                            let pid = peer.id.0.to_string();
+                            if pid == my_id {
+                                continue;
+                            }
                             let peer_ui = PeerUi {
                                 name: peer.name.clone(),
                                 os: format!("{:?}", peer.os),
@@ -212,16 +241,23 @@ pub fn run() {
                                     "rgb({},{},{})",
                                     peer.color.r, peer.color.g, peer.color.b
                                 ),
-                                peer_id: peer.id.0.to_string()[..8].to_string(),
+                                peer_id: pid[..8].to_string(),
                             };
                             let mut peers = peers_msg.write().await;
                             if !peers.iter().any(|p| p.peer_id == peer_ui.peer_id) {
                                 peers.push(peer_ui.clone());
                                 let _ = handle_msg.emit("peer-joined", &peer_ui);
                             }
+                            drop(peers);
+
+                            let mut set = announced.write().await;
+                            if !set.contains(&pid) {
+                                set.insert(pid);
+                                let _ = mesh_respond.broadcast(&FlowMessage::Announce(my_info.clone())).await;
+                            }
                         }
-                        FlowMessage::ClipboardData { peer_id, data, .. } => {
-                            if peer_id.0.to_string() == my_id {
+                        FlowMessage::ClipboardData { peer_id: pid, data, .. } => {
+                            if pid.0.to_string() == my_id {
                                 continue;
                             }
                             if let Ok(text) = String::from_utf8(data) {
@@ -229,12 +265,26 @@ pub fn run() {
                                 clipboard_remote.apply_remote(text).await;
                             }
                         }
+                        FlowMessage::FileOffer { transfer_id, file_name, file_size, from_peer } => {
+                            if from_peer.0.to_string() == my_id {
+                                continue;
+                            }
+                            let _ = handle_msg.emit("file-incoming", &format!("{file_name} ({:.1} MB)", file_size as f64 / 1048576.0));
+                            let _ = transfers_msg.handle_offer(transfer_id, &file_name, file_size).await;
+                        }
+                        FlowMessage::FileChunk { transfer_id, offset, data, is_last } => {
+                            if let Ok(Some(name)) = transfers_msg.handle_chunk(transfer_id, offset, &data, is_last).await {
+                                let _ = handle_msg.emit("file-received", &name);
+                            }
+                        }
+                        FlowMessage::FileComplete { file_name, .. } => {
+                            let _ = handle_msg.emit("file-complete", &file_name);
+                        }
                         _ => {}
                     }
                 }
             });
 
-            // Clipboard watcher → broadcast
             let mesh_clip = mesh.clone();
             let clip_id = PeerId(peer_info.id.0);
             let handle_clip = handle.clone();

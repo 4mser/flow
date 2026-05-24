@@ -124,6 +124,26 @@ pub enum FlowMessage {
         peer_id: PeerId,
         status: PeerStatus,
     },
+    FileOffer {
+        transfer_id: Uuid,
+        from_peer: PeerId,
+        file_name: String,
+        file_size: u64,
+    },
+    FileAccept {
+        transfer_id: Uuid,
+        accepted: bool,
+    },
+    FileChunk {
+        transfer_id: Uuid,
+        offset: u64,
+        data: Vec<u8>,
+        is_last: bool,
+    },
+    FileComplete {
+        transfer_id: Uuid,
+        file_name: String,
+    },
     Goodbye(PeerId),
 }
 

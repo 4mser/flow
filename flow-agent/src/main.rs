@@ -3,11 +3,16 @@ use flow_core::clipboard::ClipboardSync;
 use flow_core::discovery::{Discovery, DiscoveryEvent};
 use flow_core::mesh::MeshNode;
 use flow_core::monitor::detect_monitors;
+use flow_core::transfer::FileTransferManager;
 use flow_protocol::{
     ClipboardContentType, CursorColor, FlowMessage, OsType, PeerId, PeerInfo,
 };
+use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
-use tracing::{error, info};
+use std::time::Duration;
+use tokio::sync::RwLock;
+use tracing::{error, info, warn};
 
 #[derive(Parser)]
 #[command(name = "flow", about = "FLOW — Multiplayer Operating System")]
@@ -18,9 +23,11 @@ struct Cli {
     #[arg(short, long, default_value_t = 0)]
     color: usize,
 
-    /// Connect directly to a peer by IP (skip mDNS). Example: --peer 192.168.1.50
     #[arg(short, long)]
     peer: Option<String>,
+
+    #[arg(short, long)]
+    send: Option<String>,
 }
 
 #[tokio::main]
@@ -43,7 +50,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.name.clone()
     };
     let color = CursorColor::pick(cli.color);
-
     let monitors = detect_monitors();
 
     println!();
@@ -75,6 +81,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mesh = Arc::new(MeshNode::new());
     let clipboard = Arc::new(ClipboardSync::new());
+    let transfers = Arc::new(FileTransferManager::new());
+    let announced_to: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
+
     let discovery = Discovery::new(&peer_name, &peer_id, color)?;
     let mut discovery_events = discovery.subscribe();
     let mut mesh_messages = mesh.subscribe();
@@ -89,35 +98,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Direct connection if --peer flag is provided
+    // Direct connection with retry
     if let Some(ref peer_ip) = cli.peer {
         let mesh_direct = mesh.clone();
         let ip = peer_ip.clone();
         let pi = peer_info.clone();
         tokio::spawn(async move {
-            println!("  Connecting directly to {ip}...");
-            match mesh_direct.connect_to(&ip).await {
-                Ok(_) => {
-                    let announce = FlowMessage::Announce(pi);
-                    let _ = mesh_direct.broadcast(&announce).await;
-                    println!("  === Connected to {ip} ===");
-                }
-                Err(e) => {
-                    error!("Failed to connect to {ip}: {e}");
-                    std::process::exit(1);
+            let mut delay = 2;
+            loop {
+                println!("  Connecting to {ip}...");
+                match mesh_direct.connect_to(&ip).await {
+                    Ok(_) => {
+                        let announce = FlowMessage::Announce(pi);
+                        let _ = mesh_direct.broadcast(&announce).await;
+                        println!("  === Connected to {ip} ===");
+                        break;
+                    }
+                    Err(e) => {
+                        warn!("Connection to {ip} failed: {e}, retrying in {delay}s...");
+                        println!("  Connection failed, retrying in {delay}s...");
+                        tokio::time::sleep(Duration::from_secs(delay)).await;
+                        delay = (delay * 2).min(30);
+                    }
                 }
             }
         });
     }
 
-    // Run mDNS discovery
+    // mDNS discovery
     tokio::spawn(async move {
         if let Err(e) = discovery.run().await {
             error!("Discovery error: {e}");
         }
     });
 
-    // When a peer is discovered, connect to them via TCP
+    // Auto-connect on peer discovery
     let mesh_connect = mesh.clone();
     let my_peer_info = peer_info.clone();
     tokio::spawn(async move {
@@ -125,16 +140,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match event {
                 DiscoveryEvent::PeerFound { peer, addresses } => {
                     println!(
-                        "  >>> Peer joined: {} ({:?}) at {:?}",
+                        "  >>> Peer discovered: {} ({:?}) at {:?}",
                         peer.name, peer.os, addresses
                     );
-
                     for addr in &addresses {
                         if addr.is_ipv4() {
                             let ip = addr.to_string();
-                            if let Err(e) = mesh_connect.connect_to(&ip).await {
-                                info!("Could not connect to {ip}: {e}");
-                            } else {
+                            if let Ok(_) = mesh_connect.connect_to(&ip).await {
                                 let announce = FlowMessage::Announce(my_peer_info.clone());
                                 let _ = mesh_connect.broadcast(&announce).await;
                                 println!("  === Connected and syncing with {} ===", peer.name);
@@ -150,37 +162,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Handle incoming mesh messages
-    let clipboard_for_remote = clipboard.clone();
+    // Handle incoming messages
+    let clipboard_remote = clipboard.clone();
+    let transfers_recv = transfers.clone();
+    let mesh_respond = mesh.clone();
+    let my_info_for_announce = peer_info.clone();
     let my_id = peer_id.0.to_string();
+    let announced = announced_to.clone();
     tokio::spawn(async move {
         while let Ok(msg) = mesh_messages.recv().await {
             match msg {
                 FlowMessage::Announce(peer) => {
-                    info!("Received announce from: {} ({:?})", peer.name, peer.os);
+                    let pid = peer.id.0.to_string();
+                    if pid == my_id {
+                        continue;
+                    }
+                    println!("  Connected: {} ({:?})", peer.name, peer.os);
+
+                    // Respond with our announce if we haven't already
+                    let mut set = announced.write().await;
+                    if !set.contains(&pid) {
+                        set.insert(pid);
+                        let _ = mesh_respond.broadcast(&FlowMessage::Announce(my_info_for_announce.clone())).await;
+                    }
                 }
-                FlowMessage::ClipboardData { peer_id, data, .. } => {
-                    if peer_id.0.to_string() == my_id {
+                FlowMessage::ClipboardData { peer_id: pid, data, .. } => {
+                    if pid.0.to_string() == my_id {
                         continue;
                     }
                     if let Ok(text) = String::from_utf8(data) {
-                        println!("  [clipboard] Received from peer: {}...", &text[..text.len().min(60)]);
-                        clipboard_for_remote.apply_remote(text).await;
+                        println!("  [clipboard] ← {}...", &text[..text.len().min(60)]);
+                        clipboard_remote.apply_remote(text).await;
                     }
+                }
+                FlowMessage::FileOffer { transfer_id, file_name, file_size, from_peer } => {
+                    if from_peer.0.to_string() == my_id {
+                        continue;
+                    }
+                    println!("  [file] ← Receiving: {file_name} ({:.1} MB)", file_size as f64 / 1024.0 / 1024.0);
+                    if let Err(e) = transfers_recv.handle_offer(transfer_id, &file_name, file_size).await {
+                        error!("Failed to start receiving file: {e}");
+                    }
+                }
+                FlowMessage::FileChunk { transfer_id, offset, data, is_last } => {
+                    match transfers_recv.handle_chunk(transfer_id, offset, &data, is_last).await {
+                        Ok(Some(name)) => {
+                            println!("  [file] ✓ Received: {name} → {}", transfers_recv.download_dir().display());
+                        }
+                        Ok(None) => {}
+                        Err(e) => error!("File chunk error: {e}"),
+                    }
+                }
+                FlowMessage::FileComplete { file_name, .. } => {
+                    println!("  [file] Transfer complete: {file_name}");
                 }
                 _ => {}
             }
         }
     });
 
-    // Monitor local clipboard and broadcast changes
+    // Clipboard broadcast
     let mesh_clipboard = mesh.clone();
-    let clipboard_id = PeerId(peer_id.0);
+    let clip_id = PeerId(peer_id.0);
     tokio::spawn(async move {
         while let Ok(text) = clipboard_changes.recv().await {
-            println!("  [clipboard] Sending to peers: {}...", &text[..text.len().min(60)]);
+            println!("  [clipboard] → {}...", &text[..text.len().min(60)]);
             let msg = FlowMessage::ClipboardData {
-                peer_id: clipboard_id.clone(),
+                peer_id: clip_id.clone(),
                 content_type: ClipboardContentType::PlainText,
                 data: text.into_bytes(),
             };
@@ -190,14 +238,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Start watching clipboard
+    // Watch clipboard
     let clipboard_watcher = clipboard.clone();
     tokio::spawn(async move {
         clipboard_watcher.watch().await;
     });
 
-    println!("  Searching for peers on the network...");
-    println!("  Clipboard sync is active.");
+    // Send file if --send was provided
+    if let Some(ref file_path) = cli.send {
+        let transfers_send = transfers.clone();
+        let mesh_send = mesh.clone();
+        let pid = PeerId(peer_id.0);
+        let fp = file_path.clone();
+        tokio::spawn(async move {
+            // Wait for connection
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            if mesh_send.peer_count().await == 0 {
+                println!("  [file] Waiting for a peer to connect...");
+                while mesh_send.peer_count().await == 0 {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+            println!("  [file] → Sending: {fp}");
+            match transfers_send.send_file(Path::new(&fp), &pid, &mesh_send).await {
+                Ok(_) => println!("  [file] ✓ File sent successfully"),
+                Err(e) => error!("Failed to send file: {e}"),
+            }
+        });
+    }
+
+    println!("  Clipboard sync active. File transfer ready.");
+    if cli.peer.is_none() {
+        println!("  Searching for peers on the network...");
+        println!("  Tip: use --peer <IP> for direct connection");
+    }
     println!("  Press Ctrl+C to stop.");
     println!();
 

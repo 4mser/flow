@@ -12,14 +12,14 @@ async function init() {
     updateBadge("online", "online");
   } catch (e) {
     console.error("Init error:", e);
-    updateBadge("error", e.toString());
+    updateBadge("", "error");
   }
 }
 
 function renderStatus() {
   document.getElementById("my-name").textContent = status.name;
   document.getElementById("my-os").textContent = status.os;
-  document.getElementById("my-monitors").textContent = status.monitors.length;
+  document.getElementById("my-monitors").textContent = status.monitors.length + " display" + (status.monitors.length !== 1 ? "s" : "");
   document.getElementById("my-peer-id").textContent = status.peer_id;
   renderPeers(status.peers);
 }
@@ -30,7 +30,7 @@ function renderMonitors() {
 
   const allMonitors = [];
 
-  status.monitors.forEach((m, i) => {
+  status.monitors.forEach((m) => {
     allMonitors.push({ ...m, owner: status.name, mine: true, color: status.color });
   });
 
@@ -42,41 +42,58 @@ function renderMonitors() {
     }
   });
 
-  if (allMonitors.length === 0) return;
+  if (allMonitors.length === 0) {
+    canvas.innerHTML = '<div class="empty-state">No monitors detected</div>';
+    return;
+  }
 
   const minX = Math.min(...allMonitors.map((m) => m.x));
   const minY = Math.min(...allMonitors.map((m) => m.y));
   const maxX = Math.max(...allMonitors.map((m) => m.x + m.width));
   const maxY = Math.max(...allMonitors.map((m) => m.y + m.height));
 
-  const totalW = maxX - minX;
-  const totalH = maxY - minY;
+  const totalW = maxX - minX || 1;
+  const totalH = maxY - minY || 1;
 
-  const canvasRect = canvas.getBoundingClientRect();
-  const padding = 40;
-  const availW = canvasRect.width - padding * 2;
-  const availH = canvasRect.height - padding * 2;
-  const scale = Math.min(availW / totalW, availH / totalH, 0.15);
+  const rect = canvas.getBoundingClientRect();
+  const pad = 20;
+  const availW = rect.width - pad * 2;
+  const availH = rect.height - pad * 2;
+
+  if (availW <= 0 || availH <= 0) return;
+
+  const scale = Math.min(availW / totalW, availH / totalH);
+
+  const renderedW = totalW * scale;
+  const renderedH = totalH * scale;
+  const offsetX = (rect.width - renderedW) / 2;
+  const offsetY = (rect.height - renderedH) / 2;
 
   allMonitors.forEach((m) => {
     const el = document.createElement("div");
-    el.className = `monitor-block ${m.mine ? "mine" : "peer"}`;
-    el.style.width = m.width * scale + "px";
-    el.style.height = m.height * scale + "px";
-    el.style.position = "absolute";
-    el.style.left = padding + (m.x - minX) * scale + "px";
-    el.style.top = padding + (m.y - minY) * scale + "px";
+    el.className = "monitor-block " + (m.mine ? "mine" : "peer");
+
+    const w = m.width * scale;
+    const h = m.height * scale;
+    const x = offsetX + (m.x - minX) * scale;
+    const y = offsetY + (m.y - minY) * scale;
+
+    el.style.width = w + "px";
+    el.style.height = h + "px";
+    el.style.left = x + "px";
+    el.style.top = y + "px";
 
     if (!m.mine) {
       el.style.borderColor = m.color;
-      el.style.boxShadow = `0 0 20px ${m.color}22`;
     }
 
-    el.innerHTML = `
-      <span class="monitor-label">${m.name}</span>
-      <span class="monitor-res">${m.width}x${m.height}</span>
-      <span class="monitor-owner">${m.owner}</span>
-    `;
+    const showRes = w > 80 && h > 50;
+
+    el.innerHTML =
+      '<span class="monitor-label">' + esc(m.name) + '</span>' +
+      (showRes ? '<span class="monitor-res">' + m.width + 'x' + m.height + '</span>' : '') +
+      '<span class="monitor-owner">' + esc(m.owner) + '</span>';
+
     canvas.appendChild(el);
   });
 }
@@ -87,28 +104,26 @@ function renderPeers(peers) {
   count.textContent = peers.length;
 
   if (peers.length === 0) {
-    list.innerHTML = '<div class="empty-state">No peers connected</div>';
+    list.innerHTML = '<div class="empty-state">Waiting for peers...</div>';
     return;
   }
 
   list.innerHTML = peers
-    .map(
-      (p) => `
-    <div class="peer-item">
-      <div class="peer-dot" style="background: ${p.color}"></div>
-      <div class="peer-info">
-        <div class="peer-name">${p.name}</div>
-        <div class="peer-os">${p.os} · ${p.peer_id}</div>
-      </div>
-    </div>
-  `
-    )
+    .map(function (p) {
+      return '<div class="peer-item">' +
+        '<div class="peer-dot" style="background:' + esc(p.color) + '"></div>' +
+        '<div class="peer-info">' +
+          '<div class="peer-name">' + esc(p.name) + '</div>' +
+          '<div class="peer-os">' + esc(p.os) + ' · ' + esc(p.peer_id) + '</div>' +
+        '</div>' +
+      '</div>';
+    })
     .join("");
 }
 
 function updateBadge(cls, text) {
   const badge = document.getElementById("status-badge");
-  badge.className = `badge ${cls}`;
+  badge.className = "badge " + cls;
   badge.textContent = text;
 }
 
@@ -116,86 +131,90 @@ async function connectPeer() {
   const input = document.getElementById("peer-ip");
   const btn = document.getElementById("connect-btn");
   const ip = input.value.trim();
-
   if (!ip) return;
 
   btn.disabled = true;
-  btn.textContent = "Connecting...";
+  btn.textContent = "...";
 
   try {
-    const result = await invoke("connect_peer", { ip });
+    await invoke("connect_peer", { ip: ip });
     input.value = "";
-    addClipboardEntry("connected", `Connected to ${ip}`, "sent");
-
+    addClip("sent", "Connected to " + ip);
     const peers = await invoke("get_peers");
     renderPeers(peers);
   } catch (e) {
-    addClipboardEntry("error", `Failed: ${e}`, "received");
+    addClip("received", "Failed: " + e);
   } finally {
     btn.disabled = false;
     btn.textContent = "Connect";
   }
 }
 
-function addClipboardEntry(direction, text, cls) {
+function addClip(dir, text) {
   const log = document.getElementById("clipboard-log");
-
   const empty = log.querySelector(".empty-state");
   if (empty) empty.remove();
 
   const now = new Date();
-  const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const t = pad2(now.getHours()) + ":" + pad2(now.getMinutes()) + ":" + pad2(now.getSeconds());
 
   const entry = document.createElement("div");
   entry.className = "clip-entry";
-  entry.innerHTML = `
-    <span class="clip-dir ${cls}">${direction === "sent" ? "SENT" : "RECV"}</span>
-    <span class="clip-text">${escapeHtml(text.substring(0, 100))}</span>
-    <span class="clip-time">${time}</span>
-  `;
+  entry.innerHTML =
+    '<span class="clip-dir ' + dir + '">' + (dir === "sent" ? "SENT" : "RECV") + '</span>' +
+    '<span class="clip-text">' + esc(text.substring(0, 120)) + '</span>' +
+    '<span class="clip-time">' + t + '</span>';
 
   log.insertBefore(entry, log.firstChild);
 
-  while (log.children.length > 50) {
+  while (log.children.length > 30) {
     log.removeChild(log.lastChild);
   }
 }
 
-function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
+function pad2(n) {
+  return n < 10 ? "0" + n : "" + n;
+}
+
+function esc(s) {
+  var d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
 }
 
 async function setupListeners() {
-  await listen("peer-joined", (event) => {
-    const peer = event.payload;
-    addClipboardEntry("connected", `${peer.name} joined (${peer.os})`, "received");
+  await listen("peer-joined", function (event) {
+    var peer = event.payload;
+    addClip("received", peer.name + " joined (" + peer.os + ")");
     invoke("get_peers").then(renderPeers);
-    invoke("get_status").then((s) => {
+    invoke("get_status").then(function (s) {
       status = s;
       renderMonitors();
     });
-    updateBadge("online", `${peer.name} connected`);
-    setTimeout(() => updateBadge("online", "online"), 3000);
+    updateBadge("online", peer.name + " connected");
+    setTimeout(function () { updateBadge("online", "online"); }, 3000);
   });
 
-  await listen("peer-left", (event) => {
-    addClipboardEntry("disconnected", `Peer left: ${event.payload}`, "sent");
+  await listen("peer-left", function (event) {
+    addClip("sent", "Peer left: " + event.payload);
     invoke("get_peers").then(renderPeers);
   });
 
-  await listen("clipboard-sent", (event) => {
-    addClipboardEntry("sent", event.payload, "sent");
+  await listen("clipboard-sent", function (event) {
+    addClip("sent", event.payload);
   });
 
-  await listen("clipboard-received", (event) => {
-    addClipboardEntry("received", event.payload, "received");
+  await listen("clipboard-received", function (event) {
+    addClip("received", event.payload);
   });
 }
 
-document.getElementById("peer-ip").addEventListener("keydown", (e) => {
+document.getElementById("peer-ip").addEventListener("keydown", function (e) {
   if (e.key === "Enter") connectPeer();
+});
+
+window.addEventListener("resize", function () {
+  if (status) renderMonitors();
 });
 
 document.addEventListener("DOMContentLoaded", init);
