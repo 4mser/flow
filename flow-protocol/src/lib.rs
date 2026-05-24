@@ -150,6 +150,10 @@ pub enum FlowMessage {
         transfer_id: Uuid,
         file_name: String,
     },
+    LayoutUpdate {
+        peer_id: PeerId,
+        monitors: Vec<MonitorInfo>,
+    },
     Goodbye(PeerId),
 }
 

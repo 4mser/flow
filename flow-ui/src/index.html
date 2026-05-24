@@ -57,7 +57,11 @@
 
       <!-- Monitor Layout -->
       <section class="card card-monitors">
-        <h3 class="card-title">Monitor Layout</h3>
+        <h3 class="card-title">
+          Monitor Layout
+          <button class="save-layout-btn" id="save-layout-btn" onclick="saveLayout()" style="display:none">Save Layout</button>
+        </h3>
+        <p class="layout-hint">Drag monitors to match your physical desk layout</p>
         <div class="monitor-canvas" id="monitor-canvas">
           <div class="empty-state">Detecting monitors...</div>
         </div>

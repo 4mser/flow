@@ -273,6 +273,34 @@ body {
 }
 
 /* ── Monitor Canvas ── */
+.layout-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  margin-top: -6px;
+}
+
+.save-layout-btn {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 4px;
+  background: var(--accent);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+}
+
+.save-layout-btn:hover {
+  opacity: 0.85;
+}
+
+.save-layout-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .card-monitors {
   flex: 1;
   display: flex;

@@ -20,6 +20,21 @@ struct FlowState {
     mesh: Arc<MeshNode>,
     transfers: Arc<FileTransferManager>,
     connected_peers: Arc<RwLock<Vec<PeerUi>>>,
+    all_monitors: Arc<RwLock<Vec<LayoutMonitor>>>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+struct LayoutMonitor {
+    peer_id: String,
+    peer_name: String,
+    monitor_id: u32,
+    name: String,
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    mine: bool,
+    color: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +124,43 @@ async fn connect_peer(ip: String, state: tauri::State<'_, FlowState>) -> Result<
 #[tauri::command]
 async fn get_peers(state: tauri::State<'_, FlowState>) -> Result<Vec<PeerUi>, String> {
     Ok(state.connected_peers.read().await.clone())
+}
+
+#[tauri::command]
+async fn get_layout(state: tauri::State<'_, FlowState>) -> Result<Vec<LayoutMonitor>, String> {
+    Ok(state.all_monitors.read().await.clone())
+}
+
+#[tauri::command]
+async fn save_layout(
+    monitors: Vec<LayoutMonitor>,
+    state: tauri::State<'_, FlowState>,
+) -> Result<String, String> {
+    // Update stored layout
+    *state.all_monitors.write().await = monitors.clone();
+
+    // Find my monitors that were repositioned and broadcast update
+    let my_id = state.peer_info.id.0.to_string();
+    let my_monitors: Vec<flow_protocol::MonitorInfo> = monitors
+        .iter()
+        .filter(|m| m.peer_id == my_id[..8])
+        .map(|m| flow_protocol::MonitorInfo {
+            monitor_id: m.monitor_id,
+            name: m.name.clone(),
+            width: m.width,
+            height: m.height,
+            scale_factor: 1.0,
+            position: flow_protocol::GridPosition { x: m.x, y: m.y },
+        })
+        .collect();
+
+    let msg = FlowMessage::LayoutUpdate {
+        peer_id: state.peer_info.id.clone(),
+        monitors: my_monitors,
+    };
+    state.mesh.broadcast(&msg).await.map_err(|e| format!("{e}"))?;
+
+    Ok("Layout saved and synced".to_string())
 }
 
 #[tauri::command]
@@ -202,18 +254,36 @@ pub fn run() {
     let connected_peers: Arc<RwLock<Vec<PeerUi>>> = Arc::new(RwLock::new(Vec::new()));
     let announced_to: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
 
+    let my_id_short = peer_info.id.0.to_string()[..8].to_string();
+    let initial_layout: Vec<LayoutMonitor> = peer_info.monitors.iter().map(|m| {
+        LayoutMonitor {
+            peer_id: my_id_short.clone(),
+            peer_name: peer_info.name.clone(),
+            monitor_id: m.monitor_id,
+            name: m.name.clone(),
+            width: m.width,
+            height: m.height,
+            x: m.position.x,
+            y: m.position.y,
+            mine: true,
+            color: format!("rgb({},{},{})", peer_info.color.r, peer_info.color.g, peer_info.color.b),
+        }
+    }).collect();
+    let all_monitors: Arc<RwLock<Vec<LayoutMonitor>>> = Arc::new(RwLock::new(initial_layout));
+
     let state = FlowState {
         peer_info: peer_info.clone(),
         mesh: mesh.clone(),
         transfers: transfers.clone(),
         connected_peers: connected_peers.clone(),
+        all_monitors: all_monitors.clone(),
     };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
-        .invoke_handler(tauri::generate_handler![get_status, connect_peer, get_peers, send_file, pick_and_send, setup_firewall])
+        .invoke_handler(tauri::generate_handler![get_status, connect_peer, get_peers, get_layout, save_layout, send_file, pick_and_send, setup_firewall])
         .setup(move |app| {
             #[cfg(debug_assertions)]
             {
@@ -297,8 +367,10 @@ pub fn run() {
             let clipboard_remote = clipboard.clone();
             let transfers_msg = transfers.clone();
             let peers_msg = connected_peers.clone();
+            let layout_msg = all_monitors.clone();
             let handle_msg = handle.clone();
             let my_id = peer_info.id.0.to_string();
+            let my_id_short = my_id[..8].to_string();
             let mesh_respond = mesh.clone();
             let my_info = peer_info.clone();
             let announced = announced_to.clone();
@@ -325,6 +397,33 @@ pub fn run() {
                                 let _ = handle_msg.emit("peer-joined", &peer_ui);
                             }
                             drop(peers);
+
+                            // Add peer monitors to layout
+                            if !peer.monitors.is_empty() {
+                                let peer_color = format!("rgb({},{},{})", peer.color.r, peer.color.g, peer.color.b);
+                                let mut layout = layout_msg.write().await;
+                                let existing_ids: Vec<String> = layout.iter().map(|m| m.peer_id.clone()).collect();
+                                if !existing_ids.contains(&pid[..8].to_string()) {
+                                    // Position peer monitors to the right of existing monitors
+                                    let max_x: i32 = layout.iter().map(|m| m.x + m.width as i32).max().unwrap_or(0);
+                                    for (i, m) in peer.monitors.iter().enumerate() {
+                                        layout.push(LayoutMonitor {
+                                            peer_id: pid[..8].to_string(),
+                                            peer_name: peer.name.clone(),
+                                            monitor_id: m.monitor_id,
+                                            name: m.name.clone(),
+                                            width: m.width,
+                                            height: m.height,
+                                            x: max_x + m.position.x,
+                                            y: m.position.y,
+                                            mine: false,
+                                            color: peer_color.clone(),
+                                        });
+                                    }
+                                }
+                                drop(layout);
+                                let _ = handle_msg.emit("layout-updated", "");
+                            }
 
                             let mut set = announced.write().await;
                             if !set.contains(&pid) {
@@ -355,6 +454,30 @@ pub fn run() {
                         }
                         FlowMessage::FileComplete { file_name, .. } => {
                             let _ = handle_msg.emit("file-complete", &file_name);
+                        }
+                        FlowMessage::LayoutUpdate { peer_id: pid, monitors: peer_monitors } => {
+                            if pid.0.to_string() == my_id {
+                                continue;
+                            }
+                            let pid_short = pid.0.to_string()[..8].to_string();
+                            let mut layout = layout_msg.write().await;
+                            layout.retain(|m| m.peer_id != pid_short);
+                            for m in &peer_monitors {
+                                layout.push(LayoutMonitor {
+                                    peer_id: pid_short.clone(),
+                                    peer_name: "Peer".to_string(),
+                                    monitor_id: m.monitor_id,
+                                    name: m.name.clone(),
+                                    width: m.width,
+                                    height: m.height,
+                                    x: m.position.x,
+                                    y: m.position.y,
+                                    mine: false,
+                                    color: "rgb(59,130,246)".to_string(),
+                                });
+                            }
+                            drop(layout);
+                            let _ = handle_msg.emit("layout-updated", "");
                         }
                         _ => {}
                     }
