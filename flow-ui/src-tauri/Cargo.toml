@@ -18,6 +18,7 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 hostname = "0.4"
+uuid = { version = "1", features = ["v4"] }
 
 [lib]
 name = "flow_ui_lib"

@@ -11,6 +11,7 @@
     "windows": [
       {
         "title": "FLOW",
+        "label": "main",
         "width": 900,
         "height": 640,
         "resizable": true,
@@ -19,6 +20,21 @@
         "center": true,
         "minWidth": 700,
         "minHeight": 500
+      },
+      {
+        "title": "",
+        "label": "cursor-overlay",
+        "url": "cursor.html",
+        "width": 140,
+        "height": 36,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "x": 0,
+        "y": 0
       }
     ],
     "security": {

@@ -1,19 +1,21 @@
 use flow_core::clipboard::ClipboardSync;
+use flow_core::cursor::capture::MouseCapture;
+use flow_core::cursor::CursorManager;
 use flow_core::discovery::{Discovery, DiscoveryEvent};
 use flow_core::mesh::MeshNode;
 use flow_core::monitor::detect_monitors;
 use flow_core::transfer::FileTransferManager;
 use flow_protocol::{
-    ClipboardContentType, CursorColor, FlowMessage, OsType, PeerId, PeerInfo,
+    ClipboardContentType, CursorColor, CursorPosition, FlowMessage, OsType, PeerId, PeerInfo,
 };
 use serde::Serialize;
 use std::collections::HashSet;
 use std::net::UdpSocket;
 use std::path::Path;
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewWindowBuilder, WebviewUrl};
 use tokio::sync::RwLock;
-use tracing::error;
+use tracing::{error, info};
 
 struct FlowState {
     peer_info: PeerInfo,
@@ -21,6 +23,7 @@ struct FlowState {
     transfers: Arc<FileTransferManager>,
     connected_peers: Arc<RwLock<Vec<PeerUi>>>,
     all_monitors: Arc<RwLock<Vec<LayoutMonitor>>>,
+    cursor_mgr: Arc<CursorManager>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -154,6 +157,22 @@ async fn save_layout(
         })
         .collect();
 
+    // Rebuild the cursor manager spatial layout with ALL monitors
+    {
+        let mut spatial = state.cursor_mgr.layout.write().await;
+        *spatial = flow_protocol::SpatialLayout::new();
+        for m in &monitors {
+            spatial.entries.push(flow_protocol::SpatialEntry {
+                peer_id: PeerId(m.peer_id.parse().unwrap_or_else(|_| uuid::Uuid::new_v4())),
+                monitor_id: m.monitor_id,
+                x: m.x,
+                y: m.y,
+                width: m.width,
+                height: m.height,
+            });
+        }
+    }
+
     let msg = FlowMessage::LayoutUpdate {
         peer_id: state.peer_info.id.clone(),
         monitors: my_monitors,
@@ -270,6 +289,14 @@ pub fn run() {
         }
     }).collect();
     let all_monitors: Arc<RwLock<Vec<LayoutMonitor>>> = Arc::new(RwLock::new(initial_layout));
+    let cursor_mgr = Arc::new(CursorManager::new(PeerId(peer_id.0)));
+    {
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async {
+            let mut layout = cursor_mgr.layout.write().await;
+            layout.add_peer_monitors(&peer_info);
+        });
+    }
 
     let state = FlowState {
         peer_info: peer_info.clone(),
@@ -277,6 +304,7 @@ pub fn run() {
         transfers: transfers.clone(),
         connected_peers: connected_peers.clone(),
         all_monitors: all_monitors.clone(),
+        cursor_mgr: cursor_mgr.clone(),
     };
 
     tauri::Builder::default()
@@ -368,6 +396,7 @@ pub fn run() {
             let transfers_msg = transfers.clone();
             let peers_msg = connected_peers.clone();
             let layout_msg = all_monitors.clone();
+            let cursor_msg = cursor_mgr.clone();
             let handle_msg = handle.clone();
             let my_id = peer_info.id.0.to_string();
             let my_id_short = my_id[..8].to_string();
@@ -398,7 +427,14 @@ pub fn run() {
                             }
                             drop(peers);
 
-                            // Add peer monitors to layout
+                            // Add peer monitors to cursor manager spatial layout
+                            if !peer.monitors.is_empty() {
+                                let mut spatial = cursor_msg.layout.write().await;
+                                spatial.add_peer_monitors(&peer);
+                                drop(spatial);
+                            }
+
+                            // Add peer monitors to UI layout
                             if !peer.monitors.is_empty() {
                                 let peer_color = format!("rgb({},{},{})", peer.color.r, peer.color.g, peer.color.b);
                                 let mut layout = layout_msg.write().await;
@@ -455,6 +491,27 @@ pub fn run() {
                         FlowMessage::FileComplete { file_name, .. } => {
                             let _ = handle_msg.emit("file-complete", &file_name);
                         }
+                        FlowMessage::CursorMove { peer_id: pid, name, color, position, visible, .. } => {
+                            if pid.0.to_string() == my_id { continue; }
+                            if visible {
+                                if let Some(overlay) = handle_msg.get_webview_window("cursor-overlay") {
+                                    let _ = overlay.set_position(tauri::Position::Physical(
+                                        tauri::PhysicalPosition::new(position.x as i32, position.y as i32)
+                                    ));
+                                    let _ = overlay.show();
+                                    let _ = overlay.emit("update-cursor-overlay", serde_json::json!({
+                                        "name": name,
+                                        "color": format!("rgb({},{},{})", color.r, color.g, color.b)
+                                    }));
+                                }
+                            }
+                        }
+                        FlowMessage::CursorReturn { peer_id: pid } => {
+                            if pid.0.to_string() == my_id { continue; }
+                            if let Some(overlay) = handle_msg.get_webview_window("cursor-overlay") {
+                                let _ = overlay.hide();
+                            }
+                        }
                         FlowMessage::LayoutUpdate { peer_id: pid, monitors: peer_monitors } => {
                             if pid.0.to_string() == my_id {
                                 continue;
@@ -503,6 +560,65 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 clipboard_w.watch().await;
             });
+
+            // --- Cursor sharing ---
+            // Set up overlay window as click-through
+            if let Some(overlay_win) = app.get_webview_window("cursor-overlay") {
+                let _ = overlay_win.set_ignore_cursor_events(true);
+            }
+
+            // Start mouse capture
+            let mouse_capture = Arc::new(MouseCapture::new());
+            mouse_capture.start_polling();
+
+            // Edge detection: when cursor hits screen edge, send to peer
+            let mesh_cursor = mesh.clone();
+            let cursor_edge = cursor_mgr.clone();
+            let mut mouse_rx = mouse_capture.subscribe();
+            let cursor_name = peer_info.name.clone();
+            let cursor_color = peer_info.color;
+            let cursor_pid = PeerId(peer_info.id.0);
+            let handle_cursor = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut is_remote = false;
+                let mut frame_skip: u32 = 0;
+                while let Ok(pos) = mouse_rx.recv().await {
+                    // Only check every 3rd frame to reduce CPU
+                    frame_skip += 1;
+                    if frame_skip % 3 != 0 { continue; }
+
+                    if let Some(event) = cursor_edge.check_edge(
+                        pos.x, pos.y, pos.screen_width, pos.screen_height, pos.monitor_id
+                    ).await {
+                        match event {
+                            flow_core::cursor::CursorEvent::CrossedEdge { to_peer_id: _, to_monitor, position } => {
+                                if !is_remote {
+                                    is_remote = true;
+                                    info!("Cursor crossed to remote monitor");
+                                }
+                                let msg = FlowMessage::CursorMove {
+                                    peer_id: cursor_pid.clone(),
+                                    name: cursor_name.clone(),
+                                    color: cursor_color,
+                                    monitor_id: to_monitor,
+                                    position,
+                                    visible: true,
+                                };
+                                let _ = mesh_cursor.broadcast(&msg).await;
+                            }
+                            _ => {}
+                        }
+                    } else if is_remote {
+                        is_remote = false;
+                        let msg = FlowMessage::CursorReturn { peer_id: cursor_pid.clone() };
+                        let _ = mesh_cursor.broadcast(&msg).await;
+                    }
+                }
+            });
+
+            // Handle remote cursor: move overlay window to cursor position
+            // (CursorMove messages are handled in the message handler above,
+            //  but we need to add overlay logic there too)
 
             Ok(())
         })

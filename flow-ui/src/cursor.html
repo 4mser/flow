@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { background: transparent; overflow: hidden; height: 100%; }
+  .cursor-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--color, #3b82f6);
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    box-shadow: 0 0 8px var(--color, #3b82f6);
+  }
+  .cursor-name {
+    position: absolute;
+    top: 4px;
+    left: 20px;
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    color: white;
+    background: var(--color, #3b82f6);
+    padding: 1px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  }
+</style>
+</head>
+<body>
+  <div class="cursor-dot" id="dot"></div>
+  <div class="cursor-name" id="name">Remote</div>
+  <script>
+    const { listen } = window.__TAURI__.event;
+
+    listen("update-cursor-overlay", function(e) {
+      var d = e.payload;
+      document.getElementById("name").textContent = d.name;
+      document.documentElement.style.setProperty("--color", d.color);
+    });
+  </script>
+</body>
+</html>
