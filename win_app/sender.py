@@ -298,9 +298,17 @@ class LinkSender:
     def _cycle_target(self):
         target, skipped = ways.next_target({"shortcut_goes_to": self._setting("shortcut_goes_to", "last")},
                                            self._cycle_order(), protocol.peer_id_text(self.owner) if self.owner else None,
-                                           self._cycle_ready)
+                                           self._cycle_ready, held=self._held_back)
         self._announce_shortcut_skips(skipped)
         return protocol.read_id(target) if target is not None else None
+
+    def _held_back(self, ident):
+        peer = protocol.read_id(ident)
+        owner = self._owner
+        if peer is None or owner is None:
+            return False
+        with self._lock:
+            return owner.held_back(peer)
 
     def _cycle_ready(self, ident):
         peer = protocol.read_id(ident)
@@ -324,7 +332,7 @@ class LinkSender:
         target, skipped = ways.hold_target(
             {"shortcut_goes_to": self._setting("shortcut_goes_to", "last")},
             self._cycle_order(), self._last_on,
-            self._cycle_ready)
+            self._cycle_ready, held=self._held_back)
         self._announce_shortcut_skips(skipped)
         target = protocol.read_id(target) if target else None
         self.set_redirecting(target is not None, peer=target)

@@ -1537,8 +1537,12 @@ def shortcut_order(peers: list, machine_id: str, positions: dict, mode: str = "n
     return reading + [None]
 
 
-def next_target(settings: dict, order: list, current: Optional[str], ready: Callable[[Optional[str]], bool]):
-    """Next ready peer or home, and the peer ids skipped because they are not ready."""
+def next_target(settings: dict, order: list, current: Optional[str], ready: Callable[[Optional[str]], bool],
+                held: Optional[Callable[[str], bool]] = None):
+    """Next ready peer or home, and the peer ids skipped because they are not ready. A peer `held`
+    back after refusing a moment ago is passed over unnamed: the owner ignores a move there, so
+    choosing it would leave input where it is (14-10-2026)."""
+    held = held or (lambda _ident: False)
     peers = [ident for ident in order if ident is not None]
     if current is None:
         start = 0
@@ -1547,17 +1551,21 @@ def next_target(settings: dict, order: list, current: Optional[str], ready: Call
     candidates = peers[start:]
     skipped = []
     for ident in candidates:
+        if held(ident):
+            continue
         if ready(ident):
             return ident, skipped
         skipped.append(ident)
-    if current is None and peers:
-        return peers[0], skipped
+    if current is None:
+        return next((ident for ident in peers if not held(ident)), None), skipped
     return None, skipped
 
 
-def hold_target(settings: dict, order: list, last: Optional[str], ready: Callable[[str], bool]):
-    """The Hold-style destination and any preceding peers that were not ready."""
-    peers = [ident for ident in order if ident is not None]
+def hold_target(settings: dict, order: list, last: Optional[str], ready: Callable[[str], bool],
+                held: Optional[Callable[[str], bool]] = None):
+    """The Hold-style destination and any preceding peers that were not ready; `held` as next_target."""
+    held = held or (lambda _ident: False)
+    peers = [ident for ident in order if ident is not None and not held(ident)]
     candidates = peers
     if settings.get("shortcut_goes_to", "last") == "last" and last in peers:
         candidates = [last] + [ident for ident in peers if ident != last]

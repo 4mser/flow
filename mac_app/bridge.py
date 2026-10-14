@@ -825,6 +825,10 @@ class KVMController:
         link = self._peers_up.get(peer) if peer else None
         return link is not None and link.live() and self._accepts.get(peer, False)
 
+    def _held_back(self, peer):
+        with self._owner_lock:
+            return self.owner.held_back(peer)
+
     def _crossing_ready(self, peer):
         """Whether a zone to `peer` has a wall now: its link is up, this Mac sends to it, and it is not
         held back after a refusal, as Windows' zones are, since a push that cannot take it must not pin
@@ -885,7 +889,8 @@ class KVMController:
     def _cycle_target(self):
         order = self._shortcut_cycle()
         target, skipped = ways.next_target(self.cfg.crossing, order,
-                                           protocol.peer_id_text(self.owner.on) if self.owner.on else None, self._ready)
+                                           protocol.peer_id_text(self.owner.on) if self.owner.on else None, self._ready,
+                                           held=self._held_back)
         self._announce_shortcut_skips(skipped)
         return target
 
@@ -2010,10 +2015,15 @@ class KVMController:
             if result.is_repeat:
                 return None
             if result.is_down:
+                order = self._shortcut_cycle()
                 target, skipped = ways.hold_target(
-                    self.cfg.crossing, self._shortcut_cycle(), self._last_peer, self._ready)
+                    self.cfg.crossing, order, self._last_peer, self._ready, held=self._held_back)
                 self._announce_shortcut_skips(skipped)
-                self.set_redirecting(True, peer=target, reason="hold")
+                # None from a cycle with machines in it means every one refused a moment ago: a peer
+                # of None would fall back to the shortcut's machine, which may be outside the cycle.
+                # An empty cycle (one machine, no layout) still goes to the shortcut's machine.
+                if target is not None or not any(ident is not None for ident in order):
+                    self.set_redirecting(True, peer=target, reason="hold")
             else:
                 self.set_redirecting(False)
             return None

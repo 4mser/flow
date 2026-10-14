@@ -102,6 +102,16 @@ class DoubleTapChainTests(Chain):
         self.assertEqual(c.owner.on, protocol.id_text(OTHER_ID))
         self.assertEqual(c._cycle_target(), protocol.id_text(FEDORA_ID))
 
+    def test_next_target_passes_over_a_machine_that_just_refused_and_comes_home(self):
+        # The owner ignores a move to a machine it holds back, so choosing it left input where it was.
+        self._use_next_cycle()
+        c = self.controller
+        self.assertTrue(c.set_redirecting(True, peer=protocol.id_text(OTHER_ID)))
+        self.acg.arrives(c, protocol.accept_msg(c.owner.route))
+        c.owner._hold_back(protocol.id_text(FEDORA_ID), "refused")
+
+        self.assertIsNone(c._cycle_target())
+
     def test_next_target_after_a_peer_requested_move(self):
         self._use_next_cycle()
         c = self.controller
@@ -236,6 +246,21 @@ class HoldChainTests(Chain):
         settle(self.controller)
         self.assertFalse(self.controller.redirecting)
         self.assertIsNone(self.controller.owner.on)
+
+
+class HoldWithEveryCycleMachineHeldBack(Chain):
+    style = "hold"
+
+    def test_hold_with_every_cycle_machine_held_back_moves_nothing(self):
+        # hold_target names nobody, and a peer of None would fall back to a machine outside the cycle.
+        c = self.controller
+        c.cfg.crossing["shortcut_goes_to"] = "ticked"
+        c._shortcut_cycle = lambda: [protocol.id_text(OTHER_ID), None]
+        c.owner._hold_back(protocol.id_text(OTHER_ID), "refused")
+        self.tap(FakeQuartz.kCGEventFlagsChanged, self.key(True))
+        settle(c)
+        self.assertIsNone(c.owner.on)
+        self.assertFalse(c.redirecting)
 
 
 class ArrivalHomeGrace(Chain):

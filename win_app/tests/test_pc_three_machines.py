@@ -81,6 +81,15 @@ class ShortcutMachineTests(unittest.TestCase):
         rig.sender.toggle_shortcut()
         self.assertIsNone(rig.sender.owner)
 
+    def test_next_shortcut_passes_over_a_machine_that_just_refused_and_comes_home(self):
+        # The owner ignores a move to a machine it holds back, so choosing it left input where it was.
+        rig = self.rig(up=(B, C), shortcut_goes_to="next")
+        rig.sender.toggle_shortcut()
+        self.assertEqual(rig.sender.owner, C)
+        rig.sender._owner._hold_back(B, "refused")
+        rig.sender.toggle_shortcut()
+        self.assertIsNone(rig.sender.owner)
+
     def test_a_machine_that_does_not_accept_input_is_passed_over(self):
         rig = self.rig(up=(C,))
         rig.bring_up(B, accepts=False)
