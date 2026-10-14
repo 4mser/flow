@@ -4,7 +4,8 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from core.return_edge import CROSS, HOLD, PASS, Rect, ReturnEdge, arrival_position, edge_offset, union
+from core.return_edge import (CROSS, HOLD, PASS, Rect, ReturnEdge, _normalised_span,
+                              arrival_position, edge_offset, landing_monitor, union)
 
 
 class FakeClock:
@@ -36,6 +37,27 @@ class GeometryTests(unittest.TestCase):
         self.assertAlmostEqual(edge_offset(BOUNDS, "left", (-1920, 720)), 0.5)
         self.assertAlmostEqual(edge_offset(BOUNDS, "top", (-1920 + 1120, 0)), 0.25)
         self.assertEqual(edge_offset(BOUNDS, "right", (2559, 99999)), 1.0)
+
+    def test_last_display_pixel_round_trips_at_the_end_of_its_edge(self):
+        display = Rect(0, 0, 8, 8)
+        offset = edge_offset(display, "bottom", (7, 7))
+
+        self.assertEqual(offset, 0.875)
+        self.assertEqual(arrival_position([display], "top", offset,
+                                          display="peer", side="bottom",
+                                          display_map={"peer": display}), (7, 7))
+
+    def test_landing_monitor_treats_bottom_pixel_as_inside_its_inclusive_span(self):
+        top = Rect(0, 0, 100, 100)
+        lower_left = Rect(-100, 100, 100, 100)
+
+        self.assertEqual(landing_monitor([lower_left, top], "left", 99), top)
+
+    def test_normalised_span_clamps_floating_point_noise_at_one(self):
+        span = _normalised_span((0.25, 1.0000000000000002))
+
+        self.assertEqual(span, (0.25, 1.0))
+        self.assertIsNone(_normalised_span((0.0, 1.01)))
 
     def test_arrival_lands_on_the_monitor_owning_each_edge(self):
         # The offset is taken against the whole box, and lands on the outermost monitor spanning

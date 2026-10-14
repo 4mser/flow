@@ -557,9 +557,11 @@ Either way:
   trackpad's continuous delta in points, or `"line"` for whole wheel notches. Both are in the Mac's
   convention, as version 5 sends them: `dy` and `dx` are Core Graphics' scroll axes 1 and 2 as a
   Mac reports them, the user's scrolling direction already applied, and a Mac receiver posts them
-  as they stand. A Windows receiver takes positive `dy` as its wheel's positive and positive `dx`
-  as its horizontal wheel's positive; the `dx` mapping is still to be confirmed
-  on hardware. Any other sender, a phone included, sends what a Mac would for the same
+  as they stand. Positive `dy` moves the view up and positive `dx` moves it left, measured on
+  macOS 27. A Windows receiver takes positive `dy` as its wheel's positive and positive `dx` as
+  its horizontal wheel's negative, since that wheel's positive moves the view right; X11 and libei
+  turn `dx` round the same way, and a Windows or Linux sender turns its horizontal wheel round
+  before sending. Any other sender, a phone included, sends what a Mac would for the same
   movement. A sender always sends all three; a receiver takes a
   missing `dx` as 0 and a missing `mode` as `"line"`, as version 5 did.
 - **Clipboard limits**: text at most 256 KiB as UTF-8. An image at most 8 MiB before base64,
@@ -619,7 +621,8 @@ responder's own id. The responder decides under one lock, in this order:
    drives and is driven at once.
 5. This machine sent this initiator home, or ended its ownership by force, less than 5 seconds
    ago: `refuse {why: "sent_home"}`.
-6. Another peer is the owner: `refuse {why: "owned"}`.
+6. Another peer is the owner and has sent input within the last 3 seconds, or this is a
+   `stay`: `refuse {why: "owned"}`.
 7. A `stay` from an initiator that is not the owner: `refuse {why: "malformed"}`.
 8. Otherwise it accepts, and the initiator is the owner. When it already was, the `focus` moves
    the pointer or re-arms the zones in place.
@@ -629,8 +632,13 @@ before the pointer is placed, an arrival plays or a lock screen is dealt with. A
 this machine whose `route` or `target` is itself malformed cannot be answered with its route and
 is ignored; the owner's wait for an answer (section 5) covers it.
 
-There is no taking over. A second machine waits until the owner lets go. This differs from
-version 5, where any new link replaced the old one.
+An idle owner can be taken over by a new take at or after 3 seconds without valid input
+received from that owner. The responder measures this with its own monotonic clock, starting
+when ownership begins. Re-arms, clipboard messages and heartbeats do not renew activity.
+It sends the old owner `switch {route, next: old owner, taken_over_by: new owner}`, ends the
+old ownership and releases held input before accepting the new owner. Late input and let-go
+messages from the old owner cannot affect the new ownership. The old owner is refused
+`sent_home` for 5 seconds, as with an ordinary send-home.
 
 **What a non-owner's messages do:**
 
@@ -646,13 +654,13 @@ version 5, where any new link replaced the old one.
 **Ownership ends** when the owner sends a `focus` naming another target; when its link ends for
 any reason or is replaced by another from the same peer; when the user removes the peer or turns
 its `allow_drive` off; and by force, when this machine sent the owner home and it has not let go
-within 1 second. Every time it ends, the responder:
+within 1 second; or when another peer takes over the idle owner. Every time it ends, the responder:
 
 1. releases every key and button it injected for that owner, before injecting anything else;
 2. drops its armed zones;
 3. on a let-go `focus` only, sends the owner its own clipboard when something other than a
    `clipboard` message changed it while that owner drove (section 5, the clipboard);
-4. when it ended in any way but a let-go `focus` and the link is still up, sends
+4. when it ended in any way but a let-go `focus` or an idle takeover and the link is still up, sends
    `refuse {route, why}` on it (`not_allowed` when `allow_drive` was turned off, `sent_home` when
    it was ended by force), and from then on drops that link's input, still acknowledging it,
    until a `focus` of its is accepted again.
@@ -735,6 +743,11 @@ unknown key (Encodings).
 | `next` | `b64`: where input should go. The owner's own id means home |
 | `edge`, `offset` | where to arrive on `next`, both or neither, as in `focus` (`offset` clamped, never malformed for its range) |
 | `display`, `side` | optional pair naming `next`'s display key and the side to arrive at; an unknown display falls back to `edge` and `offset` |
+| `taken_over_by` | optional machine id on a switch home: the new driver that took over the responder after the old driver became idle |
+
+Older peers ignore `taken_over_by` and obey the switch home as usual. New peers use a valid
+id only on a switch home to say "<machine> took over <driven machine>" through their usual
+notice; an unknown machine is named "Another machine". An invalid optional id is ignored.
 
 ### The route
 
@@ -1318,7 +1331,7 @@ every peer.
                "trigger_key": "alt_r", "shortcut_goes_to": "last", "trigger_style": "double_tap", "double_tap_ms": 300},
   "design": {"glow_style": "glow", "glow_colour": "colourful", "effect_length": "normal",
              "effect_size": "medium", "effect_pace": 1.0, "effect_size_fraction": 0.045,
-             "shortcut_arrival": true, "shortcut_arrival_style": "match"},
+             "frame_rate": "display", "shortcut_arrival": true, "shortcut_arrival_style": "match"},
   "groups": ["crossing", "design", "shortcut", "names"],
   "stamps": {"trigger_style": [1789990000, "<b64>"], "glow_colour": [1790000000, "<b64>"]},
   "names": {"<id>": {"label": "Studio", "set_at": 1790000000, "by": "<b64>"}}}}
@@ -1374,6 +1387,7 @@ every peer.
   | `effect_size` | `"small"`, `"medium"` or `"large"` |
   | `effect_pace` | number 0.25 to 2.5; when valid it takes precedence over `effect_length` |
   | `effect_size_fraction` | number 0.02 to 0.08; when valid it takes precedence over `effect_size` |
+  | `frame_rate` | `"display"`, `"half"` or `"quarter"`: each machine plays at its own display's refresh, or a half or a quarter of it; 1.5.3 and later, absent from older peers, which leaves the receiver's own; an unknown value is dropped |
   | `shortcut_arrival_style` | `"match"`, `"locator"`, or an effect id from `effects.py` |
 
   The optional numeric fields are also sent in `design_sync.values`. If absent or invalid, a new
@@ -1444,7 +1458,7 @@ even while Same on all machines is off. The state is:
 {"type":"settings","data":{"on":false,"set_at":1790000000,"by":"<b64>",
   "design_sync":{"set_at":1790000001,"by":"<b64>","values":{
     "glow_style":"glow","glow_colour":"colourful","effect_length":"normal",
-    "effect_size":"medium","effect_pace":1.0,"effect_size_fraction":0.045,
+    "effect_size":"medium","effect_pace":1.0,"effect_size_fraction":0.045,"frame_rate":"display",
     "shortcut_arrival":true,"shortcut_arrival_style":"match"}}}}
 ```
 

@@ -105,7 +105,7 @@ class WindowGeometryTests(unittest.TestCase):
                     right = page.frame().size.width - left - body.frame().size.width
                     self.assertAlmostEqual(left, right, delta=1)
 
-    def test_ledger_uses_blocks_under_620_and_columns_above(self):
+    def test_ledger_uses_blocks_under_its_least_table_width_and_columns_above(self):
         from mac_app.tests.test_crossing_page_machines import Page, BEE, token
         fixture = Page()
         fixture.setUp()
@@ -119,7 +119,7 @@ class WindowGeometryTests(unittest.TestCase):
                 ledger = window.crossing_ledger
                 ledger.reflow()
                 row = ledger.rows[BEE]
-                narrow = ledger.bounds().size.width < 620
+                narrow = ledger.bounds().size.width < ledger.narrow_below()
                 self.assertEqual(ledger.headers[0].view.isHidden(), narrow)
                 machine, edge = row.cells["machine"].frame(), row.cells["edge"].frame()
                 self.assertGreater(edge.origin.y, machine.origin.y) if narrow else self.assertEqual(

@@ -67,9 +67,10 @@ class SameOnBothTests(unittest.TestCase):
         self.window._design_states[PEER] = {"set_at": 100, "by": PEER,
                                           "values": {"effect_length": "long"}}
         self.window._refresh_design_follow()
-        self.assertIs(self.window.follow_select, choice)
-        self.assertTrue(cell.isEnabled())
-        self.assertEqual(cell.toolTip(), cell.title())
+        self.assertIsNot(self.window.follow_select, choice)
+        recovered = next(cell for value, cell in self.window.follow_select.items if value == PEER)
+        self.assertTrue(recovered.isEnabled())
+        self.assertEqual(recovered.toolTip(), recovered.title())
 
     def setUp(self):
         capture = mock.patch.object(WakingController, "start_input_capture")

@@ -115,6 +115,7 @@ LINK_READ_TIMEOUT_SECONDS = 2.5
 # initiator is refused `sent_home` for SENT_HOME_SECONDS (section 4).
 FORCED_END_SECONDS = 1.0
 SENT_HOME_SECONDS = 5.0
+IDLE_TAKEOVER_SECONDS = 3.0
 # Frames waiting to go to one peer. A peer that stops reading is closed at this, rather than let a
 # queue grow without end; it is well past anything a working link queues between two writes.
 OUTBOX_LIMIT = 512
@@ -197,6 +198,8 @@ def zone_models(zones, peers, allowed, resistance_px: int, notch_span=None) -> l
         display = zone.get("display")
         target_display = zone.get("target_display")
         target_side = zone.get("target_side")
+        contact_span = zone.get("contact_span")
+        target_span = zone.get("target_span")
         if display is not None and (not isinstance(display, str) or not display or not display.isascii()):
             continue
         if side not in crossing.EDGES and kind in ("edge", "part"):
@@ -204,14 +207,17 @@ def zone_models(zones, peers, allowed, resistance_px: int, notch_span=None) -> l
         try:
             if kind == "edge" and side in crossing.EDGES:
                 model = crossing.ReturnEdge(side, resistance_px, display=display,
-                                            target_display=target_display, target_side=target_side)
+                                            target_display=target_display, target_side=target_side,
+                                            contact_span=contact_span, target_span=target_span)
             elif kind == "part" and side in crossing.EDGES and isinstance(zone.get("parts"), list):
                 model = crossing.PartEdge(side, [part for part in zone["parts"] if isinstance(part, str)],
                                           resistance_px, display=display, target_display=target_display,
-                                          target_side=target_side)
+                                          target_side=target_side, contact_span=contact_span,
+                                          target_span=target_span)
             elif kind == "corner" and isinstance(zone.get("corner"), str) and zone.get("edge") in zone["corner"].split("_"):
                 model = crossing.CornerPush(zone["corner"], zone["edge"], resistance_px, display=display,
-                                            target_display=target_display, target_side=target_side)
+                                            target_display=target_display, target_side=target_side,
+                                            contact_span=contact_span, target_span=target_span)
             elif kind == "notch" and notch_span is not None:
                 model = crossing.SpanEdge("top", notch_span, resistance_px)
             else:
@@ -511,16 +517,23 @@ class LinkResponder:
         self._handshaking = 0               # threads for connections not yet authenticated
         self._links = {}                    # peer id: _Link
         self._owner: Optional[_Link] = None
+        self._owner_input_at = None
         self._claiming: Optional[_Link] = None  # a take being decided, visible before `away` is read
         self._visit = 0                     # raised each time an ownership begins
         self._generation = 0                # raised on every change to the peers or the zones
         self._reach = frozenset()
         self._resistance = protocol.DEFAULT_RESISTANCE_PX
         self._armed = []                    # [(peer id, model)] while the zones are live
+        self._way_back = None               # (peer id, arrival display, arrival side), for this visit
         self._zones_live = False
         self._sent_home_at = {}             # peer id: when it was sent home or ended by force
         self._forced = None                 # the forced end's timer after a send-home
         self._clipboard_mark = None         # the clipboard's change stamp when this owner's visit began
+        # The platform clipboard is touched on one worker thread, in order, never on a link's reader
+        # (a write that blocks would stop its input being read and acknowledged) and never under the lock.
+        self._clipboard_jobs = collections.deque()
+        self._clipboard_running = False
+        self._clipboard_jobs_lock = threading.Lock()
         # Ownership changes for owner_callback, queued under the lock and delivered in order, one
         # thread at a time, so the app never hears an end after the next owner's beginning.
         self._owner_events = collections.deque()
@@ -977,7 +990,10 @@ class LinkResponder:
         after = []
         try:
             with self._lock:
-                if self._owner is not link or not self._takes(link, read):
+                takes = self._owner is link and self._takes(link, read)
+                if takes:
+                    self._owner_input_at = time.monotonic()
+                if not takes:
                     pass
                 elif self._unlocking.is_set():
                     # Input that arrives while the lock screen clears is dropped, but a release of
@@ -1079,6 +1095,7 @@ class LinkResponder:
                 dx, dy = self.input_scale.move(dx, dy)
                 if not (dx or dy):
                     return
+            dx, dy = self._clip_to_return_seam(dx, dy)
             injector.inject_mouse_move(dx, dy)
         elif kind in (protocol.MSG_MOUSEDOWN, protocol.MSG_MOUSEUP):
             down = kind == protocol.MSG_MOUSEDOWN
@@ -1105,6 +1122,42 @@ class LinkResponder:
                     injector.inject_key(_TEXT_KEYS[run], down=False)
                 else:
                     injector.inject_text(run)
+
+    def _clip_to_return_seam(self, dx: int, dy: int) -> Tuple[int, int]:
+        if not self._armed or not (dx or dy):
+            return dx, dy
+        desktop = self._desktop_module()
+        monitors, pointer = desktop.monitors(), desktop.cursor_position()
+        display_map = getattr(desktop, "display_map", lambda: {})()
+        bounds = crossing.union(monitors)
+        earliest = 1.0
+        for _peer, model in self._armed:
+            screen = display_map.get(model.display) if model.display and isinstance(display_map, dict) else bounds
+            if not isinstance(screen, crossing.Rect):
+                screen = bounds
+            if model.edge == "left" and dx < 0:
+                distance, travel = pointer[0] - screen.x, -dx
+                seam = (screen.x, pointer[1] + dy * max(0, distance) / travel)
+            elif model.edge == "right" and dx > 0:
+                distance, travel = screen.right - pointer[0], dx
+                seam = (screen.right, pointer[1] + dy * max(0, distance) / travel)
+            elif model.edge == "top" and dy < 0:
+                distance, travel = pointer[1] - screen.y, -dy
+                seam = (pointer[0] + dx * max(0, distance) / travel, screen.y)
+            elif model.edge == "bottom" and dy > 0:
+                distance, travel = screen.bottom - pointer[1], dy
+                seam = (pointer[0] + dx * max(0, distance) / travel, screen.bottom)
+            else:
+                continue
+            if distance < 0 or distance > travel:
+                continue
+            fraction = distance / travel
+            point = (round(seam[0]), round(seam[1]))
+            if fraction < earliest and model._at_edge(monitors, point, display_map):
+                earliest = fraction
+        if earliest == 1.0:
+            return dx, dy
+        return round(dx * earliest), round(dy * earliest)
 
     def _release_locked(self, link: _Link) -> None:
         """Let go of every key and button injected for this owner (section 4, step 1), then the
@@ -1134,8 +1187,20 @@ class LinkResponder:
             self._armed, self._zones_live = [], False
             return
         try:
+            active_zones = list(zones)
+            if self._way_back is not None:
+                peer, display, side = self._way_back
+                has_way = any(zone.get("peer") == peer and zone.get("kind") in ("edge", "part")
+                              and zone.get("off") is not True for zone in zones)
+                arrival_covered = any(zone.get("peer") == peer and zone.get("kind") in ("edge", "part")
+                                      and zone.get("off") is not True
+                                      and zone.get("display") == display and zone.get("side") == side
+                                      for zone in zones)
+                if has_way and not arrival_covered:
+                    active_zones.append({"peer": peer, "kind": "edge", "display": display,
+                                         "side": side, "target_side": crossing.OPPOSITE[side]})
             previous = self._armed
-            self._armed = zone_models(zones, peers, {owner.peer_id} | self._reach, self._resistance, self._notch_span)
+            self._armed = zone_models(active_zones, peers, {owner.peer_id} | self._reach, self._resistance, self._notch_span)
             if arrival_peer is None:
                 crossing.keep_grace(previous, self._armed)
             # A take that lands the pointer on an edge holds every zone, not only the way back: a hand
@@ -1257,10 +1322,17 @@ class LinkResponder:
                     reason, other = why
                     link.post(protocol.refuse_msg(focus["route"], reason, other=other))
                     return
+                previous = self._owner
+                if previous is not None and previous is not link:
+                    message = protocol.switch_v6(previous.route, previous.peer_id)
+                    message["data"]["taken_over_by"] = protocol.id_text(link.peer_id)
+                    previous.post(message)
+                    self._sent_home_at[previous.peer_id] = time.monotonic()
+                    after += self._end_locked(previous)
                 link.route = focus["route"]
                 # The answer goes before the pointer is placed or anything plays.
                 link.post(protocol.accept_msg(focus["route"]))
-                after = self._own_locked(link, focus, peers, zones)
+                after += self._own_locked(link, focus, peers, zones)
             stale = focus["here"] and generation != self._generation
         self._run(after)
         if stale:
@@ -1292,8 +1364,10 @@ class LinkResponder:
         elif sent_home_at is not None and time.monotonic() - sent_home_at < SENT_HOME_SECONDS:
             why = "sent_home"
         elif self._owner is not None and self._owner is not link:
-            why = "owned"
-            other = self._owner.peer_id
+            if (focus["stay"] or self._owner_input_at is None
+                    or time.monotonic() - self._owner_input_at < IDLE_TAKEOVER_SECONDS):
+                why = "owned"
+                other = self._owner.peer_id
         elif focus["stay"] and self._owner is not link:
             why = "malformed"
         if why is not None:
@@ -1307,6 +1381,12 @@ class LinkResponder:
         self._claiming = None
         self._reach = frozenset(peer for peer in focus["reach"] if peer not in (link.peer_id, link.own_id))
         self._resistance = focus["resistance_px"]
+        if began:
+            self._owner_input_at = time.monotonic()
+            display, side = focus.get("display"), focus.get("side")
+            self._way_back = ((protocol.id_text(link.peer_id), display, side)
+                              if focus.get("edge") is not None and display is not None
+                              and side in crossing.EDGES else None)
         self._arm_locked(peers, zones, link.peer_id if began else None, landed=focus.get("edge") is not None)
         after = []
         if began:
@@ -1331,7 +1411,9 @@ class LinkResponder:
         if link is None or self._owner is not link:
             return []
         self._owner = None
+        self._owner_input_at = None
         self._reach = frozenset()
+        self._way_back = None
         self._arriving_visit = None
         self._disarm_locked()
         self._cancel_forced_locked()
@@ -1339,8 +1421,8 @@ class LinkResponder:
         self._owner_events.append(None)
         after = []
         if let_go:
-            mark, visit = self._clipboard_mark, self._visit
-            after.append(lambda: self._clipboard_back(link, mark, visit))
+            visit = self._visit
+            after.append(lambda: self._clipboard_later(lambda: self._clipboard_back(link, visit)))
         elif why is not None and not link.closed.is_set():
             link.post(protocol.refuse_msg(link.route, why))
         return after
@@ -1432,17 +1514,52 @@ class LinkResponder:
         image = read["image"] if "clipboard_image" in link.own_caps else None
         if text is None and image is None:
             return
-        # Checked and set under one hold of the lock, so an ownership ending meanwhile cannot let
-        # a peer that no longer owns this machine set its clipboard.
         with self._lock:
             if self._owner is not link:
                 return
+            visit = self._visit
+        self._clipboard_later(lambda: self._set_clipboard(link, visit, text, image))
+
+    def _clipboard_later(self, job) -> None:
+        with self._clipboard_jobs_lock:
+            self._clipboard_jobs.append(job)
+            if self._clipboard_running:
+                return
+            self._clipboard_running = True
+        try:
+            threading.Thread(target=self._clipboard_worker, name="Beamer-v6-clipboard", daemon=True).start()
+        except BaseException:
+            with self._clipboard_jobs_lock:
+                self._clipboard_running = False
+            raise
+
+    def _clipboard_worker(self) -> None:
+        while True:
+            with self._clipboard_jobs_lock:
+                if not self._clipboard_jobs:
+                    self._clipboard_running = False
+                    return
+                job = self._clipboard_jobs.popleft()
             try:
-                if not self._clipboard_module().set_contents(text, image):
-                    LOGGER.warning("Could not set the clipboard %s sent", link.name)
+                job()
             except Exception:
-                LOGGER.exception("Could not set the clipboard %s sent", link.name)
-            self._clipboard_mark = self._clipboard_stamp()
+                LOGGER.exception("A clipboard job failed")
+
+    def _set_clipboard(self, link: _Link, visit: int, text, image) -> None:
+        """A write begins only while its sender still owns this machine in the visit it was sent in;
+        one already in flight when the ownership ends is not taken back, as it cannot be."""
+        with self._lock:
+            if self._owner is not link or self._visit != visit:
+                return
+        try:
+            if not self._clipboard_module().set_contents(text, image):
+                LOGGER.warning("Could not set the clipboard %s sent", link.name)
+        except Exception:
+            LOGGER.exception("Could not set the clipboard %s sent", link.name)
+        stamp = self._clipboard_stamp()
+        with self._lock:
+            if self._visit == visit:
+                self._clipboard_mark = stamp
 
     def _clipboard_stamp(self):
         stamp = getattr(self._clipboard_module(), "change_stamp", None)
@@ -1454,12 +1571,17 @@ class LinkResponder:
             LOGGER.exception("Could not read the clipboard's change stamp")
             return None
 
-    def _clipboard_back(self, link: _Link, mark, visit: int) -> None:
+    def _clipboard_back(self, link: _Link, visit: int) -> None:
         """A let-go owner gets this machine's clipboard only when something other than its own
         `clipboard` messages changed it during the visit, so an idle machine gives nothing away;
         and never once another ownership has begun or the clipboard changed while it was read, so
         what it gets is never the next owner's. Nor when the clipboard could not be read as the
-        visit began (a Wayland session not up yet): what changed during it cannot be told."""
+        visit began (a Wayland session not up yet): what changed during it cannot be told. The mark
+        is read here, after any write the owner had queued has updated it."""
+        with self._lock:
+            if self._visit != visit:
+                return
+            mark = self._clipboard_mark
         stamp = self._clipboard_stamp()
         if stamp is None or mark is None or stamp == mark:
             return

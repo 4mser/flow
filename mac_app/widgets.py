@@ -1264,6 +1264,8 @@ class Segmented:
         motion.fade_paint(self.view, mark)
 
     def set_enabled(self, enabled):
+        if enabled == self.enabled:
+            return
         self.enabled = enabled
         self.view.setAlphaValue_(1.0 if enabled else 0.45)
         for _value, cell, _words in self.cells:
@@ -1293,14 +1295,13 @@ class MenuChoice:
         pin(self.popup, self.view, (0, 4, 0, 4))
         self.items = []
         self.set_choices(choices)
-        # PyObjC's target holds Python attributes outside the cyclic GC graph. A bound method
-        # here keeps this picker, its popup and its target alive after removal from the stack.
+        # PyObjC cannot collect a cycle through an NSObject's Python attributes.
         owner = weakref.ref(self)
 
         def changed(sender):
-            choice = owner()
-            if choice is not None:
-                choice._changed(sender)
+            menu = owner()
+            if menu is not None:
+                menu._changed(sender)
 
         self.target = _Target.alloc().initWithCallback_(changed)
         self.popup.setTarget_(self.target)
@@ -1958,6 +1959,7 @@ class CodeBoxes:
             control.setAccessibilityLabel_(f"Digit {index + 1}")
             self.view.addArrangedSubview_(container)
             self.fields.append(control)
+        self._held = [""] * digits
 
     @property
     def value(self):
@@ -1966,6 +1968,10 @@ class CodeBoxes:
     def clear(self):
         for control in self.fields:
             control.setStringValue_("")
+        self._remember()
+
+    def _remember(self):
+        self._held = [control.stringValue() for control in self.fields]
 
     def focus(self, window):
         window.makeFirstResponder_(self.fields[0])
@@ -1994,13 +2000,24 @@ class CodeBoxes:
     def changed(self, control):
         index = self.fields.index(control)
         digits = "".join(character for character in control.stringValue() if character.isdigit())
-        if len(digits) > 1 and index == 0 or len(digits) >= len(self.fields):
+        held = self._held[index]
+        if len(digits) == 2 and held and held in digits:
+            # One digit typed beside the one the box held, not a paste of two: it replaces it.
+            digits = digits.replace(held, "", 1)
+        if len(digits) >= len(self.fields):
             for position, control_at in enumerate(self.fields):
                 control_at.setStringValue_(digits[position] if position < len(digits) else "")
             target = self.fields[min(len(digits), len(self.fields) - 1)]
+        elif len(digits) > 1:
+            for offset, digit in enumerate(digits):
+                if index + offset < len(self.fields):
+                    self.fields[index + offset].setStringValue_(digit)
+            filled = min(index + len(digits), len(self.fields))
+            target = self.fields[filled] if filled < len(self.fields) else self.fields[-1]
         else:
             control.setStringValue_(digits[-1:] if digits else "")
             target = self.fields[index + 1] if digits and index + 1 < len(self.fields) else None
+        self._remember()
         if target is not None and control.window() is not None:
             control.window().makeFirstResponder_(target)
 
@@ -2012,6 +2029,7 @@ class CodeBoxes:
         if selector == "deleteBackward:" and not control.stringValue() and index > 0:
             previous = self.fields[index - 1]
             previous.setStringValue_("")
+            self._remember()
             control.window().makeFirstResponder_(previous)
             return True
         return False
@@ -2235,8 +2253,10 @@ class Sidebar:
         self.response_rail.view.setAccessibilityLabel_(spoken_response)
         self.response_rail.view.setHidden_(not connected or not getattr(self, "collapsed", False))
         description = ", ".join(part for part in (state.word, peer, spoken_response) if part)
-        self.header.setAccessibilityLabel_(description)
-        self.header.setToolTip_(description)
+        if self.header.accessibilityLabel() != description:
+            self.header.setAccessibilityLabel_(description)
+        if self.header.toolTip() != description:
+            self.header.setToolTip_(description)
 
     def set_dots(self, marks):
         for page, (name, row, _icon, _words, _bar, dot) in self.rows.items():

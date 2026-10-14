@@ -29,7 +29,7 @@ import config as config_module
 import crossing
 from core import return_edge
 import desktop_mac
-from frame_clock import FrameClock
+from frame_clock import FrameClock, set_divisor
 import dock_visibility
 from core import crash_log
 from core import effects
@@ -356,6 +356,13 @@ def notch_x_range():
             continue
         return (left.origin.x + left.size.width, right.origin.x)
     return None
+
+
+def notch_depth():
+    """How far the notch reaches down from the top of the desktop, in points: the safe-area inset
+    of the screen notch_x_range found it on."""
+    return max((screen.safeAreaInsets().top for screen in AppKit.NSScreen.screens()
+                if hasattr(screen, "safeAreaInsets")), default=0.0)
 
 
 def menu_bar_height(display):
@@ -692,13 +699,11 @@ class EdgeGlow:
                 ])
                 self.fill.setMask_(self.comet)
                 self.fill.setOpacity_(min(1.0, strength))
-            elif fade is not None:
-                self.comet.setLocations_([0.0, fade, 1.0 - fade, 1.0])
-                self.comet.setColors_([AppKit.NSColor.colorWithWhite_alpha_(1.0, a).CGColor() for a in (0.0, 1.0, 1.0, 0.0)])
-                self.fill.setMask_(self.comet)
-                self.fill.setOpacity_(min(1.0, 0.3 + 0.7 * level + 0.6 * flash))
             else:
-                self.fill.setMask_(None)
+                self.comet.setLocations_([0.0, 1.0] if fade is None else [0.0, fade, 1.0 - fade, 1.0])
+                self.comet.setColors_([AppKit.NSColor.colorWithWhite_alpha_(1.0, a).CGColor()
+                                       for a in ((1.0, 1.0) if fade is None else (0.0, 1.0, 1.0, 0.0))])
+                self.fill.setMask_(self.comet)
                 self.fill.setOpacity_(min(1.0, 0.3 + 0.7 * level + 0.6 * flash))
         finally:
             Quartz.CATransaction.commit()
@@ -1523,6 +1528,7 @@ class ControlWindow(AppKit.NSObject):
         self.appearance_select.value = raw["appearance"]
         self._apply_appearance(raw["appearance"])
         self.updates_switch.value = raw["check_updates"]
+        self.pointer_box.value = raw["hide_idle_pointer"]
         self.modifier_select.value = raw["key_map"] if isinstance(raw["key_map"], str) else "custom"
         crossing_raw = raw["crossing"]
         self._load_ways(crossing_raw)
@@ -1553,6 +1559,8 @@ class ControlWindow(AppKit.NSObject):
         self.switch_style_select.value = crossing_raw["shortcut_arrival_style"]
         self.dragging_box.value = crossing_raw["block_while_dragging"]
         self.glow_style_select.value = crossing_raw["glow_style"]
+        self.frame_rate_select.value = crossing_raw.get("frame_rate", "display")
+        set_divisor(effects.frame_divisor(self.frame_rate_select.value))
         self.length_select.set_numeric(crossing_raw.get("effect_pace", 1.0))
         self.size_select.set_numeric(crossing_raw.get("effect_size_fraction", 0.045))
         self._refresh_design_readouts()
@@ -1771,8 +1779,14 @@ class ControlWindow(AppKit.NSObject):
                          lit_thirds=[part for part in picked if part in state.get("thirds", picked)]
                          if "part" in held["methods"] else [],
                          edge_off=not bool(picked))
-            if peer not in excluded and "corner" in held["methods"]:
-                state["corner_way"] = held["corner"]
+            wraps = [wrap["side"] for wrap in state.get("wraps", [])]
+            state["wrap_sides"] = [side for side in core_ways.EDGES if side in wraps] if peer not in excluded else []
+            state["corner_ways"] = ([corner for corner in core_ways.CORNERS if corner in state.get("corners", [])]
+                                    if peer not in excluded else [])
+            state["kept_sides"] = []
+            if peer not in excluded and held["edges"]:
+                sides = self._reach(peer, settings)["sides"]
+                state["kept_sides"] = [side for side in core_ways.EDGES if sides[side]["state"] == "kept"]
             state["notch_way"] = bool(peer not in excluded and self.has_notch and "notch" in held["methods"])
             states[peer] = state
         try:
@@ -2755,26 +2769,55 @@ class ControlWindow(AppKit.NSObject):
         module = widgets.Module()
         module.add(widgets.eyebrow("Window"))
         self.dock_switch = widgets.Switch("Show in Dock", on_change=self._set_show_in_dock)
-        self.dock_switch.value = self.settings_store.current().get("show_in_dock", True)
+        self.tray_switch = widgets.Switch("Show in menu bar", on_change=self._set_show_in_tray)
         module.add(self.dock_switch.view)
+        module.add(self.tray_switch.view)
         module.add(widgets.note(
-            "When off, Beamer stays in the menu bar and appears in the Dock while its window is open."
+            "With the Dock icon off, Beamer stays in the menu bar and appears in the Dock while its window is open. "
+            "The Dock and the menu bar are never both off: the one still showing cannot be switched off."
         ).view)
+        self._reflect_visibility()
         return module
 
     @objc.python_method
-    def _set_show_in_dock(self, on):
+    def _reflect_visibility(self):
+        """Both switches from the saved choice. The menu bar item shows whenever the Dock icon is
+        hidden, so with the Dock off its switch reads on and is dimmed; with the menu bar off the
+        Dock's is."""
+        settings = self.settings_store.current()
+        show_in_dock = settings.get("show_in_dock", True)
+        show_in_menu_bar = dock_visibility.menu_bar_visible(show_in_dock, settings.get("show_in_tray", True))
+        self.dock_switch.value = show_in_dock
+        self.tray_switch.value = show_in_menu_bar
+        self.dock_switch.set_enabled(show_in_menu_bar)
+        self.tray_switch.set_enabled(show_in_dock)
+
+    @objc.python_method
+    def _save_visibility(self, name, on):
+        """Writes the Dock or menu bar choice, refusing the one that would hide both."""
         try:
             with self.settings_store.lock:
                 settings = copy.deepcopy(self.settings_store.current())
-                settings["show_in_dock"] = bool(on)
+                # A hand-edited file with both off already reads as the menu bar on.
+                settings["show_in_tray"] = dock_visibility.menu_bar_visible(settings["show_in_dock"], settings["show_in_tray"])
+                settings[name] = bool(on)
+                if not settings["show_in_dock"] and not settings["show_in_tray"]:
+                    self._reflect_visibility()
+                    return
                 self.settings_store.save_settings(settings)
         except (SettingsError, TypeError, ValueError) as exc:
-            self.logger.warning("Show in Dock not saved: %s", exc)
-            self.dock_switch.value = self.settings_store.current().get("show_in_dock", True)
-            return
+            self.logger.warning("%s not saved: %s", name, exc)
+        self._reflect_visibility()
         if self.activation_policy_handler is not None:
             self.activation_policy_handler()
+
+    @objc.python_method
+    def _set_show_in_dock(self, on):
+        self._save_visibility("show_in_dock", on)
+
+    @objc.python_method
+    def _set_show_in_tray(self, on):
+        self._save_visibility("show_in_tray", on)
 
     @objc.python_method
     def _updates_module(self):
@@ -2945,15 +2988,18 @@ class ControlWindow(AppKit.NSObject):
             if why_not == settings_sync.NEEDS_DESIGN_SYNC:
                 title += f" — {why_not}"
             choices.append((entry["id"], title))
-        if not hasattr(self, "follow_select"):
+        menu_key = (tuple(choices), tuple(sorted(unsupported.items())))
+        if menu_key != getattr(self, "_follow_menu_key", None):
+            for view in self.follow_host.arrangedSubviews():
+                self.follow_host.removeArrangedSubview_(view)
+                view.removeFromSuperview()
             self.follow_select = widgets.MenuChoice(choices, on_change=self._set_design_follow)
+            for value, cell in self.follow_select.items:
+                cell.setEnabled_(value not in unsupported)
+                cell.setToolTip_(unsupported[value] if value in unsupported else cell.title())
             widgets.add(self.follow_host, self.follow_select.view, full_width=False)
-        else:
-            self.follow_select.set_choices(choices)
+            self._follow_menu_key = menu_key
         self.follow_select.value = self.controller.cfg.design_follow_peer
-        for value, cell in self.follow_select.items:
-            cell.setEnabled_(value not in unsupported)
-            cell.setToolTip_(unsupported[value] if value in unsupported else cell.title())
         peer = self.controller.cfg.design_follow_peer
         entry = next((item for item in peers if item.get("id") == peer), {}) if peer else {}
         name = labels.get(entry.get("token", "")) or "that machine"
@@ -3132,7 +3178,26 @@ class ControlWindow(AppKit.NSObject):
         )
         module.add(self.hold_note.view)
         self.hold_box.view.setToolTip_("This screen's setting applies to every pointer on it.")
+        self.pointer_box = widgets.Switch("Hide the pointer on the machine not in use", on_change=self._set_hide_idle_pointer)
+        self.pointer_box.value = self.controller.cfg.hide_idle_pointer
+        module.add(self.pointer_box.view)
+        module.add(widgets.note(
+            "This Mac's pointer always hides while it drives another machine. On, it also hides after another "
+            "machine stops driving it, until its own mouse or trackpad moves."
+        ).view)
         return module
+
+    @objc.python_method
+    def _set_hide_idle_pointer(self, on):
+        try:
+            cfg = self.settings_store.save(config_to_raw(replace(self.controller.cfg, hide_idle_pointer=bool(on))))
+        except SettingsError as exc:
+            self.logger.warning("pointer hiding not saved: %s", exc)
+            self.pointer_box.value = self.controller.cfg.hide_idle_pointer
+            return
+        self.controller.update_config(cfg)
+        if not on:
+            self.controller.idle_pointer.cancel()
 
     @objc.python_method
     def _resistance_module(self):
@@ -3175,7 +3240,7 @@ class ControlWindow(AppKit.NSObject):
         module.add(self.atlas_legend)
         self.crossing_ledger = ledger.Ledger.alloc().init().setup(self)
         module.add(self.crossing_ledger)
-        module.add(widgets.note("Three lit segments are the whole edge; click one to leave it out. A corner is a diagonal push, shown as a square on the map. The notch is this Mac only.").view)
+        module.add(widgets.note("Each chip is a side of this screen; click one to add or remove it. The side a machine touches crosses on its lit thirds; any other free side wraps round to it, arriving on its far side. A corner is a diagonal push, shown as a square on the map. The notch is this Mac only.").view)
         return module
 
     @objc.python_method
@@ -3233,17 +3298,57 @@ class ControlWindow(AppKit.NSObject):
         self._reflect()
 
     @objc.python_method
-    def _ledger_corner(self, peer, corner):
+    def _reach(self, peer, settings=None):
+        """`core.ways.reach` for one machine, kept until the settings or who is live change: the status
+        tick refreshes the ledger and the map every 0.4 s, and each answer is several compiles."""
+        settings = settings or self.settings_store.current()
+        args = self._crossing_args()
+        ids = [entry.get("id") for entry in settings.get("peers", [])]
+        stamp = (repr(settings), args["platform"], frozenset(args["capable"] or ()),
+                 tuple(bool(args["live"](ident)) for ident in ids), tuple(bool(args["gone"](ident)) for ident in ids))
+        if getattr(self, "_reach_stamp", None) != stamp:
+            self._reach_stamp, self._reach_held = stamp, {}
+        if peer not in self._reach_held:
+            self._reach_held[peer] = core_ways.reach(settings, peer, platform=args["platform"],
+                                                     capable=args["capable"], live=args["live"], gone=args["gone"])
+        return copy.deepcopy(self._reach_held[peer])
+
+    @objc.python_method
+    def _ledger_side(self, peer, side):
+        """A side chip: the contact side toggles Edge as a whole; a free side is added (turning Edge on
+        if it was off), one that wraps is removed, and a kept one turns Edge back on or is removed."""
         settings = self.settings_store.current()
         entry = next((item for item in settings["peers"] if item["id"] == peer), None)
-        if (entry is None or entry.get("left_out") or entry.get("in_use", True) is False
-                or core_ways.corner_holder(settings, corner, exclude=peer)):
+        if entry is None or entry.get("left_out") or entry.get("in_use", True) is False:
+            return
+        state = self._reach(peer, settings)["sides"][side]["state"]
+        if state == "contact":
+            return self._ledger_edge(peer)
+        held = core_ways.ways(settings, peer)
+        edge_on = bool(set(held["methods"]) & {"edge", "part"})
+        edges = [item for item in core_ways.EDGES if item in held["edges"] and item != side]
+        if state == "kept" and not edge_on:
+            self._write_ways(peer, edge=True)
+        elif state == "free":
+            self._write_ways(peer, edges=[item for item in core_ways.EDGES if item in edges + [side]],
+                             **({} if edge_on else {"edge": True}))
+        elif state in ("on", "kept"):
+            self._write_ways(peer, edges=edges)
+
+    @objc.python_method
+    def _ledger_corner(self, peer, corner):
+        """A corner button: several may be on; another machine's, or one with no side contact to leave
+        from, is refused without a write (a corner already on can always be taken off)."""
+        settings = self.settings_store.current()
+        entry = next((item for item in settings["peers"] if item["id"] == peer), None)
+        if entry is None or entry.get("left_out") or entry.get("in_use", True) is False:
             return
         held = core_ways.ways(settings, peer)
-        enabled = not ("corner" in held["methods"] and held["corner"] == corner)
-        self._write_ways(peer, corner=enabled, corner_at=corner)
-        self._load_ways()
-        self._reflect()
+        if corner not in held["corners"]:
+            if self._reach(peer, settings)["corners"][corner]["state"] != "free":
+                return
+        chosen = [item for item in core_ways.CORNERS if (item in held["corners"]) != (item == corner)]
+        self._write_ways(peer, corners=chosen)
 
     @objc.python_method
     def _ledger_notch(self, peer, enabled):
@@ -3252,6 +3357,11 @@ class ControlWindow(AppKit.NSObject):
                 and entry.get("in_use", True) is not False):
             self._write_ways(peer, notch=enabled)
             self._reflect()
+    @objc.python_method
+    def _ledger_notch_return(self, peer, enabled):
+        if self.has_notch:
+            self._write_ways(peer, notch_return=enabled)
+
     @objc.python_method
     def _atlas_third(self, peer, part):
         self._ledger_edge(peer, part)
@@ -3505,7 +3615,7 @@ class ControlWindow(AppKit.NSObject):
             return
         locked = entry is not None
         for control in (self.glow_style_select, self.switch_style_select, self.glow_colour_select,
-                        self.length_select, self.size_select, self.landing_box):
+                        self.length_select, self.size_select, self.frame_rate_select, self.landing_box):
             control.set_enabled(not locked)
         self.follow_banner_label.set(settings_sync.following_banner(name) if locked else "")
         self.follow_banner.setHidden_(not locked)
@@ -3610,10 +3720,16 @@ class ControlWindow(AppKit.NSObject):
         widgets.add(size_control, self.size_readout.view, full_width=False)
         self.length_row = widgets.field_row("Length", length_control)[0]
         self.size_row = widgets.field_row("Size", size_control)[0]
+        self.frame_rate_select = widgets.Segmented(
+            tuple((value, name) for value, name, _divisor in effects.FRAME_RATES),
+            on_change=self._changed,
+        )
+        self.frame_rate_row = widgets.field_row("Frame rate", self.frame_rate_select.view)[0]
         module.add(self.length_row)
         module.add(widgets.note("Sets the effect's playback time.", ink="ink_2").view)
         module.add(self.size_row)
         module.add(widgets.note("Sets effect depth relative to the shorter screen edge.", ink="ink_2").view)
+        module.add(self.frame_rate_row)
         module.add(self.place_note.view)
         module.add(self.notch_row)
         return module
@@ -3936,6 +4052,7 @@ class ControlWindow(AppKit.NSObject):
                 "effect_size": self.size_select.value or "medium",
                 "effect_pace": self.length_select.numeric_value(),
                 "effect_size_fraction": self.size_select.numeric_value(),
+                "frame_rate": self.frame_rate_select.value or "display",
                 "block_while_dragging": self.dragging_box.value,
                 "shortcut_goes_to": self.shortcut_goes_to.value or "last",
                 "hold_full_screen": self.hold_box.value,
@@ -3966,6 +4083,7 @@ class ControlWindow(AppKit.NSObject):
             self._say(str(exc), "fault")
             return
         self.controller.apply_settings(cfg)
+        set_divisor(effects.frame_divisor(cfg.crossing.get("frame_rate", "display")))
         if self.previews is not None:
             # The tiles' renderers read the colour from the applied settings, which land only now.
             self.previews.repaint()
@@ -4323,6 +4441,22 @@ def _set_tray_title(item, title):
     item.title = americanise(title)
 
 
+# What a click on the Dock icon does while no window is open. With the menu bar item switched off
+# the Dock is the only way back to Beamer, and rumps' delegate has no answer to the reopen event.
+_reopen_window = None
+
+
+def applicationShouldHandleReopen_hasVisibleWindows_(self, _app, has_visible_windows):
+    if not has_visible_windows and _reopen_window is not None:
+        _reopen_window()
+    return True
+
+
+objc.classAddMethods(rumps.rumps.NSApp, [objc.selector(
+    applicationShouldHandleReopen_hasVisibleWindows_, selector=b"applicationShouldHandleReopen:hasVisibleWindows:",
+    signature=b"Z@:@Z")])
+
+
 class TrayApp(rumps.App):
     def __init__(self, controller, settings_store, logger, hidden=False):
         self.hidden = hidden
@@ -4340,6 +4474,8 @@ class TrayApp(rumps.App):
             controller, settings_store, logger
         )
         self.control_window.activation_policy_handler = self.apply_activation_policy
+        global _reopen_window
+        _reopen_window = self.control_window.show
         self.control_window.quit_handler = self.quit_app
         self.control_window.direction_handler = self._set_direction
         self.control_window.left_out_handler = self._set_left_out
@@ -4518,8 +4654,8 @@ class TrayApp(rumps.App):
         item, and Bring input back on the one input is on; with one, the one item as it always was."""
         controller = self.controller
         wanted = pages.send_items(controller.book.peers(), controller.owner.on if controller.redirecting else None,
-                                  controller.cfg.hide_addresses)
-        keys = [ident for ident, _title in wanted]
+                                  controller.cfg.hide_addresses, live=self._peer_live)
+        keys = [ident for ident, _title, _enabled in wanted]
         if keys != self._send_keys:
             for key in self._send_keys:
                 del self.menu[key]
@@ -4529,9 +4665,16 @@ class TrayApp(rumps.App):
                 self.menu.insert_after(anchor, _tray_item(ident, callback=lambda _sender, ident=ident: self._send_to(ident)))
                 anchor = ident
             self._send_keys = keys
-        for ident, title in wanted:
-            _set_tray_title(self.menu[ident], title)
+        for ident, title, enabled in wanted:
+            item = self.menu[ident]
+            _set_tray_title(item, title)
+            # rumps dims an item with no callback.
+            item.set_callback((lambda _sender, ident=ident: self._send_to(ident)) if enabled else None)
         self.toggle_item.hidden = bool(keys)
+
+    def _peer_live(self, entry):
+        link = self.controller.links.get(entry.get("token"))
+        return link is not None and link.live()
 
     def _send_to(self, peer):
         """One machine's item: input goes to it, straight from the machine it is on (WIRE.md section 5,
@@ -4598,12 +4741,16 @@ class TrayApp(rumps.App):
     def apply_activation_policy(self, window_open=None):
         if window_open is None:
             window_open = self.control_window.window.isVisible()
-        show_in_dock = self.settings_store.current().get("show_in_dock", True)
+        settings = self.settings_store.current()
+        show_in_dock = settings.get("show_in_dock", True)
         policy = dock_visibility.activation_policy(show_in_dock, window_open)
         AppKit.NSApp.setActivationPolicy_(
             AppKit.NSApplicationActivationPolicyRegular
             if policy == "regular" else AppKit.NSApplicationActivationPolicyAccessory
         )
+        item = getattr(self, "status_item_view", None)
+        if item is not None:
+            item.setVisible_(dock_visibility.menu_bar_visible(show_in_dock, settings.get("show_in_tray", True)))
 
     def toggle_send_to_windows(self, _sender):
         """The menu's tick covers every machine: all on turns them all off, anything else all on."""
@@ -4693,6 +4840,7 @@ class TrayApp(rumps.App):
             return
         try:
             self.controller.notch_range = notch_x_range()
+            self.controller.notch_depth = notch_depth() if self.controller.notch_range is not None else 0.0
         except Exception:
             self._notch_failed = True
             self.controller.notch_range = None

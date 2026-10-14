@@ -19,6 +19,7 @@ def mac_raw(**crossing):
         "methods": ["shortcut", "edge", "notch"], "edge": "right", "edge_parts": ["middle"],
         "corner": "top_right", "resistance_px": 120, "block_while_dragging": True, "glow": True,
         "glow_style": "glow", "glow_colour": "signal", "effect_length": "normal", "effect_size": "medium",
+        "frame_rate": "display",
         "shortcut_arrival": True,
         "shortcut_goes_to": "last",
         "shortcut_arrival_style": "match", "notch_style": "beam", "notch_after_ms": 1200, "haptics": True,
@@ -36,6 +37,7 @@ def pc_config(**fields):
         shortcut_goes_to="last",
         double_tap_ms=300, glow_style="glow", glow_colour="signal", effect_length="normal", effect_size="medium",
         shortcut_arrival=True, shortcut_arrival_style="match", mac_return_edge="left", edge_glow=True,
+        frame_rate="display",
         appearance="light",
     )
     base.update(fields)
@@ -196,6 +198,19 @@ class MessageTests(unittest.TestCase):
             {"on": False, "set_at": NOW, "by": b64(bytes(16)), "design_sync": state}, KEYS),
                          {"set_at": NOW, "by": state["by"], "values": {"glow_style": "beam"}})
 
+    def test_frame_rate_is_validated_and_an_older_peer_can_omit_it(self):
+        envelope = {"on": False, "set_at": NOW, "by": b64(bytes(16))}
+        valid = {"set_at": NOW, "by": b64(bytes(16)), "values": {"frame_rate": "quarter"}}
+        invalid = {**valid, "values": {"frame_rate": "eighth"}}
+
+        self.assertEqual(settings_sync.read_design_state({**envelope, "design_sync": valid}, KEYS)["values"],
+                         {"effect_size_fraction": 0.045, "effect_size": "medium", "frame_rate": "quarter"})
+        self.assertNotIn("frame_rate", settings_sync.read_design_state(
+            {**envelope, "design_sync": invalid}, KEYS)["values"])
+        local = pc_config(frame_rate="quarter")
+        settings_sync.apply_pc(local, {"glow_style": "beam"})
+        self.assertEqual(local.frame_rate, "quarter")
+
     def test_a_design_state_in_a_malformed_settings_envelope_is_ignored(self):
         for outer in ({"on": "no"}, {"set_at": True}, {"by": "not an id"}):
             data = {"on": False, "set_at": NOW, "by": b64(bytes(16)), **outer,
@@ -241,7 +256,7 @@ class MessageTests(unittest.TestCase):
         current = settings_sync.mac_values(mac_raw())
         desired = dict(glow_style="beam", glow_colour="ocean", effect_length="long",
                        effect_size="large", effect_pace=2.0, effect_size_fraction=0.06,
-                       shortcut_arrival=False, shortcut_arrival_style="locator")
+                       frame_rate="display", shortcut_arrival=False, shortcut_arrival_style="locator")
         state = {"set_at": 10, "by": peer, "values": desired}
         taken = settings_sync.followed_design(current, state, peer, peer, False, 500, "", force=True)
         self.assertEqual({key: taken["values"][key] for key in settings_sync.DESIGN_KEYS}, desired)

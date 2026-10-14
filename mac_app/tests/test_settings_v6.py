@@ -756,7 +756,8 @@ class PairedAndRemovedTests(Base):
         after = self.settings()
         self.assertEqual([peer["id"] for peer in after["peers"]], [PEER_ID])
         # Only the new machine's own edge, which every machine paired starts with.
-        self.assertEqual(after["zones"], [{"peer": PEER_ID, "kind": "edge", "side": "right"}])
+        self.assertEqual(after["zones"], [{"peer": PEER_ID, "kind": "edge", "side": "right",
+                                           "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0]}])
         self.assertEqual(self.store.load().auth_token, OTHER_TOKEN)
 
     def test_a_pairing_that_cannot_be_written_raises_and_changes_nothing(self):
@@ -778,7 +779,8 @@ class PairedAndRemovedTests(Base):
         self.store.add_peer(self.entry(SECOND_ID, OTHER_TOKEN))
         self.store.remove_peer(TOKEN)
         self.assertEqual(self.store.load().auth_token, OTHER_TOKEN)
-        self.assertEqual(self.settings()["zones"], [{"peer": SECOND_ID, "kind": "edge", "side": "right"}])
+        self.assertEqual(self.settings()["zones"], [{"peer": SECOND_ID, "kind": "edge", "side": "right",
+                                                      "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0]}])
 
     def test_removing_the_only_machine_leaves_this_one_unpaired_and_it_stays_so(self):
         self.store.remove_peer(TOKEN)
@@ -1136,7 +1138,8 @@ class OverlapTests(Base):
         self.assertNotIn("part", zones)
         self.assertEqual(self.store.current()["peers"][0]["ways"]["thirds"], list(ways.PARTS))
 
-    def test_two_machines_keep_notch_intent_while_the_picture_compiles_one_notch(self):
+    def test_an_old_file_with_two_notches_keeps_the_first_machine(self):
+        # 1.5.3: the notch reaches one machine; an old file that ticked two keeps the first in ways order.
         def two_notches(s):
             s["peers"][0]["id"] = PEER_ID
             s["zones"] = [{**z, "peer": PEER_ID} for z in s["zones"]]
@@ -1146,7 +1149,7 @@ class OverlapTests(Base):
             s["peers"].append(second)
             s["zones"].append({"peer": SECOND_ID, "kind": "notch"})
         saved = self.compiled(two_notches)
-        self.assertTrue(all(peer["ways"]["notch"] for peer in saved["peers"]))
+        self.assertEqual([peer["ways"]["notch"] for peer in saved["peers"]], [True, False])
         self.assertEqual([zone["kind"] for zone in saved["zones"]].count("notch"), 1)
 
 

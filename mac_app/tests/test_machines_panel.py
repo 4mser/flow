@@ -55,6 +55,14 @@ class FakeService:
         self.paired = []
         self.qr = "beamer://pair?host=192.0.2.9&port=24821&code=123456&k=" + "A" * 22
         self.result = None
+        self.nearby_status = {"state": "inactive", "seconds_left": 0, "peers": [], "peer": None,
+                              "sas": None, "attempt": None}
+        self.nearby_begun = 0
+        self.nearby_cancelled = 0
+        self.nearby_chosen = []
+        self.nearby_confirmed = []
+        self.nearby_choose_error = None
+        self.nearby_confirm_error = None
 
     def begin_pairing(self):
         self.begun += 1
@@ -65,6 +73,32 @@ class FakeService:
     def cancel_pairing(self):
         self.cancelled += 1
         self.code = None
+
+    def begin_nearby(self):
+        self.nearby_begun += 1
+        self.nearby_status = {"state": "searching", "seconds_left": 60, "peers": [], "peer": None,
+                              "sas": None, "attempt": None}
+
+    def cancel_nearby(self):
+        self.nearby_cancelled += 1
+        self.nearby_status = {"state": "inactive", "seconds_left": 0, "peers": [], "peer": None,
+                              "sas": None, "attempt": None}
+
+    def choose_nearby(self, machine):
+        self.nearby_chosen.append(machine)
+        if self.nearby_choose_error is not None:
+            error, self.nearby_choose_error = self.nearby_choose_error, None
+            self.nearby_status = {**self.nearby_status, "state": "expired"}
+            raise error
+        self.nearby_status = {**self.nearby_status, "state": "exchanging", "peer": machine}
+
+    def confirm_nearby(self, sas, attempt):
+        self.nearby_confirmed.append((sas, attempt))
+        if self.nearby_confirm_error is not None:
+            error, self.nearby_confirm_error = self.nearby_confirm_error, None
+            self.nearby_status = {**self.nearby_status, "state": "refused"}
+            raise error
+        self.nearby_status = {**self.nearby_status, "state": "waiting"}
 
     def machines(self):
         return self.heard
@@ -403,7 +437,7 @@ class FollowTheFirstMachineTests(Base):
 
 
 class ShowingACodeTests(Base):
-    # The pairing QR is hidden until 1.6 (core.feature_flags); these tests prove both states.
+    # Keep the rollback gate covered beside 1.6's default visible QR.
     def test_while_the_qr_flag_is_off_the_code_shows_without_a_qr(self):
         with mock.patch.object(feature_flags, "PAIRING_QR_VISIBLE", False), \
                 mock.patch.object(kvm_bridge_app.machines_panel.pairing, "pairing_address", return_value="192.0.2.9"):
@@ -412,6 +446,7 @@ class ShowingACodeTests(Base):
             self.panel.refresh()
         self.assertEqual(self.panel.shown_code_boxes.value, "482913")
         self.assertIn("192.0.2.9", self.panel.code_address.text)
+        self.assertTrue(self.panel.phone_button.view.isHidden())
         self.assertTrue(self.panel.qr_view.isHidden())
         self.assertTrue(self.panel.qr_caption.view.isHidden())
 
@@ -431,6 +466,16 @@ class ShowingACodeTests(Base):
         self.assertIsNotNone(self.panel.qr_view.image())
         self.assertEqual(render.call_args.args[0], self.service.qr)
         self.assertTrue(self.panel.show_button.view.isHidden())
+
+    @mock.patch.object(feature_flags, "PAIRING_QR_VISIBLE", True)
+    def test_pair_a_phone_opens_the_sheet_and_starts_the_qr_host_flow_in_one_action(self):
+        with mock.patch.object(kvm_bridge_app.machines_panel.pairing, "pairing_address", return_value="192.0.2.9"):
+            self.panel.pair_phone()
+            self.panel.refresh()
+        self.assertTrue(self.panel.open)
+        self.assertEqual(self.service.begun, 1)
+        self.assertEqual(self.panel.shown_code_boxes.value, "482913")
+        self.assertIsNotNone(self.panel.qr_view.image())
 
     @mock.patch.object(feature_flags, "PAIRING_QR_VISIBLE", True)
     def test_with_addresses_hidden_there_is_no_qr_and_no_address(self):
@@ -492,6 +537,86 @@ class EnteringACodeTests(Base):
         self.panel.refresh()
         self.said = []
         self.window._say = lambda message, ink="ink_2": self.said.append((message, ink))
+
+    def test_pair_nearby_opens_the_sheet_and_shows_the_searching_instruction(self):
+        self.panel.pair_nearby()
+        self.panel.refresh()
+        self.assertTrue(self.panel.open)
+        self.assertEqual(self.service.nearby_begun, 1)
+        self.assertEqual(self.panel.nearby_status_label.text,
+                         "Press Pair nearby on the other machine within 60 seconds.")
+        self.assertFalse(self.panel.nearby_view.isHidden())
+
+    def test_choosing_nearby_peer_is_explicit_and_sas_waits_for_authenticated_confirmation_state(self):
+        first = heard("First PC", pair_id=None, id="first")
+        second = heard("Second PC", pair_id=None, id="second", address="192.0.2.41")
+        self.service.nearby_status = {"state": "choosing", "seconds_left": 55, "peers": [first, second],
+                                      "peer": None, "sas": None, "attempt": None}
+        self.panel.refresh()
+        self.assertEqual(len(self.panel.nearby_choices.arrangedSubviews()), 2)
+        self.assertEqual(self.panel.nearby_status_label.text, "Choose a machine to pair nearby.")
+        self.panel._choose_nearby(second)
+        self.assertEqual(self.service.nearby_chosen, [second])
+        self.assertEqual(self.service.nearby_status["state"], "exchanging")
+        self.service.nearby_status = {**self.service.nearby_status, "state": "confirm", "sas": "004283",
+                                      "attempt": "attempt-1"}
+        self.panel.refresh()
+        self.assertEqual(self.panel.nearby_sas.text, "004 283")
+        self.assertTrue(self.panel.nearby_confirm.enabled)
+        self.assertEqual(self.panel.nearby_confirm.view.keyEquivalent(), "")
+        self.assertEqual(self.panel.nearby_peer_label.text, "Selected: Second PC · Mac")
+        self.panel._confirm_nearby()
+        self.assertEqual(self.service.nearby_confirmed, [("004283", "attempt-1")])
+        self.assertEqual(self.service.nearby_status["state"], "waiting")
+        self.assertEqual(self.panel.nearby_status_label.text, "Waiting for confirmation on the other machine.")
+
+    def test_confirm_uses_only_the_sas_and_attempt_that_were_displayed(self):
+        peer = heard("Studio", pair_id=None)
+        self.service.nearby_status = {"state": "confirm", "seconds_left": 35, "peers": [], "peer": peer,
+                                      "sas": "004283", "attempt": "displayed-attempt"}
+        self.panel.refresh()
+        self.service.nearby_status = {**self.service.nearby_status, "sas": "999999", "attempt": "new-attempt"}
+        self.panel._confirm_nearby()
+        self.assertEqual(self.service.nearby_confirmed, [("004283", "displayed-attempt")])
+
+    def test_rejected_confirmation_refreshes_the_refused_state(self):
+        peer = heard("Studio", pair_id=None)
+        self.service.nearby_status = {"state": "confirm", "seconds_left": 35, "peers": [], "peer": peer,
+                                      "sas": "004283", "attempt": "attempt-1"}
+        self.panel.refresh()
+        self.service.nearby_confirm_error = pairing.PairingError(pairing.ERROR_REFUSED)
+        self.panel._confirm_nearby()
+        self.assertEqual(self.panel.nearby_status_label.text,
+                         "Nearby pairing refused. Use a new window to try again.")
+
+    def test_stale_peer_choice_refreshes_the_expired_state_without_raising(self):
+        peer = heard("Studio", pair_id=None)
+        self.service.nearby_status = {"state": "choosing", "seconds_left": 1, "peers": [peer], "peer": None,
+                                      "sas": None, "attempt": None}
+        self.panel.refresh()
+        self.service.nearby_choose_error = pairing.PairingError(pairing.ERROR_NOT_PAIRING)
+        self.panel._choose_nearby(peer)
+        self.assertEqual(self.panel.nearby_status_label.text,
+                         "Nearby pairing expired. Press Pair nearby to try again.")
+
+    def test_selected_peer_name_and_platform_are_shown_without_an_address(self):
+        self.controller.cfg.hide_addresses = True
+        peer = heard("Studio", pair_id=None, address="192.0.2.41", platform="macos")
+        self.service.nearby_status = {"state": "confirm", "seconds_left": 35, "peers": [], "peer": peer,
+                                      "sas": "004283", "attempt": "attempt-1"}
+        self.panel.refresh()
+        self.assertEqual(self.panel.nearby_peer_label.text, "Selected: Studio · Mac")
+        self.assertNotIn("192.0.2.41", self.panel.nearby_peer_label.text)
+
+    def test_closing_the_sheet_cancels_nearby_and_starting_the_code_route_cancels_it_too(self):
+        self.panel.pair_nearby()
+        self.panel._toggle_sheet()
+        self.assertGreaterEqual(self.service.nearby_cancelled, 1)
+        self.panel._toggle_sheet()
+        self.panel.pair_nearby()
+        self.panel._show_code()
+        self.assertGreaterEqual(self.service.nearby_cancelled, 2)
+        self.assertEqual(self.service.begun, 1)
 
     def run_pair(self):
         threads = []
@@ -775,6 +900,31 @@ class CodeBoxCentringTests(Base):
         boxes.focus(self.window.window)
         self.window.window.firstResponder().insertText_("408819")
         self.assertEqual(boxes.value, "408819")
+
+    def test_pasting_digits_into_middle_box_spreads_forward_and_focuses_after(self):
+        self.panel._toggle_sheet()
+        boxes = self.panel.code_boxes
+        self.window.window.makeFirstResponder_(boxes.fields[2])
+        self.window.window.firstResponder().insertText_("4-5-6")
+        self.assertEqual(boxes.fields[2].stringValue(), "4")
+        self.assertEqual(boxes.fields[3].stringValue(), "5")
+        self.assertEqual(boxes.fields[4].stringValue(), "6")
+        self.assertEqual(self.window.window.firstResponder().delegate(), boxes.fields[5])
+
+    def test_a_digit_typed_beside_a_held_one_replaces_it_and_leaves_the_next_box(self):
+        self.panel._toggle_sheet()
+        boxes = self.panel.code_boxes
+        window = self.window.window
+        window.makeFirstResponder_(boxes.fields[0])
+        window.firstResponder().insertText_("408819")
+        for caret in (1, 0):
+            with self.subTest(caret=caret):
+                window.makeFirstResponder_(boxes.fields[2])
+                window.firstResponder().setSelectedRange_((caret, 0))
+                window.firstResponder().insertText_("7")
+                self.assertEqual(boxes.value, "407819")
+                boxes.fields[2].setStringValue_("8")
+                boxes._remember()
 
 
 class TrayTests(Base):

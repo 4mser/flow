@@ -278,10 +278,11 @@ def plan_text(text: str, state: KeyState, layout: Layout, group: int, locks: int
 def plan_scroll(dy, dx, mode: str, carry: List[float]) -> Tuple[int, int]:
     """Whole wheel clicks (vertical, horizontal) for one scroll message, the remainder carried in
     `carry` ([y, x]) as plan_scroll_units carries Windows' wheel units. Positive y is away from
-    the hand, positive x is right, as on Windows."""
+    the hand, positive x is right, as on Windows; the wire's dx is positive left, so it is
+    turned round."""
     scale = 1.0 / PIXELS_PER_CLICK if mode == "pixel" else 1.0
     carry[0] += float(dy) * scale
-    carry[1] += float(dx) * scale
+    carry[1] -= float(dx) * scale
     whole_y, whole_x = int(carry[0]), int(carry[1])
     carry[0] -= whole_y
     carry[1] -= whole_x

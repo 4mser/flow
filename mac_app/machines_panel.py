@@ -75,6 +75,9 @@ class MachinesPanel:
         self._hosted = None
         self._pair_ink = "ink_2"
         self._qr_for = None
+        self._nearby_key = None
+        self._nearby_confirm_sas = None
+        self._nearby_confirm_attempt = None
         self.machines_module = self._machines_module()
         self.sheet = self._sheet()
 
@@ -84,8 +87,12 @@ class MachinesPanel:
         module = widgets.Module()
         header = widgets.stack(spacing=12)
         widgets.add(header, widgets.eyebrow("Machines"))
-        self.pair_button = widgets.action_button("Pair a machine", self._toggle_sheet, style="primary")
-        widgets.add(header, self.pair_button.view, full_width=False)
+        self.nearby_button = widgets.action_button("Pair nearby", self.pair_nearby, style="primary")
+        self.phone_button = widgets.action_button("Pair a phone", self.pair_phone)
+        self.phone_button.view.setHidden_(not feature_flags.PAIRING_QR_VISIBLE)
+        self.pair_button = widgets.action_button("Pair a machine", self._toggle_sheet)
+        for button in (self.nearby_button, self.phone_button, self.pair_button):
+            widgets.add(header, button.view, full_width=False)
         module.add(header)
         self.list = widgets.stack(spacing=8)
         module.add(self.list)
@@ -172,6 +179,27 @@ class MachinesPanel:
 
     def _enter_half(self):
         half = widgets.stack(spacing=8)
+        nearby = widgets.stack(spacing=6)
+        self.nearby_status_label = widgets.note()
+        widgets.add(nearby, self.nearby_status_label.view)
+        self.nearby_expiry = widgets.Label("", theme.TYPE["small"], mono=True, ink="ink_3")
+        widgets.add(nearby, self.nearby_expiry.view)
+        self.nearby_choices = widgets.stack(spacing=2)
+        widgets.add(nearby, self.nearby_choices)
+        self.nearby_sas = widgets.Label("", theme.TYPE["readout"], 700, mono=True, ink="ink")
+        self.nearby_sas.view.setAccessibilityLabel_("Nearby pairing digits")
+        widgets.add(nearby, self.nearby_sas.view)
+        self.nearby_peer_label = widgets.Label("", theme.TYPE["note"], ink="ink_2")
+        widgets.add(nearby, self.nearby_peer_label.view)
+        nearby_buttons = widgets.stack(vertical=False, spacing=8)
+        self.nearby_confirm = widgets.action_button("Confirm", self._confirm_nearby, style="primary")
+        self.nearby_cancel = widgets.action_button("Cancel", self._cancel_nearby, scale="small")
+        nearby_buttons.addArrangedSubview_(self.nearby_confirm.view)
+        nearby_buttons.addArrangedSubview_(self.nearby_cancel.view)
+        widgets.add(nearby, nearby_buttons)
+        self.nearby_view = nearby
+        self._nearby_widgets(False)
+        widgets.add(half, nearby)
         widgets.add(half, widgets.label("Enter a code from another machine", theme.TYPE["body"], 600))
         heard = widgets.stack(spacing=8)
         widgets.add(heard, widgets.label("On this network", theme.TYPE["note"], 600, ink="ink_2"))
@@ -514,13 +542,165 @@ class MachinesPanel:
     def _toggle_sheet(self):
         self.open = not self.open
         if not self.open:
+            self._cancel_nearby()
             self._leave_sheet()
         self.refresh()
+
+    def pair_phone(self):
+        """Open the pairing sheet and start the existing QR-host flow in one action."""
+        self.open = True
+        self.refresh()
+        self._show_code()
+
+    def pair_nearby(self):
+        """Open the pairing sheet and begin a fresh nearby pairing window."""
+        self.open = True
+        self.refresh()
+        self._cancel_code()
+        service = self.service
+        if service is None:
+            self._say("Pairing is not available on this Mac.", "fault")
+            return
+        try:
+            service.begin_nearby()
+        except pairing.PairingError as exc:
+            self._say(f"Nearby pairing is not available: {exc}", "fault")
+            return
+        self._nearby_key = None
+        self._refresh_nearby()
+
+    def _nearby_widgets(self, showing):
+        for view in (self.nearby_status_label.view, self.nearby_expiry.view, self.nearby_sas.view,
+                     self.nearby_peer_label.view,
+                     self.nearby_confirm.view, self.nearby_cancel.view):
+            view.setHidden_(not showing)
+        self.nearby_view.setHidden_(not showing)
+
+    def _refresh_nearby(self):
+        status = self.service.nearby_status if self.service is not None else {"state": "inactive"}
+        state = status.get("state", "inactive")
+        visible = state != "inactive"
+        self._nearby_widgets(visible)
+        if not visible:
+            self._nearby_key = None
+            self.nearby_sas.set("")
+            self.nearby_peer_label.set("")
+            self.nearby_expiry.set("")
+            self._nearby_confirm_sas = None
+            self._nearby_confirm_attempt = None
+            return
+
+        messages = {
+            "searching": "Press Pair nearby on the other machine within 60 seconds.",
+            "choosing": "Choose a machine to pair nearby.",
+            "confirm": "Compare all six digits on both machines, then confirm on each.",
+            "waiting": "Waiting for confirmation on the other machine.",
+            "paired": "Nearby pairing complete.",
+            "expired": "Nearby pairing expired. Press Pair nearby to try again.",
+            "refused": "Nearby pairing refused. Use a new window to try again.",
+            "not_saved": "The new peer could not be saved.",
+        }
+        message = messages.get(state, "Connecting to the selected machine…" if state == "exchanging" else "")
+        tone = "fault" if state in {"refused", "expired", "not_saved"} else "ink_2"
+        self.nearby_status_label.set(message, ink=tone)
+        seconds_left = status.get("seconds_left", 0)
+        self.nearby_expiry.set(f"Expires in {seconds_left} s" if state in {"searching", "choosing", "exchanging", "confirm", "waiting"} else "")
+        self.nearby_expiry.view.setHidden_(state not in {"searching", "choosing", "exchanging", "confirm", "waiting"})
+
+        peers = status.get("peers") or []
+        peer = status.get("peer")
+        choices_visible = state == "choosing"
+        self.nearby_choices.setHidden_(not choices_visible)
+        key = (state, tuple(tuple(sorted((k, str(v)) for k, v in candidate.items())) for candidate in peers),
+               tuple(sorted((k, str(v)) for k, v in peer.items())) if isinstance(peer, dict) else None,
+               self.controller.cfg.hide_addresses)
+        if key != self._nearby_key:
+            self._nearby_key = key
+            for view in list(self.nearby_choices.arrangedSubviews()):
+                self.nearby_choices.removeArrangedSubview_(view)
+                view.removeFromSuperview()
+            if choices_visible:
+                for candidate in peers:
+                    picked = isinstance(peer, dict) and candidate == peer
+                    row = widgets.pressable(lambda item=candidate: self._choose_nearby(item),
+                                            "well" if picked else "ground", "rule", 5,
+                                            role=AppKit.NSAccessibilityRadioButtonRole)
+                    label = candidate.get("name") or "Another machine"
+                    platform = machines.platform_name(candidate.get("platform") or "")
+                    address = candidate.get("address")
+                    detail = " · ".join(part for part in (label, platform, address) if part)
+                    row.setAccessibilityLabel_(self._shown(detail))
+                    row.setAccessibilityValue_("Selected" if picked else "Not selected")
+                    text = widgets.Label(self._shown(detail), theme.TYPE["note"], 600 if picked else 400)
+                    row.addSubview_(text.view)
+                    widgets.pin(text.view, row, (7, 10, 7, 10))
+                    self.nearby_choices.addArrangedSubview_(row)
+
+        sas = status.get("sas") if state in {"confirm", "waiting"} else None
+        valid_sas = isinstance(sas, str) and len(sas) == pairing.CODE_DIGITS and sas.isascii() and sas.isdigit()
+        shown_sas = grouped(sas) if valid_sas else ""
+        self.nearby_sas.set(shown_sas)
+        self.nearby_sas.view.setHidden_(not shown_sas)
+        if isinstance(peer, dict):
+            peer_name = peer.get("name") or "Another machine"
+            peer_platform = machines.platform_name(peer.get("platform") or "")
+            selected = f"Selected: {peer_name} · {peer_platform}"
+        else:
+            selected = ""
+        self.nearby_peer_label.set(self._shown(selected))
+        self.nearby_peer_label.view.setHidden_(not selected)
+        if state == "confirm" and shown_sas and status.get("attempt"):
+            self._nearby_confirm_sas = sas
+            self._nearby_confirm_attempt = status["attempt"]
+        else:
+            self._nearby_confirm_sas = None
+            self._nearby_confirm_attempt = None
+        self.nearby_confirm.set_enabled(state == "confirm" and bool(shown_sas) and bool(status.get("attempt")))
+        self.nearby_confirm.view.setHidden_(state != "confirm")
+        self.nearby_cancel.view.setHidden_(state not in {"searching", "choosing", "exchanging", "confirm", "waiting"})
+
+    def _choose_nearby(self, machine):
+        if self.service is None:
+            return
+        if self.service.nearby_status.get("state") != "choosing":
+            self._nearby_key = None
+            self._refresh_nearby()
+            return
+        try:
+            self.service.choose_nearby(machine)
+        except pairing.PairingError:
+            self._nearby_key = None
+            self._refresh_nearby()
+            return
+        self._nearby_key = None
+        self._refresh_nearby()
+
+    def _confirm_nearby(self):
+        sas, attempt = self._nearby_confirm_sas, self._nearby_confirm_attempt
+        self._nearby_confirm_sas = None
+        self._nearby_confirm_attempt = None
+        if self.service is None or not sas or not attempt:
+            return
+        try:
+            self.service.confirm_nearby(sas, attempt)
+        except pairing.PairingError:
+            self._refresh_nearby()
+            return
+        self._refresh_nearby()
+
+    def _cancel_nearby(self):
+        if self.service is not None:
+            self.service.cancel_nearby()
+        self._nearby_key = None
+        self._nearby_confirm_sas = None
+        self._nearby_confirm_attempt = None
+        self._refresh_nearby()
 
     def re_pair(self, token):
         entry = next((item for item in self.controller.book.peers() if item.get("token") == token), None)
         if entry is None:
             return
+        self._cancel_nearby()
         self.open = True
         self.chosen = None
         for field in (self.find_field, self.find_secret):
@@ -541,6 +721,7 @@ class MachinesPanel:
     def _refresh_sheet(self, hide):
         self._refresh_code(hide)
         self._refresh_heard()
+        self._refresh_nearby()
         self.confirm_button.set_enabled(not self.pairing and self._wanted() is not None)
 
     def invalidate(self):
@@ -549,6 +730,7 @@ class MachinesPanel:
 
     def stop_showing(self):
         """The window closed: a code nobody can see does not stay up."""
+        self._cancel_nearby()
         if self._showing or (self.service is not None and self.service.code is not None):
             self._cancel_code()
         self.open = False
@@ -569,6 +751,7 @@ class MachinesPanel:
         service = self.service
         if service is None:
             return
+        self._cancel_nearby()
         try:
             service.begin_pairing()
         except pairing.PairingError as exc:
@@ -757,6 +940,7 @@ class MachinesPanel:
             self._say(f"The code is {pairing.CODE_DIGITS} digits.", "fault")
             return
         kind, target = wanted
+        self._cancel_nearby()
         if kind == "machine":
             # The list may have refreshed since the row was chosen; pair with the latest beacon.
             target = next((item for item in self._heard if item["address"] == target["address"]), target)

@@ -19,6 +19,7 @@ import machines_panel
 import kvm_bridge_app
 import theme
 import widgets
+from core import feature_flags
 
 
 def bitmap(view, scale):
@@ -102,6 +103,7 @@ class PairingPixelsTests(unittest.TestCase):
         self.panel.rows = lambda: []
         self.panel.service = SimpleNamespace(code=None, machines=lambda: [], seconds_left=60, outcome=None,
                                               known=None, error=None, tcp_error=None, tcp_port=24821,
+                                              nearby_status={"state": "inactive"},
                                               qr_text=lambda address: None)
         self.address_patch = mock.patch.object(machines_panel.pairing, "pairing_address", return_value="192.0.2.20")
         self.address_patch.start()
@@ -177,7 +179,9 @@ class PairingPixelsTests(unittest.TestCase):
             save(bitmap(panel.sheet.view, scale), self.renders / f"mac-sheet-empty-{scale}x.png")
         order = list(panel.machines_module.body.arrangedSubviews())
         self.assertLess(order.index(panel.pair_button.view.superview()), order.index(panel.list))
-        self.assertEqual(panel.pair_button.style, "primary")
+        self.assertEqual(panel.nearby_button.style, "primary")
+        self.assertNotEqual(panel.pair_button.style, "primary")
+        self.assertTrue(panel.phone_button.view.isHidden())
         self.assertFalse(panel.pair_button.view.isHidden())
         entry = {"token": "synthetic-test-token", "id": "test-pc", "name": "Studio PC", "platform": "windows",
                  "host": "192.0.2.30", "port": 24820, "send": True, "allow_drive": True, "linked": True}
@@ -187,6 +191,12 @@ class PairingPixelsTests(unittest.TestCase):
         panel.refresh()
         for scale in (1, 2):
             save(bitmap(panel.machines_module.view, scale), self.renders / f"mac-machines-filled-{scale}x.png")
+
+    def test_phone_button_visibility_tracks_the_feature_flag(self):
+        self.assertTrue(self.panel.phone_button.view.isHidden())
+        with mock.patch.object(feature_flags, "PAIRING_QR_VISIBLE", True):
+            self.panel._machines_module()
+            self.assertFalse(self.panel.phone_button.view.isHidden())
 
     def test_machine_addresses_use_the_reading_face_without_mono_dot_spacing(self):
         panel = self.panel
@@ -239,6 +249,7 @@ class PairingPixelsTests(unittest.TestCase):
         for scale in (1, 2):
             save(bitmap(self.panel.sheet.view, scale), self.renders / f"mac-sheet-shown-{scale}x.png")
 
+    @mock.patch.object(feature_flags, "PAIRING_QR_VISIBLE", False)
     def test_pairing_dialog_hides_the_qr_and_caption(self):
         self.panel.service.code = "482913"
         self.panel.service.qr_text = lambda _address: "synthetic pairing payload"

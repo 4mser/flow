@@ -1,4 +1,5 @@
 import copy
+import itertools
 import sys
 import unittest
 from pathlib import Path
@@ -25,6 +26,22 @@ class AtlasCanvas(Page):
         capture = mock.patch.object(WakingController, "start_input_capture")
         capture.start()
         self.addCleanup(capture.stop)
+
+    def test_per_screen_desk_canvas_draws_both_machine_display_groups(self):
+        from core.tests.crossing_harness import per_screen_layout
+
+        window = self.build([(BEE, token(100), "Studio PC", {"side": "right"})])
+        own = self.store.current()["machine_id"]
+        tiles = per_screen_layout(own, BEE)
+        canvas = window.atlas_canvas
+        canvas.setFrame_(((0, 0), (560, canvas.HEIGHT)))
+        canvas.show_layout(tiles, {own: {"state": "this"}, BEE: {"state": "edge", "crosses": True}},
+                           {own: "This Mac", BEE: "Studio PC"}, own, BEE)
+
+        self.assertEqual(len(canvas.display_layers[own]), 2)
+        self.assertEqual(len(canvas.display_layers[BEE]), 2)
+        self.assertEqual([frame["display"] for frame in core_ways._display_frames(tiles[own])], ["0", "1"])
+        self.assertEqual([frame["display"] for frame in core_ways._display_frames(tiles[BEE])], ["0", "1"])
 
     def layout(self, bee_x=320, bee_y=100):
         window = self.build([(BEE, token(100), "Bee", {"side": "right"}),
@@ -708,7 +725,7 @@ class AtlasCanvas(Page):
         window = self.layout(bee_x=320, bee_y=0)
         canvas = window.atlas_canvas
         canvas.setFrame_(((0, 0), (480, canvas.HEIGHT)))
-        canvas.states[BEE] = {"state": "corner", "crosses": True, "corner_way": "top_right"}
+        canvas.states[BEE] = {"state": "corner", "crosses": True, "corner_ways": ["top_right"]}
         canvas._draw(False)
         self.assertNotIn((canvas.own_id, BEE, "signal"), canvas.contact_layers)
         pad = canvas.mark_layers[(BEE, "corner", "top_right")]
@@ -870,6 +887,161 @@ class AtlasCanvas(Page):
         settings["layout_set_at"] = 1
         self.store.save_settings(settings)
         self.assertEqual(window.controller._shortcut_cycle(), [SEA, BEE, None])
+
+
+class WrapAroundSeams(unittest.TestCase):
+    """The map's wrap-around edges and corner pads, drawn from the per-machine lists the page builds."""
+
+    def canvas(self, **state):
+        canvas = diagram.AtlasCanvas.alloc().init().setup()
+        canvas.own_id, canvas.selected = "own", BEE
+        canvas.tiles = {"own": {"x": 100, "y": 100, "w": 160, "h": 100},
+                        BEE: {"x": 260, "y": 100, "w": 160, "h": 100}}
+        canvas.labels = {"own": "This Mac", BEE: "Bee"}
+        canvas.states = {BEE: {"state": "edge", "crosses": True, "linked": True, "picked_thirds": list(core_ways.PARTS),
+                              "lit_thirds": [], "wrap_sides": [], "kept_sides": [], "corner_ways": [], **state}}
+        return canvas, {"own": (30, 40, 160, 100), BEE: (190, 40, 160, 100)}
+
+    def bounds(self, layer):
+        box = Quartz.CGPathGetBoundingBox(layer.path())
+        return (box.origin.x, box.origin.y, box.size.width, box.size.height)
+
+    def test_each_wrap_around_side_has_a_four_point_seam_on_this_macs_own_side(self):
+        canvas, frames = self.canvas(wrap_sides=["left", "top"])
+        canvas._draw_wraps(frames)
+        self.assertEqual(set(canvas.wrap_layers), {(BEE, "left"), (BEE, "top")})
+        seam, _arrow, _text = canvas.wrap_layers[(BEE, "left")]
+        self.assertEqual(seam.lineWidth(), 4)
+        self.assertEqual(self.bounds(seam), (30, 42, 0, 96))
+        seam, _arrow, _text = canvas.wrap_layers[(BEE, "top")]
+        self.assertEqual(self.bounds(seam), (32, 40, 156, 0))
+
+    def test_a_seam_stops_thirteen_points_short_of_a_corner_pads_vertex(self):
+        canvas, frames = self.canvas(wrap_sides=["left", "top"], corner_ways=["top_left", "bottom_right"])
+        canvas._draw_wraps(frames)
+        self.assertEqual(self.bounds(canvas.wrap_layers[(BEE, "left")][0]), (30, 53, 0, 85))
+        self.assertEqual(self.bounds(canvas.wrap_layers[(BEE, "top")][0]), (43, 40, 145, 0))
+
+    def test_another_machines_pad_also_stops_the_seam(self):
+        canvas, frames = self.canvas(wrap_sides=["bottom"])
+        canvas.states[SEA] = {"corner_ways": ["bottom_left"], "in_use": True}
+        frames[SEA] = (-130, 40, 160, 100)
+        canvas._draw_wraps(frames)
+        self.assertEqual(self.bounds(canvas.wrap_layers[(BEE, "bottom")][0]), (43, 140, 145, 0))
+
+    def test_label_and_arrow_sit_inside_the_tile_by_side(self):
+        for side in ("left", "right", "top", "bottom"):
+            canvas, frames = self.canvas(wrap_sides=[side])
+            canvas._draw_wraps(frames)
+            _seam, arrow, text = canvas.wrap_layers[(BEE, side)]
+            self.assertEqual(text.string(), "wraps to Bee")
+            self.assertEqual(arrow.isHidden(), side in ("top", "bottom"))
+            frame = text.frame()
+            with self.subTest(side=side):
+                if side == "left":
+                    self.assertEqual((frame.origin.x, frame.origin.y), (56, 40 + 50 + 10))
+                    box = self.bounds(arrow)
+                    self.assertEqual((box[0], box[0] + box[2]), (46, 55))
+                if side == "right":
+                    self.assertAlmostEqual(frame.origin.x + frame.size.width, 30 + 160 - 26)
+                    box = self.bounds(arrow)
+                    self.assertEqual((box[0], box[0] + box[2]), (165, 174))
+                if side == "top":
+                    self.assertAlmostEqual(frame.origin.x + frame.size.width, 30 + 160 - 12)
+                    self.assertEqual(frame.origin.y, 40 + 51 + 4)
+                if side == "bottom":
+                    self.assertAlmostEqual(frame.origin.x + frame.size.width, 30 + 160 - 12)
+                    self.assertEqual(frame.origin.y, 40 + 100 - 22)
+
+    def test_no_wrap_label_ever_lands_on_the_name_the_status_line_or_another_label(self):
+        """rc4: with Top on, "wraps to <the PC>" was drawn over the "This Mac" title, and with Top,
+        Right and Bottom three of them stacked. Every set of sides for one machine, at every height,
+        and for two machines at once."""
+        def rect(layer):
+            frame = layer.frame()
+            return frame.origin.x, frame.origin.y, frame.origin.x + frame.size.width, frame.origin.y + frame.size.height
+
+        def meet(one, two):
+            return one[0] < two[2] and two[0] < one[2] and one[1] < two[3] and two[1] < one[3]
+
+        sets = [list(sides) for count in range(0, 5) for sides in itertools.combinations(core_ways.EDGES, count)]
+        cases = [(height, sides, []) for height in (48, 52, 60, 64, 72, 88, 104, 140, 190) for sides in sets[1:]]
+        cases += [(104, sides, others) for sides in sets for others in sets[1:]]
+        for height, sides, others in cases:
+            canvas, _frames = self.canvas(wrap_sides=sides)
+            canvas.tiles[SEA] = {"x": 100, "y": 100 - height, "w": 160, "h": height}
+            canvas.labels[SEA] = "Sea"
+            canvas.states[SEA] = dict(canvas.states[BEE], wrap_sides=others)
+            canvas.tiles["own"]["h"] = canvas.tiles[BEE]["h"] = height
+            canvas.setFrame_(((0, 0), (1000, 1000)))
+            canvas._draw(False)
+            x, y, width, tall = canvas._map()[0]["own"]
+            title, state = canvas.label_for_tile["own"], canvas.state_for_tile["own"]
+            title_box = rect(title)
+            name = diagram._text_width(title.string(), title.font())
+            middle = (title_box[0] + title_box[2]) / 2
+            fixed = [(middle - name / 2, title_box[1], middle + name / 2, title_box[3])]
+            if not state.isHidden():
+                fixed.append(rect(state))
+            labels = [rect(text) for _seam, _arrow, text in canvas.wrap_layers.values() if not text.isHidden()]
+            with self.subTest(height=height, sides=sides, others=others):
+                for index, label in enumerate(labels):
+                    self.assertTrue(x <= label[0] and label[2] <= x + width and y <= label[1] and label[3] <= y + tall)
+                    for other in fixed + labels[index + 1:]:
+                        self.assertFalse(meet(label, other), (label, other))
+                if tall >= 100:
+                    self.assertEqual(len(labels), bool(sides) + bool(others))
+                elif 56 <= tall < 72 or tall >= 77:
+                    self.assertTrue(labels, "a tile with room for one row shows a label")
+
+    def test_opacity_follows_the_seam_rules_offline_and_not_selected(self):
+        canvas, frames = self.canvas(wrap_sides=["left"], linked=False)
+        canvas._draw_wraps(frames)
+        seam, arrow, text = canvas.wrap_layers[(BEE, "left")]
+        self.assertAlmostEqual(seam.opacity(), 0.55)
+        self.assertAlmostEqual(text.opacity(), 0.55)
+        canvas.states[BEE]["linked"] = True
+        canvas.selected = "own"
+        canvas._draw_wraps(frames)
+        self.assertAlmostEqual(seam.opacity(), 0.7)
+        canvas.selected = BEE
+        canvas._draw_wraps(frames)
+        self.assertAlmostEqual(seam.opacity(), 1.0)
+
+    def test_a_kept_side_is_a_two_point_dashed_seam_that_says_edge_is_off(self):
+        canvas, frames = self.canvas(kept_sides=["left"])
+        canvas._draw_wraps(frames)
+        seam, _arrow, text = canvas.wrap_layers[(BEE, "left")]
+        self.assertEqual(seam.lineWidth(), 2)
+        self.assertTrue(seam.lineDashPattern())
+        self.assertAlmostEqual(seam.opacity(), 0.35)
+        self.assertEqual(text.string(), "wrap kept, Edge off")
+
+    def test_a_side_that_stops_wrapping_loses_its_layers(self):
+        canvas, frames = self.canvas(wrap_sides=["left"])
+        canvas._draw_wraps(frames)
+        layers = canvas.wrap_layers[(BEE, "left")]
+        canvas.states[BEE]["wrap_sides"] = []
+        canvas._draw_wraps(frames)
+        self.assertEqual(canvas.wrap_layers, {})
+        self.assertTrue(all(layer.superlayer() is None for layer in layers))
+
+    def test_a_pad_is_drawn_for_every_corner_in_a_machines_list(self):
+        canvas, frames = self.canvas(corner_ways=["top_left", "top_right", "bottom_right"])
+        canvas._draw_marks(frames)
+        self.assertEqual(sorted(key[2] for key in canvas.mark_layers),
+                         ["bottom_right", "top_left", "top_right"])
+        self.assertEqual(sorted(key[2] for key in canvas.corner_halo_layers),
+                         ["bottom_right", "top_left", "top_right"])
+
+    def test_outcome_is_crosses_for_a_wrap_around_edge_even_with_the_contact_unpicked(self):
+        canvas, _frames = self.canvas(wrap_sides=["left"], unpicked=True, picked_thirds=[])
+        canvas.setFrame_(((0, 0), (480, 260)))
+        canvas._draw(False)
+        self.assertEqual(canvas.outcome_for_tile[BEE].string(), "Crosses")
+        canvas.states[BEE].update(wrap_sides=[], crosses=False, edge_off=True)
+        canvas._draw(False)
+        self.assertEqual(canvas.outcome_for_tile[BEE].string(), "Edge off")
 
 
 if __name__ == "__main__":

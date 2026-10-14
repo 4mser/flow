@@ -17,6 +17,19 @@ except ImportError:  # PySide6 is only in the Windows venv
     widgets = None
 
 
+def _contact(row):
+    return next((chip for chip in row.edge_chips.chips.values() if chip.kind == "contact" and not chip.isHidden()), None)
+
+
+def _picked(row):
+    chip = _contact(row)
+    return [third for third, segment in chip.segments.items() if segment.isChecked()] if chip else []
+
+
+def _corners(row):
+    return [corner for corner, button in row.corner_grid.buttons.items() if button.isChecked()]
+
+
 class PagesWinTest(unittest.TestCase):
     def test_crossing_machine_picker_omits_peers_not_in_use(self):
         peers = [
@@ -345,6 +358,15 @@ class CrossingPageTest(unittest.TestCase):
         app_config.set_ways(self.path, self.peer, side=side, methods=list(methods), parts=list(parts), corner="top_left")
         self.page._pull_peer_fields()
 
+    def test_design_frame_rate_offers_and_saves_all_three_choices(self):
+        import frame_clock
+        self.addCleanup(frame_clock.set_divisor, 1)
+        choice = self.page.frame_rate_choice
+        self.assertEqual([(value, button.text()) for value, button in choice._buttons.items()],
+                         [("display", "Match display"), ("half", "Half"), ("quarter", "Quarter")])
+        choice._buttons["quarter"].click()
+        self.assertEqual(app_config.load_config(self.path).frame_rate, "quarter")
+
     def test_fixture_releases_window_before_the_next_case(self):
         from shiboken6 import isValid
 
@@ -388,7 +410,10 @@ class CrossingPageTest(unittest.TestCase):
         settings["layout"][second] = dict(x=500, y=100, w=160, h=100)
         app_config.write_settings(self.path, settings)
         self.page._pull_peer_fields()
-        self.assertEqual(self.page.crossing_ledger.rows[second].edge_value.text(), "Off")
+        row = self.page.crossing_ledger.rows[second]
+        self.assertIsNone(_contact(row))
+        self.assertEqual(_corners(row), [])
+        self.assertFalse(any(button.isEnabled() for button in row.corner_grid.buttons.values()))
 
     def test_the_native_titlebar_can_maximise_and_has_no_width_cap(self):
         from PySide6.QtCore import Qt
@@ -418,10 +443,10 @@ class CrossingPageTest(unittest.TestCase):
     def test_ledger_rows_stay_in_place_while_ways_change(self):
         self.ways()
         row = self.page.crossing_ledger.rows[self.peer]
-        self.assertEqual(row.edge_glyph.picked, [])
-        self.assertEqual(row.corner_glyph.corner, "")
+        self.assertEqual(_picked(row), [])
+        self.assertEqual(_corners(row), [])
         self.ways(["corner"])
-        self.assertEqual(row.corner_glyph.corner, "top_left")
+        self.assertEqual(_corners(row), ["top_left"])
         self.assertIs(row, self.page.crossing_ledger.rows[self.peer])
 
     def test_the_canvas_replaces_the_side_and_thirds_choices(self):
@@ -497,7 +522,7 @@ class CrossingPageTest(unittest.TestCase):
         self.page._choose_machine(self.peer)
         row = self.page.crossing_ledger.rows[self.peer]
         self.assertTrue(row.selected)
-        self.assertEqual(row.corner_glyph.corner, "top_left")
+        self.assertEqual(_corners(row), ["top_left"])
 
     def test_crossing_refresh_accepts_an_ordinary_edge_without_a_sentence(self):
         self.ways(["edge"])
@@ -528,9 +553,9 @@ class CrossingPageTest(unittest.TestCase):
     def test_corner_can_be_enabled_when_it_is_currently_off(self):
         self.ways(["edge"])
         row = self.page.crossing_ledger.rows[self.peer]
-        self.assertEqual(row.corner_glyph.corner, "")
-        row.corner_glyph.buttons["top_left"].click()
-        self.assertEqual(row.corner_glyph.corner, "top_left")
+        self.assertEqual(_corners(row), [])
+        row.corner_grid.buttons["top_left"].click()
+        self.assertEqual(_corners(row), ["top_left"])
         self.assertTrue(app_config.load_settings(self.path)["peers"][0]["ways"]["corner"])
 
     def test_layout_drop_keeps_the_compiled_side_and_its_stamp(self):
@@ -546,24 +571,24 @@ class CrossingPageTest(unittest.TestCase):
         self.ways([])
         self.assertEqual(self.page.atlas_canvas.states[self.peer]["state"], "gap")
         row = self.page.crossing_ledger.rows[self.peer]
-        self.assertEqual(row.edge_value.text(), "Off")
-        self.assertEqual(row.edge_glyph.picked, [])
+        self.assertFalse(_contact(row).isChecked())
+        self.assertEqual(_picked(row), [])
         self.assertFalse(ways.has_way(app_config.load_settings(self.path), self.peer))
 
     def test_ledger_edge_text_toggles_the_canonical_zone(self):
         self.ways(["edge"])
         row = self.page.crossing_ledger.rows[self.peer]
-        self.assertEqual(row.edge_value.text(), "Whole edge")
-        row.edge_text.click()
+        self.assertEqual(_picked(row), list(ways.PARTS))
+        _contact(row).click()
         self.assertFalse(ways.has_way(app_config.load_settings(self.path), self.peer))
-        row.edge_text.click()
+        _contact(row).click()
         self.assertTrue(ways.has_way(app_config.load_settings(self.path), self.peer))
 
     def test_ledger_edge_text_turns_parts_off_and_remembers_them(self):
         self.ways(["part"], parts=["start"])
         row = self.page.crossing_ledger.rows[self.peer]
-        self.assertEqual(row.edge_glyph.picked, ["start"])
-        row.edge_text.click()
+        self.assertEqual(_picked(row), ["start"])
+        _contact(row).click()
         self.assertFalse(ways.has_way(app_config.load_settings(self.path), self.peer))
         self.assertEqual(app_config.load_settings(self.path)["peers"][0]["ways"]["thirds"], ["start"])
 
@@ -574,9 +599,8 @@ class CrossingPageTest(unittest.TestCase):
         app_config.write_settings(self.path, settings)
         self.page._pull_peer_fields()
         row = self.page.crossing_ledger.rows[self.peer]
-        self.assertEqual(row.edge_detail.text(), "place it on the map")
-        self.assertFalse(row.edge_text.isEnabled())
-        row.edge_text.click()
+        self.assertIsNone(_contact(row))
+        self.assertFalse(any(button.isEnabled() for button in row.corner_grid.buttons.values()))
         current = app_config.load_settings(self.path)
         self.assertEqual(current["layout"][self.peer], settings["layout"][self.peer])
         self.assertFalse(ways.has_way(current, self.peer))
@@ -584,9 +608,10 @@ class CrossingPageTest(unittest.TestCase):
     def test_ledger_and_map_light_the_picked_thirds(self):
         self.ways(["part"], parts=["start"])
         row = self.page.crossing_ledger.rows[self.peer]
-        self.assertEqual(row.edge_glyph.picked, ["start"])
-        self.assertTrue(row.edge_glyph.buttons["start"].isChecked())
-        self.assertFalse(row.edge_glyph.buttons["end"].isChecked())
+        self.assertEqual(_picked(row), ["start"])
+        segments = _contact(row).segments
+        self.assertTrue(segments["start"].isChecked())
+        self.assertFalse(segments["end"].isChecked())
         self.assertEqual(self.page.atlas_canvas.states[self.peer]["thirds"], ["start"])
 
     def test_overlapping_drop_persists_an_accepted_free_snap(self):

@@ -17,7 +17,7 @@ from unittest import mock
 
 from core import return_edge, ways
 from core.return_edge import Rect
-from core.tests.crossing_harness import THIRD_AT, Net
+from core.tests.crossing_harness import THIRD_AT, Net, per_screen_layout
 from core.tests.crossing_shells import SHELLS
 
 MAC_DISPLAYS = {"0": Rect(0, 0, 1728, 1117)}
@@ -88,6 +88,116 @@ class Pair(Desks):
     def setUp(self):
         super().setUp()
         self.mac, self.pc = self.desk["This Mac"], self.desk["DESK-WIN11"]
+
+
+class SameSideArrival(Pair):
+    def test_left_departure_lands_right_even_when_the_way_back_is_left(self):
+        self.assertTrue(self.place(self.mac, self.pc, "left"))
+        self.settled()
+        self.assertTrue(self.pc.shell.edit(self.mac, ["edge"], edges=["left"]))
+        self.settled()
+        self.assertTrue(any(zone.get("peer") == self.mac.id and zone.get("side") == "left"
+                            for zone in self.pc.settings["zones"]))
+        self.assert_cross(self.mac, "left", self.pc, along=0.3)
+        self.assertEqual(self.net.landed(self.pc), ("0", "right"))
+        self.assertAlmostEqual(self.pc.screen.placed[-1][1] / 2160, 0.3, delta=0.002)
+        start = len(self.pc.machine.injector.calls)
+        self.mac.hand.move(-40, 0)
+        self.assertTrue(self.mac.hand.until(
+            lambda: ("move", -40, 0) in self.pc.machine.injector.calls[start:], SETTLE_LIMIT))
+        self.assertIs(self.net.at(self.mac), self.pc)
+        self.assert_cross(self.mac, "left", self.mac, along=0.3)
+        self.assertEqual(self.net.landed(self.mac), ("0", "right"))
+
+    def test_ordinary_left_departure_still_lands_at_the_right_way_back(self):
+        self.assertTrue(self.place(self.mac, self.pc, "left"))
+        self.settled()
+        self.assert_round_trip(self.mac, self.pc, "left", along=0.3)
+
+
+    def test_left_corner_departure_lands_right_with_clearance_from_the_ends(self):
+        self.assertTrue(self.place(self.mac, self.pc, "left"))
+        self.settled()
+        self.assertTrue(self.mac.shell.edit(self.pc, [], corners=["top_left"]))
+        self.assertTrue(self.pc.shell.edit(self.mac, ["edge"], edges=["left"]))
+        self.settled()
+        self.assertIs(self.net.push_corner(self.mac, "top_left"), self.pc)
+        self.assertEqual(self.net.landed(self.pc), ("0", "right"))
+        self.assertEqual(self.pc.screen.placed[-1][1], return_edge.LANDING_CLEAR_PX)
+
+
+class PerScreenPair(Pair):
+    """The literal A0–B0–A1 / B1-below desk, with both pictures exchanged over the link."""
+
+    LAYOUT_OPTIONS = {}
+
+    DESKS = (("This Mac", "mac", {"0": Rect(0, 0, 100, 100), "1": Rect(100, 0, 100, 100)}, 90),
+             ("DESK-WIN11", "pc", {"0": Rect(0, 0, 100, 100), "1": Rect(0, 100, 100, 100)}, 60))
+
+    def setUp(self):
+        super().setUp()
+        self.picture = per_screen_layout(self.mac.id, self.pc.id, **self.LAYOUT_OPTIONS)
+        settings = copy.deepcopy(self.mac.settings)
+        settings["layout"] = copy.deepcopy(self.picture)
+        self.mac.save(settings)
+        self.assertTrue(self.mac.shell.drop(self.pc, self.picture[self.pc.id]["x"],
+                                            self.picture[self.pc.id]["y"], snap=False))
+        self.settled()
+        self.assert_agree()
+        self.assertEqual(self.net.bad_zones(), [])
+
+    def test_pc_b0_crosses_to_mac_a0_and_returns(self):
+        self.assertIs(self.net.push(self.pc, "left", display="0"), self.mac)
+        self.assertEqual(self.net.landed(self.mac), ("0", "right"))
+        self.assertIs(self.net.push(self.pc, "right", display="0"), self.pc)
+        self.assertEqual(self.net.landed(self.pc), ("0", "left"))
+
+    def test_a0_crosses_to_b0_and_reciprocally_lands_on_a0(self):
+        self.assertIs(self.net.push(self.mac, "right", display="0"), self.pc)
+        self.assertEqual(self.net.landed(self.pc), ("0", "left"))
+        self.assertIs(self.net.push(self.mac, "left", display="0"), self.mac)
+        self.assertEqual(self.net.landed(self.mac), ("0", "right"))
+
+    def test_a1_crosses_to_b0_and_reciprocally_lands_on_a1(self):
+        self.assertIs(self.net.push(self.mac, "left", display="1"), self.pc)
+        self.assertEqual(self.net.landed(self.pc), ("0", "right"))
+        self.assertIs(self.net.push(self.mac, "right", display="0"), self.mac)
+        self.assertEqual(self.net.landed(self.mac), ("1", "left"))
+
+    def test_b1_corner_routes_to_the_two_adjacent_a_displays(self):
+        for corner, target_display in (("top_left", "0"), ("top_right", "1")):
+            with self.subTest(corner=corner):
+                self.assertIs(self.net.push_corner(self.pc, corner, display="1"), self.mac)
+                self.assertEqual(self.net.landed(self.mac)[0], target_display)
+                self.net.shortcut(self.pc)
+
+
+class UnevenContactABA(Pair):
+    DESKS = (("This Mac", "mac", {"0": Rect(0, 0, 100, 80), "1": Rect(100, 0, 100, 120)}, 90),
+             ("DESK-WIN11", "pc", {"0": Rect(0, 0, 100, 100), "1": Rect(0, 100, 100, 100)}, 60))
+    LAYOUT_OPTIONS = {"a_sizes": ((100, 80), (100, 120)), "b_sizes": ((100, 100), (100, 100))}
+
+    def setUp(self):
+        super().setUp()
+        self.picture = per_screen_layout(self.mac.id, self.pc.id, **self.LAYOUT_OPTIONS)
+        settings = copy.deepcopy(self.mac.settings)
+        settings["layout"] = copy.deepcopy(self.picture)
+        self.mac.save(settings)
+        self.assertTrue(self.mac.shell.drop(self.pc, self.picture[self.pc.id]["x"],
+                                            self.picture[self.pc.id]["y"], snap=False))
+        self.settled()
+        self.assert_agree()
+        self.assertEqual(self.net.bad_zones(), [])
+
+    def test_a0_lands_proportionally_inside_b0_contact_with_b1_below(self):
+        self.assertIs(self.net.push(self.pc, "left", 0.9, display="0"), self.pc)
+        self.assertIs(self.net.push(self.mac, "right", 0.5, display="0"), self.pc)
+
+        self.assertEqual(self.net.landed(self.pc), ("0", "left"))
+        self.assertEqual(self.pc.screen.placed[-1][1], 40)
+        self.assertIs(self.net.push(self.pc, "left", 0.4, display="0"), self.mac)
+        self.assertEqual(self.net.landed(self.mac), ("0", "right"))
+        self.assertEqual(self.mac.screen.placed[-1][1], 40)
 
 
 class Rc12Report(Pair):
@@ -405,6 +515,61 @@ class EdgeOff(Pair):
         self.assert_round_trip(self.mac, self.pc, "right", "on again")
 
 
+class Wrap(Pair):
+    def test_two_wrap_edges_and_corners_cross_and_can_be_removed(self):
+        self.assertTrue(self.place(self.mac, self.pc, "right"))
+        self.settled()
+        self.assertTrue(self.mac.shell.edit(self.pc, ["edge"], edges=["left", "top"],
+                                            corners=["top_left", "bottom_left"]))
+        self.assert_cross(self.mac, "left", self.pc, "left wrap")
+        self.assertEqual(self.net.landed(self.pc)[1], "right")
+        self.assert_cross(self.mac, "right", self.mac, "way back through arrival side")
+        self.assertEqual(self.net.landed(self.mac)[1], "left")
+        for corner in ("top_left", "bottom_left"):
+            self.assertIs(self.net.push_corner(self.mac, corner), self.pc, corner)
+            self.assertEqual(self.net.landed(self.pc)[1], "right")
+            self.assert_cross(self.mac, "right", self.mac, f"{corner} way back")
+        self.assert_cross(self.mac, "top", self.pc, "top wrap")
+        self.assertEqual(self.net.landed(self.pc)[1], "bottom")
+        self.assert_cross(self.mac, "bottom", self.mac, "top wrap way back")
+        self.settled()
+        self.assert_agree()
+
+        self.assertTrue(self.mac.shell.edit(self.pc, ["edge"], edges=["left"], corners=["top_left"]))
+        self.assertIs(self.net.push(self.mac, "top"), self.mac, "removed top wrap")
+        self.assertIs(self.net.push(self.mac, "left"), self.pc, "left wrap retained")
+        self.assert_cross(self.mac, "right", self.mac, "return after removing a way")
+        self.assertTrue(self.mac.shell.edit(self.pc, [], edges=["left"], corners=["top_left"]))
+        self.assertIs(self.net.push_corner(self.mac, "bottom_left"), self.mac, "removed corner")
+        self.assertIs(self.net.push_corner(self.mac, "top_left"), self.pc, "retained corner")
+        self.assert_cross(self.mac, "right", self.mac, "corner return")
+        self.settled()
+        self.assert_agree()
+
+    def test_edge_off_remembers_wrap_edges_until_restored(self):
+        self.assertTrue(self.place(self.mac, self.pc, "right"))
+        self.settled()
+        self.assertTrue(self.mac.shell.edit(self.pc, [], edges=["left"]))
+        self.assertEqual(ways.ways(self.mac.settings, self.pc.id)["edges"], ["left"])
+        self.assertIs(self.net.push(self.mac, "left"), self.mac)
+        self.assertTrue(self.mac.shell.edit(self.pc, ["edge"], edges=["left"]))
+        self.assertIs(self.net.push(self.mac, "left"), self.pc)
+        self.assert_cross(self.mac, "right", self.mac, "restored wrap way back")
+        self.settled()
+        self.assert_agree()
+
+    def test_wrap_works_from_the_other_maps_intent_too(self):
+        self.assertTrue(self.place(self.mac, self.pc, "right"))
+        self.settled()
+        self.assertTrue(self.pc.shell.edit(self.mac, ["edge"], edges=["right"]))
+        self.assert_cross(self.pc, "right", self.mac, "PC wrap")
+        self.assertEqual(self.net.landed(self.mac)[1], "left")
+        self.assert_cross(self.pc, "left", self.pc, "PC wrap way back")
+        self.assertEqual(self.net.landed(self.pc)[1], "right")
+        self.settled()
+        self.assert_agree()
+
+
 class Shortcut(Pair):
     def test_the_shortcut_goes_and_comes_back_whatever_the_edges(self):
         self.assertIs(self.net.shortcut(self.mac, self.pc), self.pc)
@@ -453,7 +618,7 @@ class Three(Desks):
         self.assertTrue(self.place(self.mac, self.linux, "left"))
         self.settled()
         self.assert_agree()
-        self.assert_round_trip(self.mac, self.pc, "top", "rig above")
+        self.assert_round_trip(self.mac, self.pc, "top", "rig above", along=0.25, back=0.75)
         self.assert_round_trip(self.mac, self.linux, "left", "Fedora left")
         self.assert_round_trip(self.pc, self.mac, "bottom", "the rig's own pointer")
         self.assert_round_trip(self.linux, self.mac, "right", "Fedora's own pointer")
@@ -488,6 +653,20 @@ class Three(Desks):
                 self.assert_round_trip(self.mac, self.pc, side, f"rig {side}")
                 self.assert_round_trip(self.mac, self.linux, "left", f"Fedora still left, rig {side}")
 
+    def test_a_wrap_edge_takes_only_the_thirds_not_held_by_a_peer_contact(self):
+        self.assertTrue(self.place(self.mac, self.pc, "right"))
+        self.assertTrue(self.place(self.mac, self.linux, "left", shift=25))
+        self.settled()
+        self.assertTrue(self.mac.shell.edit(self.pc, ["edge"], edges=["left"]))
+        map_entry = ways.compile_layout(self.mac.settings, self.mac.settings["layout"],
+                                        capable=self.mac.shell.capable())["tiles"][self.pc.id]
+        self.assertEqual(map_entry["wraps"], [{"display": "0", "side": "left", "parts": ["start"]}])
+        self.assert_cross(self.mac, "left", self.pc, "free wrap third", THIRD_AT["start"])
+        self.assert_cross(self.mac, "right", self.mac, "way back from the free wrap third")
+        self.assert_cross(self.mac, "left", self.linux, "contact-owned thirds", THIRD_AT["middle"])
+        self.settled()
+        self.assert_agree()
+
 
 class Rc14Corner(Three):
     """10-10, rc14, from the Mac's and the rig's logs: the rig's corner for the Mac (top left, edges
@@ -495,13 +674,17 @@ class Rc14Corner(Three):
     the hand still moving left crossed the Mac's left zone to the machine there 14 ms later."""
 
     def test_a_corner_crossing_home_lands_clear_of_the_edge_beside_it(self):
-        self.assertTrue(self.place(self.mac, self.pc, "bottom"))
+        # The rig half a tile left of centre, so Fedora shares part of its top edge. Placed before the
+        # tiles were exchanged, the rig sometimes went exactly below the Mac instead; Fedora then
+        # touched the rig's top left corner and, since 1.5.3, holds it, so the Mac's corner was refused.
+        self.settled()
+        self.assertTrue(self.place(self.mac, self.pc, "bottom", shift=-self.mac.settings["layout"][self.mac.id]["w"] // 2))
         self.assertTrue(self.place(self.mac, self.linux, "left"))
         self.settled()
         for corner in ("top_left", "top_right"):
             with self.subTest(corner=corner):
                 self.assertTrue(self.pc.shell.edit(self.mac, ["corner"], corner=corner))
-                self.assert_cross(self.mac, "bottom", self.pc, "Mac down to the rig")
+                self.assert_cross(self.mac, "bottom", self.pc, "Mac down to the rig", along=0.25)
                 self.assertIs(self.net.push_corner(self.mac, corner), self.mac, f"the rig's {corner} corner home")
                 display, side = self.net.landed(self.mac)
                 self.assertEqual(side, "bottom", "landed on the Mac's bottom edge")

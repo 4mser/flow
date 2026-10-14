@@ -546,7 +546,9 @@ class MachinesModule(widgets.Module):
 
     def __init__(self, on_send: Callable, on_allow: Callable, on_in_use: Callable, on_left_out: Callable,
                  on_remove: Callable, on_pair: Callable, on_rename: Optional[Callable] = None,
-                 on_cycle: Optional[Callable] = None, on_repair: Optional[Callable] = None) -> None:
+                 on_cycle: Optional[Callable] = None, on_repair: Optional[Callable] = None,
+                 on_pair_phone: Optional[Callable] = None,
+                 on_pair_nearby: Optional[Callable] = None) -> None:
         super().__init__("Machines")
         self._callbacks = (on_send, on_allow, on_in_use, on_left_out, on_remove,
                            on_rename or (lambda *_: None), on_cycle,
@@ -555,20 +557,39 @@ class MachinesModule(widgets.Module):
         self.rows_layout = QVBoxLayout()
         self.rows_layout.setContentsMargins(0, 0, 0, 0)
         self.rows_layout.setSpacing(0)
-        self.pair_button = _button("Pair a machine", "primary")
+        self.pair_button = _button("Pair a machine")
         self.pair_button.clicked.connect(on_pair)
-        self.body.addWidget(self.pair_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self.pair_phone_button = _button("Pair a phone")
+        self.pair_phone_button.setVisible(feature_flags.PAIRING_QR_VISIBLE)
+        self.pair_phone_button.clicked.connect(on_pair_phone or (lambda: None))
+        self.pair_nearby_button = _button("Pair nearby", "primary")
+        self.pair_nearby_button.clicked.connect(on_pair_nearby or (lambda: None))
+        pair_actions = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.pair_actions = pair_actions
+        pair_actions.setContentsMargins(0, 0, 0, 0)
+        pair_actions.setSpacing(8)
+        pair_actions.addWidget(self.pair_nearby_button)
+        pair_actions.addWidget(self.pair_phone_button)
+        pair_actions.addWidget(self.pair_button)
+        pair_actions.addStretch(1)
+        self.body.addLayout(pair_actions)
         self.body.addLayout(self.rows_layout)
         self.empty = widgets.label(EMPTY, "note", wrap=True)
         self.body.addWidget(self.empty)
 
-    def set_peers(self, items: list, same_on: bool = False, *, cycle_mode: str) -> None:
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        direction = QBoxLayout.Direction.LeftToRight if event.size().width() >= 440 else QBoxLayout.Direction.TopToBottom
+        self.pair_actions.setDirection(direction)
+
+    def set_peers(self, items: list, same_on: bool = False, cycle_mode: str = "last") -> None:
         """`items`: (entry, label, state, where) for each paired machine, in the order to show them."""
         tokens = [entry["token"] for entry, *_ in items]
         for token in [held for held in self.rows if held not in tokens]:
             row = self.rows.pop(token)
             self.rows_layout.removeWidget(row)
             row.hide()
+            row.setParent(None)
             row.deleteLater()
         for index, (entry, label, state, where) in enumerate(items):
             row = self.rows.get(entry["token"])
@@ -586,7 +607,7 @@ class MachinesModule(widgets.Module):
         text = "Cancel" if opened else "Pair a machine"
         if self.pair_button.text() != text:
             self.pair_button.setText(text)
-            widgets.set_role(self.pair_button, "" if opened else "primary")
+            widgets.set_role(self.pair_button, "")
 
 
 class QrView(QWidget):
@@ -624,13 +645,21 @@ class QrView(QWidget):
 class PairingSheet(widgets.Module):
     """Both halves of pairing: showing a code on this PC, and entering one from another machine."""
 
-    def __init__(self, on_show: Callable, on_cancel: Callable, on_pair: Callable, on_pick: Callable) -> None:
+    def __init__(self, on_show: Callable, on_cancel: Callable, on_pair: Callable, on_pick: Callable,
+                 on_choose_nearby: Optional[Callable] = None,
+                 on_confirm_nearby: Optional[Callable] = None,
+                 on_cancel_nearby: Optional[Callable] = None) -> None:
         super().__init__("Pair a machine")
         self._on_pair = on_pair
         self._on_pick = on_pick
         self._machines: list = []
         self._listed: tuple = ()
         self._working = False
+        self._nearby_state = "inactive"
+        self._nearby_rows: tuple = ()
+        self._on_choose_nearby = on_choose_nearby or (lambda *_: None)
+        self._on_confirm_nearby = on_confirm_nearby or (lambda *_: None)
+        self._on_cancel_nearby = on_cancel_nearby or (lambda: None)
         self.body.addWidget(widgets.label("Show a code on this PC", "tile-name"))
         self.show_button = _button("Show a code", "primary")
         self.show_button.clicked.connect(on_show)
@@ -683,6 +712,49 @@ class PairingSheet(widgets.Module):
         self.code_box.setVisible(False)
         self.body.addWidget(self.code_box)
 
+        self.nearby_box = _plain()
+        nearby = QVBoxLayout(self.nearby_box)
+        nearby.setContentsMargins(0, 8, 0, 8)
+        nearby.setSpacing(8)
+        self.nearby_note = widgets.label("", "note", wrap=True)
+        self.nearby_note.setAccessibleName("Nearby pairing status")
+        nearby.addWidget(self.nearby_note)
+        self.nearby_count = widgets.label("", "count")
+        self.nearby_count.setFont(theme.mono_font(theme.TYPE["body"]))
+        self.nearby_count.setAccessibleName("Nearby pairing time left")
+        nearby.addWidget(self.nearby_count)
+        self.nearby_choices = QWidget()
+        self.nearby_choices.setProperty("vernier", "plain")
+        self.nearby_choices_layout = QVBoxLayout(self.nearby_choices)
+        self.nearby_choices_layout.setContentsMargins(0, 0, 0, 0)
+        self.nearby_choices_layout.setSpacing(6)
+        self.nearby_group = QButtonGroup(self.nearby_choices)
+        self.nearby_group.setExclusive(True)
+        nearby.addWidget(self.nearby_choices)
+        self.nearby_peer = widgets.label("", "note-quiet", wrap=True)
+        nearby.addWidget(self.nearby_peer)
+        self.nearby_digits = PairCodeLabel()
+        self.nearby_digits.setFont(theme.mono_font(theme.PAIRING_CODE))
+        self.nearby_digits.setFixedHeight(self.nearby_digits.sizeHint().height())
+        self.nearby_digits.setVisible(False)
+        nearby.addWidget(self.nearby_digits, 0, Qt.AlignmentFlag.AlignLeft)
+        nearby_buttons = QHBoxLayout()
+        nearby_buttons.setSpacing(8)
+        self.nearby_confirm = _button("Confirm", "primary")
+        self.nearby_confirm.setDefault(False)
+        self.nearby_confirm.setAutoDefault(False)
+        self.nearby_confirm.clicked.connect(self._confirm_nearby)
+        self.nearby_cancel = _button("Cancel", "small")
+        self.nearby_cancel.setDefault(False)
+        self.nearby_cancel.setAutoDefault(False)
+        self.nearby_cancel.clicked.connect(self._on_cancel_nearby)
+        nearby_buttons.addWidget(self.nearby_confirm)
+        nearby_buttons.addWidget(self.nearby_cancel)
+        nearby_buttons.addStretch(1)
+        nearby.addLayout(nearby_buttons)
+        self.nearby_box.setVisible(False)
+        self.body.addWidget(self.nearby_box)
+
         self.body.addWidget(widgets.rule(False))
         self.body.addWidget(widgets.label("Enter a code from another machine", "tile-name"))
         self.body.addWidget(widgets.label("On this network", "note-quiet"))
@@ -702,7 +774,7 @@ class PairingSheet(widgets.Module):
         self.body.addWidget(widgets.label("Not listed? Type its address.", "note-quiet"))
         self.code = PairCodeEdit()
         self.code.setAccessibleName("Code")
-        self.code.setValidator(QRegularExpressionValidator(QRegularExpression(r"[0-9 ]{0,12}"), self.code))
+        self.code.setValidator(QRegularExpressionValidator(QRegularExpression(r"[0-9 \s–—\-]{0,32}"), self.code))
         self.code.setFont(theme.mono_font(20))
         self.code.setFixedHeight(self.code.fontMetrics().height() + CODE_CELL_PAD_Y * 2 + 4)
         self.code.textEdited.connect(self._typed_code)
@@ -715,6 +787,85 @@ class PairingSheet(widgets.Module):
         self.pair_note.setVisible(False)
         self.body.addWidget(self.pair_note)
         self._refresh_pair_button()
+
+    def _confirm_nearby(self) -> None:
+        if self._nearby_state == "confirm" and self.nearby_digits.text():
+            sas = self.nearby_digits.text().replace(" ", "")
+            self._on_confirm_nearby(sas, self._nearby_attempt)
+
+    def set_nearby(self, status: dict, shown: Callable[[str], str] = lambda text: text) -> None:
+        """Render the nearby exchange without exposing addresses or turning Enter into approval."""
+        status = status or {}
+        state = status.get("state", "inactive")
+        self._nearby_state = state
+        self._nearby_attempt = status.get("attempt")
+        self.nearby_box.setVisible(state != "inactive")
+        if state == "inactive":
+            return
+
+        copy = {
+            "searching": "Press Pair nearby on the other machine within 60 seconds.",
+            "choosing": "Choose a machine to pair nearby.",
+            "exchanging": "Connecting to the selected machine…",
+            "confirm": "Compare all six digits on both machines, then confirm on each.",
+            "waiting": "Waiting for confirmation on the other machine.",
+            "paired": "Nearby pairing complete.",
+            "refused": "Nearby pairing refused. Use a new window to try again.",
+            "expired": "Nearby pairing expired. Press Pair nearby to try again.",
+            "not_saved": "The new peer could not be saved.",
+        }
+        self.nearby_note.setText(copy.get(state, "Nearby pairing could not continue."))
+        widgets.set_role(self.nearby_note, "note-fault" if state in {"refused", "expired", "not_saved"} else "note")
+        seconds_left = max(0, int(status.get("seconds_left", 0)))
+        self.nearby_count.setText(f"Expires in {seconds_left} s")
+        self.nearby_count.setVisible(state in {"searching", "choosing", "exchanging", "confirm", "waiting"})
+
+        peers = status.get("peers") or []
+        peer = status.get("peer")
+        signature = (
+            state,
+            tuple((item.get("id"), item.get("identity"), item.get("nearby"), item.get("name"),
+                   item.get("platform"), item.get("address"),
+                   shown(" · ".join(part for part in (str(item.get("name") or "Another machine"),
+                                                        peers_view.platform_name(item), str(item.get("address") or "")) if part)))
+                  for item in peers),
+            tuple(sorted((key, str(value)) for key, value in peer.items())) if isinstance(peer, dict) else None,
+        )
+        if signature != self._nearby_rows:
+            self._nearby_rows = signature
+            for button in list(self.nearby_group.buttons()):
+                self.nearby_group.removeButton(button)
+                self.nearby_choices_layout.removeWidget(button)
+                button.hide()
+                button.setParent(None)
+                button.deleteLater()
+            for candidate in peers:
+                name = str(candidate.get("name") or "Another machine")
+                platform = peers_view.platform_name(candidate)
+                address = str(candidate.get("address") or "")
+                detail = shown(" · ".join(part for part in (name, platform, address) if part))
+                button = _button(detail, "choice")
+                button.setAccessibleName(detail)
+                button.setStyleSheet("text-align: left; padding-left: 12px;")
+                button.setCheckable(True)
+                button.setProperty("nearby_peer", candidate)
+                button.clicked.connect(lambda _checked=False, selected=candidate: self._on_choose_nearby(selected))
+                self.nearby_group.addButton(button)
+                self.nearby_choices_layout.addWidget(button)
+        self.nearby_choices.setVisible(state == "choosing")
+        selected_name = str((peer or {}).get("name") or "")
+        selected_platform = peers_view.platform_name(peer) if peer else ""
+        selected = f"Selected: {selected_name} · {selected_platform}" if selected_name else ""
+        self.nearby_peer.setText(shown(selected) if selected else "")
+        self.nearby_peer.setVisible(bool(self.nearby_peer.text()))
+        sas = status.get("sas") if state in {"confirm", "waiting"} else None
+        grouped = f"{sas[:3]} {sas[3:]}" if isinstance(sas, str) and len(sas) == 6 and sas.isascii() and sas.isdigit() else ""
+        self.nearby_digits.setText(grouped)
+        self.nearby_digits.setAccessibleName(f"Pairing digits {' '.join(sas)}" if grouped else "Pairing digits")
+        self.nearby_digits.setVisible(bool(grouped))
+        self.nearby_confirm.setVisible(state == "confirm")
+        self.nearby_confirm.setEnabled(state == "confirm" and bool(grouped) and bool(self._nearby_attempt))
+        self.nearby_cancel.setVisible(state not in {"paired", "refused", "expired", "not_saved"})
 
     # The host half.
 
@@ -779,6 +930,7 @@ class PairingSheet(widgets.Module):
             self.group.removeButton(button)
             self.heard_layout.removeWidget(button)
             button.hide()
+            button.setParent(None)
             button.deleteLater()
         for item, where in zip(listed, wheres):
             version = item.get("pairing") == pairing.PAIRING_V3
@@ -834,7 +986,10 @@ class PairingSheet(widgets.Module):
     def _typed_code(self, text: str) -> None:
         digits = "".join(char for char in text if char.isdigit())[:CODE_DIGITS]
         if digits != text:
+            cursor = self.code.cursorPosition()
+            target = min(sum(1 for char in text[:cursor] if char.isdigit()), len(digits))
             self.code.setText(digits)
+            self.code.setCursorPosition(target)
         self._refresh_pair_button()
 
     def _refresh_pair_button(self) -> None:

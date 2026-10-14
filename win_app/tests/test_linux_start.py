@@ -102,6 +102,20 @@ def child(mode: str, config: Path) -> None:
         assert not window.wayland_shortcut_note.isHidden()
         assert window.hold_switch.isHidden() and window.pointer_module.isHidden()
         assert "full-screen" in window.wayland_crossing_note.text() and not window.wayland_crossing_note.isHidden()
+        # The Send button only beeped on Wayland (KDE report, 13-10-2026): it is dimmed and says why.
+        window._any_send = lambda: True  # a linked machine this PC drives
+        window._refresh_window()
+        assert not window.redirect_button.isEnabled() and not window.redirect_action.isEnabled()
+        assert "pushes through an edge" in window.wayland_send_note.text() and not window.wayland_send_note.isHidden()
+        assert window.redirect_note.isHidden()
+        # In a Flatpak a tray message never shows: the message goes through the Notification portal.
+        import portal
+
+        shown, sent = [], []
+        window.tray.showMessage = lambda *args: shown.append(args)
+        portal.sandboxed, portal.notify = (lambda: True), (lambda title, body: sent.append((title, body)))
+        window._on_alert("Beamer", "Cannot switch — on this desktop input goes to another machine only by pushing")
+        assert sent and sent[0][1].startswith("Cannot switch") and not shown, (sent, shown)
         window._on_pressure("right", 0.7, False)
         window._on_arrival("edge", "left", 10.0, 10.0)
         assert window.glow is None and window.effects is None
@@ -168,6 +182,9 @@ def x11_child() -> None:
     assert window._identity()["platform"] == "linux"
     assert "gestures" not in window._identity()["caps"] and "text" in window._identity()["caps"]
     assert platform_parts.WAYLAND is False and window.wayland_shortcut_note.isHidden() and not window.hold_switch.isHidden()
+    window._any_send = lambda: True
+    window._refresh_window()
+    assert window.redirect_button.isEnabled() and window.wayland_send_note.isHidden()
     assert window.hooks._predicate is not None and window.hooks._predicate() is False
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and not window.server.listening:

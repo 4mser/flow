@@ -8,6 +8,11 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import sys
+_WIN_APP = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(_WIN_APP), str(_REPO_ROOT)]
+from PySide6.QtCore import QEvent, QObject
 from PySide6.QtWidgets import QApplication
 import app_config
 import kvm_bridge_win as kvm
@@ -201,3 +206,71 @@ class IdleRefreshTest(unittest.TestCase):
         self.window._sending_detail = "Connected after minimising"
         self.window.showNormal()
         self.assertEqual(self.window.send_hint.text(), "Connected after minimising")
+
+    def test_unrelated_setting_change_settles_without_endless_disk_reads(self):
+        saved = app_config.load_settings(self.path)
+        saved["volume"] = 75
+        app_config.write_settings(self.path, saved)
+        # First tick picks up the change
+        self.window._refresh_window()
+        # Subsequent ticks are settled and idle: must not load settings from disk
+        with patch.object(app_config, "load_settings", side_effect=AssertionError("idle read")):
+            for _ in range(8):
+                self.window._refresh_window()
+
+    def test_idle_window_bounds_timer_fires_and_generates_zero_paints(self):
+        window = self.window
+        class PaintTimerCounter(QObject):
+            def __init__(self):
+                super().__init__()
+                self.paints = 0
+                self.timers = 0
+            def eventFilter(self, watched, event):
+                target = watched
+                while target is not None and target is not window:
+                    target = target.parent()
+                if target is not window:
+                    return False
+                if event.type() == QEvent.Type.Paint:
+                    self.paints += 1
+                elif event.type() == QEvent.Type.Timer:
+                    self.timers += 1
+                return False
+
+        # Let initial show/layout paints settle before installing the filter
+        self.app.processEvents()
+        counter = PaintTimerCounter()
+        self.app.installEventFilter(counter)
+        try:
+            self.app.processEvents()
+            counter.paints = 0
+            counter.timers = 0
+            self.window.refresh_timer.start()
+            start = time.monotonic()
+            while time.monotonic() < start + 0.5:
+                self.app.processEvents()
+                time.sleep(0.01)
+            self.window.refresh_timer.stop()
+            self.assertEqual(counter.paints, 0, "Idle window must generate zero paint events")
+            self.assertLessEqual(counter.timers, 6, "Idle window timers must be bounded")
+        finally:
+            self.app.removeEventFilter(counter)
+
+    def test_atlas_canvas_skips_update_and_geometry_on_unchanged_tiles(self):
+        if not hasattr(self.window, "atlas_canvas"):
+            return
+        canvas = self.window.atlas_canvas
+        canvas.set_tiles(canvas.tiles, canvas.labels, canvas.states, canvas.selected,
+                         canvas.cycle_mode, canvas.cycle, canvas.capable, canvas.own_id,
+                         canvas.rename_values)
+        canvas.set_left_out(canvas.left_out_ids, canvas.in_use)
+        with patch.object(canvas, "update", wraps=canvas.update) as updater, \
+             patch.object(canvas, "_geometry", wraps=canvas._geometry) as geometry:
+            canvas.set_tiles(canvas.tiles, canvas.labels, canvas.states, canvas.selected,
+                             canvas.cycle_mode, canvas.cycle, canvas.capable, canvas.own_id,
+                             canvas.rename_values)
+            updater.assert_not_called()
+            geometry.assert_not_called()
+            canvas.set_left_out(canvas.left_out_ids, canvas.in_use)
+            updater.assert_not_called()
+            geometry.assert_not_called()

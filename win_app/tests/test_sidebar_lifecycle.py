@@ -105,6 +105,39 @@ class SidebarLifecycleTests(unittest.TestCase):
             window.deleteLater()
             QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
+    def test_unchanged_pointer_selection_does_not_walk_every_design_tile(self):
+        window, sidebar = window_with_sidebar()
+        sidebar._last_keyboard_mode = sidebar.keyboard_mode
+        try:
+            with patch.object(window, "findChildren", side_effect=AssertionError("tile scan on unchanged mode")):
+                sidebar.select("overview")
+        finally:
+            window.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    def test_keyboard_mode_change_refreshes_design_tile_focus_rings(self):
+        window, sidebar = window_with_sidebar()
+        sidebar._last_keyboard_mode = not sidebar.keyboard_mode
+        try:
+            with patch.object(window, "findChildren", wraps=window.findChildren) as find_children:
+                sidebar._update_rings()
+            find_children.assert_called_once_with(widgets._Tile)
+        finally:
+            window.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    def test_pointer_selection_does_not_select_the_sidebar_twice(self):
+        window, sidebar = window_with_sidebar()
+        sidebar._on_select = lambda key: sidebar.select(key)
+        original_select = sidebar.select
+        try:
+            with patch.object(sidebar, "select", wraps=original_select) as select:
+                sidebar._pointer_select("crossing")
+            self.assertEqual(select.call_count, 1)
+        finally:
+            window.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
     def test_irrelevant_events_never_inspect_the_watched_window(self):
         class Watched:
             def window(self):

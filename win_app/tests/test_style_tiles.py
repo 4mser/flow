@@ -133,7 +133,8 @@ class StyleTileTests(unittest.TestCase):
                         with self.subTest(family=family, style=style, dark=dark, scale=scale):
                             self.assertGreaterEqual(contrast, 3.0)
                             # The baseline removes screen outlines and the pointer before coverage is measured.
-                            self.assertGreaterEqual(coverage, .01)
+                            # Flint is a few short sparks drawn at their real size, as on the Mac.
+                            self.assertGreaterEqual(coverage, .004 if (family, style) == ("crossing", "flint") else .01)
         finally:
             theme.set_dark(previous)
 

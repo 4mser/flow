@@ -18,6 +18,7 @@ import collections
 import logging
 import os
 import socket
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -29,6 +30,7 @@ OBJECT_PATH = "/org/freedesktop/portal/desktop"
 REQUEST = "org.freedesktop.portal.Request"
 SESSION = "org.freedesktop.portal.Session"
 PROPERTIES = "org.freedesktop.DBus.Properties"
+NOTIFICATION = "org.freedesktop.portal.Notification"
 CALL_SECONDS = 10.0
 TICK_SECONDS = 0.1
 
@@ -244,6 +246,36 @@ class JeepneyBus:
             self._conn.close()
         except Exception:
             LOGGER.exception("The portal connection did not close cleanly")
+
+
+def sandboxed() -> bool:
+    """Whether Beamer runs in a Flatpak. The sandbox cannot reach the desktop's notification
+    service, where Qt sends a tray message, so one never shows there and only the click's sound is
+    left (the 1.5.3 Flatpak on Fedora 44, 14-10-2026); the Notification portal reaches it."""
+    return os.path.exists("/.flatpak-info")
+
+
+def notify(title: str, body: str, connect: Optional[Callable[[], object]] = None) -> threading.Thread:
+    """Show a message through the Notification portal, in place of the one before, on a thread of
+    its own so the caller never waits on the bus."""
+
+    def send() -> None:
+        try:
+            bus = (connect or JeepneyBus)()
+        except PortalError as exc:
+            LOGGER.warning("Could not show a message: %s", exc)
+            return
+        try:
+            Portal(bus).call(NOTIFICATION, "AddNotification", "sa{sv}",
+                             ("alert", {"title": ("s", title), "body": ("s", body)}))
+        except PortalError as exc:
+            LOGGER.warning("Could not show a message: %s", exc)
+        finally:
+            bus.close()
+
+    thread = threading.Thread(target=send, name="Beamer-notify", daemon=True)
+    thread.start()
+    return thread
 
 
 def _raw_fds(body):

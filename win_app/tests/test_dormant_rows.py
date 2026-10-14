@@ -58,10 +58,12 @@ class DormantRowTests(unittest.TestCase):
             sheet=SimpleNamespace(address=mock.Mock(), setVisible=mock.Mock()),
             machines=SimpleNamespace(set_pairing_open=mock.Mock()),
             _refresh_pairing=mock.Mock(),
+            _cancel_nearby=mock.Mock(),
             _select_page=mock.Mock(),
         )
 
         kvm_bridge_win.WindowsApplication._re_pair(app, "token")
+        app._cancel_nearby.assert_called_once_with()
 
         self.assertTrue(app._pairing_open)
         app.sheet.address.setText.assert_called_once_with("192.0.2.10")
@@ -107,10 +109,12 @@ class DormantRowTests(unittest.TestCase):
             sheet=sheet,
             machines=SimpleNamespace(set_pairing_open=mock.Mock()),
             _refresh_pairing=lambda: sheet.set_machines(machines),
+            _cancel_nearby=mock.Mock(),
             _select_page=mock.Mock(),
         )
 
         kvm_bridge_win.WindowsApplication._re_pair(app, "token")
+        app._cancel_nearby.assert_called_once_with()
 
         self.assertEqual(sheet.chosen_machine()["address"], "192.0.2.10")
         self.assertTrue(sheet.pair_button.isEnabled())

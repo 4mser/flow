@@ -4,15 +4,19 @@ and EnumDisplayMonitors share one coordinate space — virtual-desktop pixels,
 DPI-virtualised identically for this process — so values from one feed the
 others unconverted."""
 
+import atexit
 import ctypes
 import logging
 import os
 import sys
+import threading
+import time
 from typing import List, Tuple
 
 from core.return_edge import Rect
 
 _IS_WINDOWS = sys.platform == "win32"
+CAN_HIDE_POINTER = _IS_WINDOWS
 user32 = ctypes.WinDLL("user32", use_last_error=True) if _IS_WINDOWS else None
 LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +41,22 @@ if _IS_WINDOWS:
     user32.MonitorFromWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
     user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
     user32.GetAsyncKeyState.restype = ctypes.c_short
+    user32.CreateCursor.restype = ctypes.c_void_p
+    user32.CreateCursor.argtypes = [
+        ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p
+    ]
+    user32.SetSystemCursor.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    user32.SystemParametersInfoW.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
+    user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+    user32.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+    user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+    user32.OpenInputDesktop.restype = ctypes.c_void_p
+    user32.OpenInputDesktop.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    user32.GetUserObjectInformationW.argtypes = [
+        ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)
+    ]
+    user32.CloseDesktop.argtypes = [ctypes.c_void_p]
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.OpenProcess.restype = ctypes.c_void_p
     kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
@@ -205,3 +225,153 @@ def _foreground_app_name():
         return name[:-4] if name.lower().endswith(".exe") else name
     finally:
         kernel32.CloseHandle(handle)
+
+
+# Every system cursor a pointer can show as, the OCR_* ids SetSystemCursor takes.
+_SYSTEM_CURSORS = (
+    32512, 32513, 32514, 32515, 32516, 32642, 32643, 32644, 32645, 32646, 32648, 32649, 32650, 32651, 32671,
+    32672,
+)
+_SPI_SETCURSORS = 0x0057
+_DESKTOP_READOBJECTS = 0x0001
+_UOI_NAME = 2
+_GUARD_SECONDS = 0.25
+_pointer_lock = threading.Lock()
+_pointer_hidden_for = set()
+_guard = [0]
+_exit_hook = [False]
+
+
+_GWL_EXSTYLE = -20
+_WS_EX_TRANSPARENT = 0x20
+_WS_EX_LAYERED = 0x80000
+
+
+def set_click_through(hwnd: int, through: bool) -> None:
+    """Let clicks pass through a window, or stop them. Safe from any thread and immediate, which a
+    Qt hide queued for the window's own thread is not."""
+    _require()
+    style = user32.GetWindowLongPtrW(hwnd, _GWL_EXSTYLE)
+    wanted = (style | _WS_EX_TRANSPARENT | _WS_EX_LAYERED) if through else (style & ~_WS_EX_TRANSPARENT)
+    if wanted != style:
+        user32.SetWindowLongPtrW(hwnd, _GWL_EXSTYLE, wanted)
+
+
+def _pointer_marker():
+    base = os.environ.get("LOCALAPPDATA")
+    return os.path.join(base, "Beamer", "pointer-hidden") if base else None
+
+
+def hide_pointer(reason: str) -> None:
+    """Hide the pointer everywhere until show_pointer(reason) and every other reason is shown again.
+
+    ShowCursor only reaches this process's own windows, so the system cursors themselves are swapped
+    for a blank one, and given back with SPI_SETCURSORS, which reloads the user's own scheme, size and
+    colour included. That outlives the process, so a marker file stands for the hide until it is
+    undone: if Beamer dies first, restore_pointer at the next start gives the pointer back, and any
+    Python exit gives it back on the way out.
+
+    The lock screen, Ctrl+Alt+Del and a UAC prompt share the session's cursors but not the hooks, so
+    a pointer hidden while driving would be a blank one moving over a password box. A guard gives the
+    cursors back for as long as another desktop has the input, and blanks them again on return."""
+    _require()
+    with _pointer_lock:
+        first = not _pointer_hidden_for
+        _pointer_hidden_for.add(reason)
+        if not first:
+            return
+        marker = _pointer_marker()
+        if marker:
+            try:
+                os.makedirs(os.path.dirname(marker), exist_ok=True)
+                open(marker, "w").close()
+            except OSError:
+                LOGGER.exception("Could not write the pointer-hidden marker")
+        if not _exit_hook[0]:
+            _exit_hook[0] = True
+            atexit.register(restore_pointer)
+        _blank_cursors()
+        _guard[0] += 1
+        threading.Thread(target=_guard_desktop, args=(_guard[0],), name="Beamer-pointer-guard", daemon=True).start()
+
+
+def _blank_cursors() -> None:
+    and_mask = (ctypes.c_ubyte * 128)(*([0xFF] * 128))
+    xor_mask = (ctypes.c_ubyte * 128)()
+    for cursor_id in _SYSTEM_CURSORS:
+        # SetSystemCursor takes the handle over and destroys it, so each id gets its own.
+        blank = user32.CreateCursor(None, 0, 0, 32, 32, and_mask, xor_mask)
+        if not blank or not user32.SetSystemCursor(blank, cursor_id):
+            LOGGER.warning("Could not blank system cursor %s (error %s)", cursor_id, ctypes.get_last_error())
+
+
+def _on_default_desktop() -> bool:
+    """False while the lock screen, the secure attention screen or UAC has the input: Beamer may not
+    even open those, which is itself the answer."""
+    desktop = user32.OpenInputDesktop(0, False, _DESKTOP_READOBJECTS)
+    if not desktop:
+        return False
+    try:
+        name = ctypes.create_unicode_buffer(64)
+        needed = ctypes.c_ulong(0)
+        if not user32.GetUserObjectInformationW(desktop, _UOI_NAME, name, ctypes.sizeof(name), ctypes.byref(needed)):
+            return False
+        return name.value.lower() == "default"
+    finally:
+        user32.CloseDesktop(desktop)
+
+
+def _guard_desktop(generation: int) -> None:
+    blanked = True
+    while True:
+        time.sleep(_GUARD_SECONDS)
+        with _pointer_lock:
+            if _guard[0] != generation or not _pointer_hidden_for:
+                return
+            try:
+                here = _on_default_desktop()
+            except Exception:
+                LOGGER.exception("Could not read the input desktop; showing the pointer")
+                here = False
+            if blanked and not here:
+                LOGGER.info("Another desktop has the input; the pointer is shown until it returns")
+                user32.SystemParametersInfoW(_SPI_SETCURSORS, 0, None, 0)
+                blanked = False
+            elif here and not blanked:
+                _blank_cursors()
+                blanked = True
+
+
+def show_pointer(reason: str) -> None:
+    _require()
+    with _pointer_lock:
+        if reason not in _pointer_hidden_for:
+            return
+        _pointer_hidden_for.discard(reason)
+        if not _pointer_hidden_for:
+            _restore_pointer()
+
+
+def restore_pointer() -> None:
+    """Give back a pointer a previous run hid and never showed, and every hide on the way out."""
+    _require()
+    with _pointer_lock:
+        marker = _pointer_marker()
+        if _pointer_hidden_for or (marker and os.path.exists(marker)):
+            _pointer_hidden_for.clear()
+            _restore_pointer()
+
+
+def _restore_pointer() -> None:
+    _guard[0] += 1
+    if not user32.SystemParametersInfoW(_SPI_SETCURSORS, 0, None, 0):
+        LOGGER.warning("Could not reload the system cursors (error %s)", ctypes.get_last_error())
+        return
+    marker = _pointer_marker()
+    if marker:
+        try:
+            os.remove(marker)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            LOGGER.exception("Could not remove the pointer-hidden marker")

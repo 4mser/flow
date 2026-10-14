@@ -16,6 +16,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 import capture_x11  # noqa: E402
 from capture_x11 import Device  # noqa: E402
+from core.return_edge import Rect, ReturnEdge  # noqa: E402
 
 POINTER = Device(2, capture_x11.XI_MASTER_POINTER, "Virtual core pointer")
 KEYBOARD = Device(3, capture_x11.XI_MASTER_KEYBOARD, "Virtual core keyboard")
@@ -91,6 +92,7 @@ class FakeConnection:
         self.grabs = []
         self.refuse = set()
         self.calls = []
+        self.seam_configs = []
         self.mods, self.group = 0, 0
         self.mapping = list(range(1, 11))
         self.closed = False
@@ -146,6 +148,9 @@ class FakeConnection:
     def state(self):
         self.calls.append(("state",))
         return self.mods, self.group
+
+    def configure_seams(self, monitors, resistance_px, enabled=True, display_map=None, models=()):
+        self.seam_configs.append((list(monitors), resistance_px, enabled, dict(display_map or {}), list(models)))
 
     def abort(self):
         self.aborted = True
@@ -560,6 +565,25 @@ class ThreadTest(unittest.TestCase):
         hooks.stop()
         self.assertEqual(connection.grabs, [])
         self.assertTrue(connection.closed)
+
+    def test_seam_sources_follow_zone_and_monitor_changes_while_capture_runs(self):
+        connection = FakeConnection()
+        hooks = self.make(connection)
+        monitors = [Rect(0, 0, 100, 100)]
+        display_map = {"0": monitors[0]}
+        models = []
+        hooks.configure_seams(lambda: monitors, 30, display_map=lambda: display_map,
+                              models=lambda: models)
+        hooks.start()
+        self.assertTrue(self.wait_for(lambda: connection.seam_configs))
+        self.assertEqual(connection.seam_configs[-1][4], [])
+
+        monitors[:] = [Rect(0, 0, 100, 100), Rect(100, 0, 100, 100)]
+        display_map["1"] = monitors[1]
+        models[:] = [ReturnEdge("right", display="0")]
+        self.assertTrue(self.wait_for(lambda: connection.seam_configs[-1][4] == models
+                                       and len(connection.seam_configs[-1][0]) == 2))
+        hooks.stop()
 
     def test_the_loop_dying_lets_go(self):
         connection = FakeConnection()

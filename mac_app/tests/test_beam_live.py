@@ -55,7 +55,7 @@ class LiveBeamFalloffTest(unittest.TestCase):
         self.assertLess(rgba[3], 5)
         self.assertLess(rgba[((height - 2) * width) * 4 + 3], 5)
 
-    def test_switching_back_to_glow_removes_the_beam_mask(self):
+    def test_switching_back_to_glow_uses_the_linear_falloff(self):
         glow = live_glow("left", "medium")
         glow.controller.cfg.crossing["glow_style"] = "glow"
         # The real reconfiguration path, held offscreen by OffscreenPanel.
@@ -64,7 +64,8 @@ class LiveBeamFalloffTest(unittest.TestCase):
         with mock.patch.object(kvm_bridge_app.time, "monotonic", return_value=100):
             glow._draw()
         values = profile(glow, "left", 2)
-        self.assertGreater(values[len(values) // 2], 200)
+        self.assertAlmostEqual(values[len(values) // 2] / values[0], 0.5, delta=.04)
+        self.assertLessEqual(values[-1], 5)
 
 
 if __name__ == "__main__":

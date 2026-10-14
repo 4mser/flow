@@ -18,8 +18,11 @@ from typing import List, Optional, Tuple
 
 from core.return_edge import Rect
 
+CAN_HIDE_POINTER = True
 _lock = threading.Lock()
 _conn = None
+# The reasons the pointer is hidden for, each one XFixes hide on _conn.
+_pointer_hidden_for = set()
 
 # Core pointer-state mask bits; X has none for the back and forward buttons.
 _BUTTON_MASKS = {"left": 1 << 8, "middle": 1 << 9, "right": 1 << 10}
@@ -42,6 +45,8 @@ def _connect():
 def _drop() -> None:
     global _conn
     dead, _conn = _conn, None
+    # The server gave back this connection's hides with it.
+    _pointer_hidden_for.clear()
     try:
         dead.display.close()
     except Exception:
@@ -104,6 +109,36 @@ def set_cursor_position(x: int, y: int) -> None:
     with _session() as conn:
         conn.root.warp_pointer(int(x), int(y))
         conn.display.flush()
+
+
+def hide_pointer(reason: str) -> None:
+    """Hide the pointer everywhere until show_pointer(reason) and every other reason is shown again.
+    XFixes counts hides per client and gives them all back when the connection closes, so a Beamer
+    that dies hidden leaves nothing behind; each reason here is one hide and one show."""
+    with _session() as conn:
+        if _pointer_hidden_for:
+            _pointer_hidden_for.add(reason)
+            return
+        conn.display.xfixes_query_version()
+        conn.root.xfixes_hide_cursor()
+        conn.display.flush()
+        _pointer_hidden_for.add(reason)
+
+
+def show_pointer(reason: str) -> None:
+    with _session() as conn:
+        if reason not in _pointer_hidden_for:
+            return
+        _pointer_hidden_for.discard(reason)
+        if not _pointer_hidden_for:
+            conn.root.xfixes_show_cursor()
+            conn.display.flush()
+
+
+def restore_pointer() -> None:
+    """Nothing outlives the connection on X11; this shows whatever this run still has hidden."""
+    for reason in list(_pointer_hidden_for):
+        show_pointer(reason)
 
 
 def button_down(name: str) -> bool:

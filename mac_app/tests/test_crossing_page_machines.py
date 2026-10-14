@@ -101,7 +101,7 @@ class Page(unittest.TestCase):
     def toggle(self, way):
         peer = self.window.chosen_peer
         if way == "edge":
-            press(self.window.crossing_ledger.rows[peer].edge_title)
+            press(self.window.crossing_ledger.rows[peer].contact())
         elif way == "corner":
             self.window._ledger_corner(peer, self.ways_of(peer)["corner"])
         elif way == "notch":
@@ -139,7 +139,7 @@ class Machines(Page):
         window = self.two()
         before = self.ways_of(BEE)
         self.pick(SEA)
-        press(window.crossing_ledger.rows[SEA].edge_title)
+        press(window.crossing_ledger.rows[SEA].contact())
         self.assertFalse(set(self.ways_of(SEA)["methods"]) & {"edge", "part"})
         self.assertEqual(self.ways_of(BEE), before)
         self.assertFalse(window._save_pending)
@@ -147,7 +147,7 @@ class Machines(Page):
     def test_way_change_rearms_the_engine(self):
         window = self.two()
         with mock.patch.object(self.controller, "zones_changed") as rebuilt:
-            press(window.crossing_ledger.rows[BEE].edge_title)
+            press(window.crossing_ledger.rows[BEE].contact())
         rebuilt.assert_called()
 
     def test_pairing_and_forgetting_add_and_remove_rows(self):

@@ -280,6 +280,16 @@ class ScrollRemainderTests(InjectorCase):
         injector.inject_scroll(2)
         self.assertEqual(self.scrolls(), [(FakeQuartz.kCGScrollEventUnitLine, 2, 0)])
 
+    def test_a_macs_scroll_is_posted_on_the_axes_it_was_read_from(self):
+        # The wire is Core Graphics' axes as the driving Mac's tap read them, its natural setting
+        # already applied (bridge.mouse_messages passes them as they are), so a Mac posts them as
+        # they stand on both axes; a PC turns axis 2 round (win_app/tests/test_horizontal_scroll.py).
+        for dy, dx in ((40, 0), (-40, 0), (0, 40), (0, -40)):
+            with self.subTest(dy=dy, dx=dx):
+                self.quartz.posted.clear()
+                injector.inject_scroll_from_peer(dy, dx, "pixel", "macos")
+                self.assertEqual(self.scrolls(), [(FakeQuartz.kCGScrollEventUnitPixel, dy, dx)])
+
     def test_horizontal_carries_its_own_remainder(self):
         for _ in range(3):
             injector.inject_scroll(0, 0.5)

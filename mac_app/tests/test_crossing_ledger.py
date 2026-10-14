@@ -9,6 +9,7 @@ import AppKit
 from core import ways
 import test_part_edge_thirds as thirds
 from test_crossing_page_machines import BEE, SEA, Page, press, token
+import ledger
 
 
 class LedgerTests(Page):
@@ -37,47 +38,169 @@ class LedgerTests(Page):
                     self.assertEqual(self.picked(), list(combination))
                     self.assertEqual(self.window.atlas_canvas.states[BEE]["picked_thirds"], list(combination))
 
+    def chip(self, side, peer=BEE):
+        return self.window.crossing_ledger.rows[peer].chips[side]
+
+    def corner(self, corner, peer=BEE):
+        return self.window.crossing_ledger.rows[peer].corner_buttons[corner]
+
+    def test_reach_is_compiled_once_per_settings_not_once_per_status_tick(self):
+        self.layout()
+        self.window._reach_stamp = None
+        with mock.patch.object(ways, "reach", wraps=ways.reach) as reach:
+            for _ in range(3):
+                self.window._show_arrangement()
+                self.window.crossing_ledger.refresh(self.store.current(), self.window.chosen_peer)
+            self.assertEqual(reach.call_count, 1)
+            press(self.chip("top"))
+            self.assertGreater(reach.call_count, 1, "a change to the settings asks again")
+
+    def test_a_corner_left_on_after_its_machine_moved_away_stays_removable(self):
+        self.layout()
+        press(self.corner("top_left"))
+        settings = self.store.current()
+        settings["layout"][BEE] = {"x": 400, "y": 400, "w": 160, "h": 100}
+        self.store.save_settings(settings)
+        self.window._show_arrangement()
+        self.assertTrue(self.corner("top_left").enabled)
+        press(self.corner("top_left"))
+        self.assertEqual(self.store.current()["peers"][0]["ways"]["corners"], [])
+
     def test_last_ledger_segment_off_then_off_click_lights_only_that_segment(self):
         self.layout()
         self.pick_thirds(["start"])
-        press(self.row().edge_glyph.hits["start"])
-        self.assertEqual(self.row().edge_text, "Off")
+        press(self.row().contact().segments["start"])
+        self.assertEqual(self.row().contact().kind, "contact_off")
         self.assertEqual(self.picked(), [])
         self.assertFalse(self.store.current()["peers"][0]["ways"]["edge"])
-        press(self.row().edge_glyph.hits["middle"])
+        press(self.row().contact().segments["middle"])
         self.assertEqual(self.picked(), ["middle"])
-        press(self.row().edge_detail)
+        self.assertEqual(self.row().contact().kind, "contact_on")
+        press(self.row().contact())
         self.assertEqual(self.picked(), [])
-        press(self.row().edge_title)
+        press(self.row().contact())
         self.assertEqual(self.picked(), list(ways.PARTS))
+
+    def test_every_chip_state_round_trips_through_the_saved_ways_the_ledger_and_the_map(self):
+        self.layout()
+        self.assertEqual([side for side, chip in self.row().chips.items() if not chip.isHidden()],
+                         list(ways.EDGES))
+        self.assertEqual(self.chip("right").kind, "contact_on")
+        self.assertEqual(self.chip("left").kind, "free")
+        press(self.chip("left"))
+        self.assertEqual(self.ways_of(BEE)["edges"], ["left"])
+        self.rebuilt()
+        self.assertEqual(self.chip("left").kind, "on")
+        self.assertEqual(self.chip("left").label, "Left, wraps")
+        self.assertEqual(self.window.atlas_canvas.states[BEE]["wrap_sides"], ["left"])
+        self.assertIn((BEE, "left"), self.window.atlas_canvas.wrap_layers)
+        press(self.chip("left"))
+        self.assertEqual(self.ways_of(BEE)["edges"], [])
+        self.rebuilt()
+        self.assertEqual(self.chip("left").kind, "free")
+        self.assertNotIn((BEE, "left"), self.window.atlas_canvas.wrap_layers)
+        press(self.chip("top"))
+        press(self.chip("left"))
+        self.assertEqual(self.ways_of(BEE)["edges"], ["left", "top"])
+        press(self.chip("right"))
+        self.assertEqual(self.chip("right").kind, "contact_off")
+        self.rebuilt()
+        self.assertEqual(self.chip("left").kind, "kept")
+        self.assertEqual(self.window.atlas_canvas.states[BEE]["kept_sides"], ["left", "top"])
+        self.assertEqual(self.window.atlas_canvas.states[BEE]["wrap_sides"], [])
+        press(self.chip("left"))
+        self.assertTrue(self.ways_of(BEE)["methods"])
+        self.assertEqual(self.ways_of(BEE)["edges"], ["left", "top"])
+        self.rebuilt()
+        self.assertEqual(self.chip("right").kind, "contact_on")
+        self.assertEqual(self.chip("left").kind, "on")
+        press(self.chip("top"))
+        self.assertEqual(self.ways_of(BEE)["edges"], ["left"])
+
+    def test_chip_added_while_edge_is_off_turns_edge_on_with_the_remembered_thirds(self):
+        self.layout()
+        self.pick_thirds(["start", "end"])
+        press(self.row().contact())
+        self.assertEqual(self.picked(), [])
+        press(self.chip("bottom"))
+        self.assertEqual(self.picked(), ["start", "end"])
+        self.assertEqual(self.ways_of(BEE)["edges"], ["bottom"])
+
+    def test_contact_chip_leads_and_a_machine_cannot_wrap_to_its_own_contact(self):
+        self.layout("top")
+        row = self.row()
+        self.assertEqual(row.chip_order[0], "top")
+        self.assertEqual(self.chip("top").kind, "contact_on")
+        self.assertEqual(self.chip("top").label, "Top")
+        self.assertEqual(self.chip("top").toolTip(), "Top edge: touches Bee; click to turn it off")
+        self.assertEqual(self.chip("left").toolTip(), "Left edge: click to wrap round to Bee")
 
     def test_every_corner_on_and_off_survives_page_rebuild(self):
         self.layout()
         for corner in ways.CORNERS:
             with self.subTest(corner=corner):
-                press(self.row().corner_glyph.hits[corner])
+                press(self.corner(corner))
                 self.assertIn("corner", self.ways_of(BEE)["methods"])
-                self.assertEqual(self.ways_of(BEE)["corner"], corner)
+                self.assertEqual(self.ways_of(BEE)["corners"], [corner])
                 self.rebuilt()
-                self.assertEqual(self.row().corner_title.text, corner.replace("_", " ").capitalize())
-                self.assertEqual(self.row().corner_glyph.hits[corner].accessibilityValue(), "on")
+                self.assertEqual(self.corner(corner).kind, "on")
+                self.assertEqual(self.corner(corner).accessibilityLabel(), f"{corner.replace('_', ' ').capitalize()} corner, on")
                 self.assertIn((BEE, "corner", corner), self.window.atlas_canvas.mark_layers)
-                press(self.row().corner_glyph.hits[corner])
+                press(self.corner(corner))
                 self.rebuilt()
                 self.assertNotIn("corner", self.ways_of(BEE)["methods"])
-                self.assertEqual(self.row().corner_title.text, "None")
+                self.assertEqual(self.corner(corner).kind, "free")
 
-    def test_second_corner_moves_and_another_machines_corner_refuses_the_click(self):
+    def test_two_corners_on_at_once_and_a_pad_for_each(self):
+        self.layout()
+        press(self.corner("top_left"))
+        press(self.corner("bottom_right"))
+        self.assertEqual(self.ways_of(BEE)["corners"], ["top_left", "bottom_right"])
+        self.rebuilt()
+        canvas = self.window.atlas_canvas
+        self.assertEqual(canvas.states[BEE]["corner_ways"], ["top_left", "bottom_right"])
+        self.assertIn((BEE, "corner", "top_left"), canvas.mark_layers)
+        self.assertIn((BEE, "corner", "bottom_right"), canvas.mark_layers)
+        press(self.corner("top_left"))
+        self.assertEqual(self.ways_of(BEE)["corners"], ["bottom_right"])
+
+    def test_another_machines_corner_and_a_corner_with_no_contact_refuse_without_a_write(self):
+        self.layout(second=True)
+        press(self.corner("top_left"))
+        self.assertEqual(self.ways_of(BEE)["corners"], ["top_left"])
+        sea = self.window.crossing_ledger.rows[SEA]
+        held = sea.corner_buttons["top_left"]
+        self.assertEqual(held.kind, "held")
+        self.assertFalse(held.enabled)
+        self.assertEqual(held.toolTip(), "Bee's corner")
+        before = copy.deepcopy(self.store.current())
+        press(held)
+        self.assertEqual(self.store.current(), before)
+        self.window._ledger_corner(SEA, "top_left")
+        self.assertEqual(self.store.current(), before)
+        settings = self.store.current()
+        settings["layout"][BEE]["x"] += 100
+        self.store.save_settings(settings)
+        self.window._show_arrangement()
+        loose = self.window.crossing_ledger.rows[BEE].corner_buttons["bottom_right"]
+        self.assertEqual(loose.kind, "unavailable")
+        self.assertEqual(loose.toolTip(), "Place Bee beside this Mac first")
+        before = copy.deepcopy(self.store.current())
+        press(loose)
+        self.window._ledger_corner(BEE, "bottom_right")
+        self.assertEqual(self.store.current(), before)
+
+    def test_a_side_held_by_another_machine_is_a_dimmed_chip_that_refuses_the_click(self):
         self.layout(second=True)
         row = self.row()
-        press(row.corner_glyph.hits["top_left"])
-        press(row.corner_glyph.hits["bottom_right"])
-        self.assertEqual(self.ways_of(BEE)["corner"], "bottom_right")
-        sea = self.window.crossing_ledger.rows[SEA]
-        self.assertFalse(sea.corner_glyph.hits["bottom_right"].isEnabled())
-        self.assertEqual(sea.corner_glyph.hits["bottom_right"].toolTip(), "Bee's corner")
+        held = row.chips["left"]
+        self.assertEqual(held.kind, "held")
+        self.assertEqual(held.label, "Left, Sea")
+        self.assertFalse(held.enabled)
+        self.assertEqual(held.toolTip(), "Left edge: Sea's")
         before = copy.deepcopy(self.store.current())
-        press(sea.corner_glyph.hits["bottom_right"])
+        press(held)
+        self.window._ledger_side(BEE, "left")
         self.assertEqual(self.store.current(), before)
 
     def test_notch_on_and_off_rebuild_and_no_notch_is_disabled(self):
@@ -99,6 +222,32 @@ class LedgerTests(Page):
         self.assertFalse(self.row().no_notch.view.isHidden())
         self.assertEqual(self.row().notch.accessibilityLabel(), "Notch, no notch")
         self.assertFalse(self.row().notch.isEnabled())
+
+    def test_the_notch_checkbox_says_notch_and_return_through_it_shows_only_with_the_notch(self):
+        # rc4: the checkbox said only On or Off, so where the notch was chosen could not be found.
+        self.layout()
+        self.window.has_notch = True
+        self.window._show_arrangement()
+        self.assertEqual(self.row().notch.title(), "Notch")
+        self.assertEqual(self.row().notch.accessibilityLabel(), "Notch, off")
+        self.assertTrue(self.row().notch_return.isHidden())
+        self.row().notch.setState_(1)
+        press(self.row().notch)
+        self.window._show_arrangement()
+        self.assertEqual(self.row().notch.accessibilityLabel(), "Notch, on")
+        returns = self.row().notch_return
+        self.assertFalse(returns.isHidden())
+        self.assertEqual(returns.title(), "Return through the notch")
+        returns.setState_(1)
+        press(returns)
+        zone = next(zone for zone in self.store.current()["zones"] if zone["kind"] == "notch")
+        self.assertEqual((zone["peer"], zone.get("return_here")), (BEE, True))
+        self.window._show_arrangement()
+        self.assertEqual(self.row().notch_return.state(), 1)
+        self.row().notch_return.setState_(0)
+        press(self.row().notch_return)
+        zone = next(zone for zone in self.store.current()["zones"] if zone["kind"] == "notch")
+        self.assertNotIn("return_here", zone)
 
     def test_cycle_tick_and_jump_chord_round_trip_without_changing_ways(self):
         self.layout()
@@ -136,8 +285,9 @@ class LedgerTests(Page):
         self.assertTrue(row.dimmed)
         self.assertEqual(row.status_text, "Windows · Offline, ways kept")
         self.assertEqual(row.cells["edge"].alphaValue(), .5)
-        self.assertTrue(row.edge_glyph.hits["start"].isEnabled())
-        press(row.edge_glyph.hits["middle"])
+        self.assertTrue(row.contact().segments["start"].isEnabled())
+        self.assertTrue(row.contact().enabled)
+        press(row.contact().segments["middle"])
         self.assertEqual(self.picked(), ["start", "end"])
 
     def test_armed_jump_survives_a_cell_refresh_and_escape_cancels(self):
@@ -149,7 +299,7 @@ class LedgerTests(Page):
         with mock.patch.object(widgets.AppKit, "NSEvent", event_api):
             recorder._clicked()
             prompt = recorder.key.text
-            press(self.row().edge_glyph.hits["start"])
+            press(self.row().contact().segments["start"])
             self.assertIsNotNone(recorder.monitor)
             self.assertEqual(recorder.key.text, prompt)
             escape = mock.Mock()
@@ -180,49 +330,45 @@ class LedgerTests(Page):
                 second.cancel()
                 self.assertFalse(self.controller.jump_recording)
 
-    def test_in_use_false_disables_kept_glyphs_like_left_out(self):
+    def test_in_use_false_disables_kept_chips_like_left_out(self):
         self.layout()
+        press(self.chip("left"))
+        press(self.corner("top_left"))
         settings = self.store.current()
         settings["peers"][0]["in_use"] = False
         self.store.save_settings(settings)
         self.window._show_arrangement()
         row = self.row()
         self.assertIn("Left out", row.status_text)
-        for glyph in (row.edge_glyph, row.corner_glyph):
-            for button in glyph.hits.values():
-                self.assertFalse(button.isEnabled())
-                self.assertEqual(button.toolTip(), "Left out: Put back to change its ways")
+        self.assertEqual(row.chips["left"].kind, "on", "kept ways drawn as they would cross, inert")
+        self.assertEqual(row.corner_buttons["top_left"].kind, "on")
+        for control in (*row.chips.values(), *row.corner_buttons.values(), *row.contact().segments.values()):
+            if control.isHidden():
+                continue
+            self.assertFalse(control.enabled if hasattr(control, "enabled") and not isinstance(control, AppKit.NSButton)
+                             else control.isEnabled())
+            self.assertEqual(control.toolTip(), "Left out: Put back to change its ways")
 
-    def test_glyphs_sit_left_of_top_aligned_text_in_both_layouts(self):
-        self.layout()
+    def test_chips_wrap_in_lines_and_corner_grid_is_two_by_two_at_both_widths(self):
+        __import__("theme").init_fonts()
+        self.layout(second=True)
         for width in (687, 399):
             self.window.crossing_ledger.setFrameSize_((width, 700))
             row = self.row()
-            for glyph, title, detail in ((row.edge_glyph, row.edge_title, row.edge_detail),
-                                          (row.corner_glyph, row.corner_title.view, row.corner_detail.view)):
-                self.assertGreaterEqual(title.frame().origin.x,
-                                        glyph.frame().origin.x + glyph.frame().size.width)
-                self.assertEqual(title.frame().origin.y, 0)
-                self.assertEqual(detail.frame().origin.x, title.frame().origin.x)
-                self.assertLessEqual(detail.frame().origin.y + detail.frame().size.height,
-                                     row.cells["edge"].frame().size.height)
-
-    def test_standard_width_corner_text_fits_on_one_line_and_elides_when_constrained(self):
-        __import__("theme").init_fonts()
-        self.layout()
-        press(self.row().corner_glyph.hits["bottom_left"])
-        ledger = self.window.crossing_ledger
-        ledger.setFrameSize_((687, 700))
-        for label in (self.row().corner_title, self.row().corner_detail):
-            view = label.view
-            self.assertGreaterEqual(view.frame().size.width - 4,
-                                    view.attributedStringValue().size().width)
-            self.assertFalse(view.cell().wraps())
-            self.assertEqual(view.cell().lineBreakMode(), AppKit.NSLineBreakByTruncatingTail)
-            self.assertEqual(view.toolTip(), label.text)
-        ledger.setFrameSize_((620, 700))
-        self.assertEqual(self.row().corner_title.text, "Bottom left")
-        self.assertEqual(self.row().corner_detail.view.toolTip(), "diagonal push")
+            cell = row.cells["edge"].bounds().size.width
+            shown = [chip for chip in row.chips.values() if not chip.isHidden()]
+            for chip in shown:
+                frame = chip.frame()
+                self.assertEqual(frame.size.height, 26)
+                self.assertLessEqual(frame.origin.x + frame.size.width, cell + .01)
+                self.assertGreaterEqual(frame.size.width, chip.natural_width() - .01)
+            first = next(chip for side in row.chip_order for chip in [row.chips[side]] if not chip.isHidden())
+            self.assertEqual(first.frame().origin.x, 0)
+            frames = [button.frame() for button in row.corner_buttons.values()]
+            self.assertEqual([(f.origin.x, f.origin.y, f.size.width, f.size.height) for f in frames],
+                             [(0, 0, 28, 28), (32, 0, 28, 28), (0, 32, 28, 28), (32, 32, 28, 28)])
+            self.assertLessEqual(row.cells["corner"].frame().size.width, 70)
+            self.assertGreaterEqual(row.cells["corner"].frame().size.height, 60)
 
     def test_selected_machine_status_dot_is_inset_from_the_rule_at_both_widths(self):
         self.layout()
@@ -239,7 +385,7 @@ class LedgerTests(Page):
         import widgets
         self.layout()
         row = self.row()
-        self.window.crossing_ledger.setFrameSize_((687, 700))
+        self.window.crossing_ledger.setFrameSize_((760, 700))
         self.assertGreaterEqual(row.jump_caption.view.frame().size.width - 4,
                                 row.jump_caption.view.attributedStringValue().size().width)
         self.assertEqual(row.jump.key.text, "Set a key")
@@ -277,22 +423,29 @@ class LedgerTests(Page):
 
     def test_left_out_row_keeps_intent_and_put_back_restores_controls(self):
         self.layout()
+        press(self.chip("left"))
+        press(self.corner("top_left"))
         before = self.ways_of(BEE)
         press(self.row().leave)
         row = self.row()
         self.assertTrue(row.dimmed)
         self.assertEqual(row.status_text, "Windows · Left out")
         self.assertIn("Put back", row.leave.accessibilityLabel())
-        self.assertFalse(row.edge_glyph.hits["start"].isEnabled())
-        self.assertFalse(row.corner_glyph.hits["top_left"].isEnabled())
+        self.assertEqual(row.chips["left"].kind, "on", "kept ways drawn as they would cross, inert")
+        self.assertEqual(row.corner_buttons["top_left"].kind, "on")
+        self.assertFalse(row.contact().segments["start"].isEnabled())
+        self.assertFalse(row.chips["left"].enabled)
+        self.assertFalse(row.corner_buttons["top_left"].enabled)
         held = copy.deepcopy(self.store.current())
-        press(row.edge_glyph.hits["start"])
-        press(row.corner_glyph.hits["top_left"])
+        press(row.contact().segments["start"])
+        press(row.chips["left"])
+        press(row.corner_buttons["top_left"])
         self.assertEqual(self.store.current(), held)
         self.assertEqual(self.ways_of(BEE), before)
         press(row.leave)
         self.assertFalse(self.row().dimmed)
-        self.assertTrue(self.row().edge_glyph.hits["start"].isEnabled())
+        self.assertTrue(self.row().contact().segments["start"].isEnabled())
+        self.assertTrue(self.row().chips["left"].enabled)
         self.assertEqual(self.ways_of(BEE), before)
 
     def test_row_order_follows_map_position_and_left_out_stays_present(self):
@@ -301,20 +454,20 @@ class LedgerTests(Page):
         press(window.crossing_ledger.rows[SEA].leave)
         self.assertIn(SEA, window.crossing_ledger.order)
 
-    def test_no_contact_disables_edge_while_corner_stays_clickable(self):
+    def test_no_contact_has_no_contact_chip_and_corners_are_not_offered(self):
         self.layout()
         settings = self.store.current()
         settings["layout"][BEE]["x"] += 100
         self.store.save_settings(settings)
         self.window._show_arrangement()
-        self.assertEqual(self.row().edge_text, "Off")
-        self.assertEqual(self.row().edge_detail.attributedTitle().string(), "place it on the map")
-        self.assertFalse(self.row().edge_title.isEnabled())
+        row = self.row()
+        self.assertIsNone(row.contact())
+        self.assertEqual({chip.kind for chip in row.chips.values()}, {"free"})
+        self.assertTrue(row.edge_note.view.isHidden())
+        self.assertTrue(all(button.kind == "unavailable" and not button.enabled for button in row.corner_buttons.values()))
         before = copy.deepcopy(self.store.current())
-        press(self.row().edge_glyph.hits["start"])
+        self.window._ledger_corner(BEE, "top_left")
         self.assertEqual(self.store.current(), before)
-        press(self.row().corner_glyph.hits["top_left"])
-        self.assertIn("corner", self.ways_of(BEE)["methods"])
 
     def test_narrow_cells_and_visible_controls_fit_inside_the_ledger(self):
         self.layout()
@@ -324,8 +477,13 @@ class LedgerTests(Page):
         self.assertTrue(all(header.view.isHidden() for header in ledger.headers))
         row = self.row()
         self.assertEqual(row.cells["machine"].frame().origin.x + row.cells["machine"].frame().size.width, 440)
-        self.assertEqual(row.cells["edge"].frame().origin.y, row.cells["corner"].frame().origin.y)
+        self.assertEqual(row.cells["edge"].frame().size.width, 440 - 24)
+        self.assertGreaterEqual(row.cells["edge"].frame().origin.y,
+                                row.cells["machine"].frame().origin.y + row.cells["machine"].frame().size.height)
+        self.assertEqual(row.cells["corner"].frame().origin.y, row.cells["notch"].frame().origin.y)
         self.assertEqual(row.cells["notch"].frame().origin.y, row.cells["keys"].frame().origin.y)
+        self.assertGreaterEqual(row.cells["corner"].frame().origin.y,
+                                row.cells["edge"].frame().origin.y + row.cells["edge"].frame().size.height)
         for cell in row.cells.values():
             frame = cell.frame()
             self.assertGreaterEqual(frame.origin.x, 0)
@@ -349,66 +507,71 @@ class LedgerTests(Page):
                 for _ in range(4):
                     settle(self.window.window)
                 table = self.window.crossing_ledger
-                self.assertEqual(table.bounds().size.width < 620, narrow)
+                self.assertEqual(table.bounds().size.width < table.narrow_below(), narrow)
                 self.assertEqual(all(header.view.isHidden() for header in table.headers), narrow)
                 self.assertFalse(self.window.pages["crossing"].hasHorizontalScroller())
                 self.assertEqual(measure(self.window, "crossing")["overflows"], [])
                 self.assertFalse(self.window.window.isVisible())
 
-    def test_glyph_hit_bands_reach_the_button_outside_the_screen_outline(self):
+    def test_thirds_bar_segments_are_nine_point_hit_targets_inside_the_contact_chip(self):
         for side in ways.EDGES:
             self.layout(side)
             self.window._select_page("crossing")
             self.window.crossing_ledger.setFrameSize_((700, 700))
-            row = self.row()
-            cell = row.cells["edge"]
-            glyph = row.edge_glyph
-            band = glyph.hits["middle"]
-            frame = band.frame()
-            if side in ("top", "bottom"):
-                point = (frame.origin.x + frame.size.width / 2,
-                         frame.origin.y + (1 if side == "top" else frame.size.height - 1))
-            else:
-                point = (frame.origin.x + (1 if side == "left" else frame.size.width - 1),
-                         frame.origin.y + frame.size.height / 2)
-            point = (glyph.frame().origin.x + point[0], glyph.frame().origin.y + point[1])
-            point = (cell.frame().origin.x + point[0], cell.frame().origin.y + point[1])
-            with self.subTest(side=side):
-                self.assertIs(cell.hitTest_(point), band)
+            chip = self.row().contact()
+            for part, segment in chip.segments.items():
+                frame = segment.frame()
+                with self.subTest(side=side, part=part):
+                    self.assertEqual(frame.size.width, 9)
+                    self.assertEqual(frame.size.height, 26)
+                    centre = (frame.origin.x + 4.5, 13)
+                    self.assertIs(chip.hitTest_(chip.convertPoint_toView_(centre, chip.superview())), segment)
+            self.assertEqual(chip.segments["start"].toolTip(), f"{ways.part_names(side)['start']} third: click to leave it out")
 
     def test_changes_keep_the_same_row_controls_and_do_not_hide_the_ledger(self):
         self.layout()
         row = self.row()
-        controls = list(row.edge_glyph.hits.values()) + list(row.corner_glyph.hits.values())
+        controls = list(row.chips.values()) + list(row.corner_buttons.values())
         with mock.patch("motion.set_hidden", wraps=__import__("motion").set_hidden) as hidden:
-            press(row.edge_glyph.hits["middle"])
-            press(row.corner_glyph.hits["top_left"])
+            press(row.contact().segments["middle"])
+            press(self.chip("left"))
+            press(self.corner("top_left"))
         self.assertIs(self.row(), row)
-        self.assertEqual(controls, list(row.edge_glyph.hits.values()) + list(row.corner_glyph.hits.values()))
+        self.assertEqual(controls, list(row.chips.values()) + list(row.corner_buttons.values()))
         self.assertFalse(self.window.crossing_ledger.isHidden())
         self.assertFalse(any(call.args[0] in (row, self.window.crossing_ledger) for call in hidden.call_args_list))
 
-    def test_accessibility_table_rows_columns_named_segment_states_and_text_button(self):
+    def test_accessibility_table_rows_columns_chips_corners_and_segments_are_named_buttons(self):
         self.layout("top")
         ledger, row = self.window.crossing_ledger, self.row()
         self.assertEqual(ledger.accessibilityRole(), AppKit.NSAccessibilityTableRole)
         self.assertEqual(row.accessibilityRole(), AppKit.NSAccessibilityRowRole)
         self.assertEqual(ledger.accessibilityRows(), [row])
         self.assertEqual(len(ledger.accessibilityColumns()), 5)
+        self.assertEqual([header.text for header in ledger.headers], ["Machine", "Edges", "Corners", "Notch", "Keys"])
         self.assertEqual(row.accessibilityLabel(), "Bee")
-        button = row.edge_glyph.hits["start"]
-        self.assertEqual(button.accessibilityRole(), AppKit.NSAccessibilityButtonRole)
-        self.assertEqual(button.accessibilityLabel(), "Top edge, left third, on")
-        press(button)
-        self.assertEqual(button.accessibilityLabel(), "Top edge, left third, off")
-        corner = row.corner_glyph.hits["top_left"]
+        segment = row.contact().segments["start"]
+        self.assertEqual(segment.accessibilityRole(), AppKit.NSAccessibilityButtonRole)
+        self.assertEqual(segment.accessibilityLabel(), "Top edge, left third, on")
+        press(segment)
+        self.assertEqual(segment.accessibilityLabel(), "Top edge, left third, off")
+        chip = self.chip("left")
+        self.assertEqual(chip.accessibilityRole(), AppKit.NSAccessibilityButtonRole)
+        self.assertTrue(chip.isAccessibilityElement())
+        self.assertEqual(chip.accessibilityLabel(), "Left edge, wraps round, off")
+        self.assertEqual(chip.accessibilityValue(), "off")
+        press(chip)
+        self.assertEqual(chip.accessibilityLabel(), "Left edge, wraps round, on")
+        self.assertEqual(chip.accessibilityValue(), "on")
+        corner = self.corner("top_left")
+        self.assertEqual(corner.accessibilityRole(), AppKit.NSAccessibilityButtonRole)
         self.assertEqual(corner.accessibilityLabel(), "Top left corner, off")
         press(corner)
         self.assertEqual(corner.accessibilityLabel(), "Top left corner, on")
-        self.whole_edge()
-        self.assertEqual(row.edge_title.accessibilityLabel(), "Edge, whole top edge")
-        press(row.edge_title)
-        self.assertEqual(row.edge_title.accessibilityLabel(), "Edge, off")
+        self.assertEqual(corner.accessibilityValue(), "on")
+        self.assertEqual(row.contact().accessibilityLabel(), "Top edge, touches Bee, on")
+        press(row.contact())
+        self.assertEqual(row.contact().accessibilityLabel(), "Top edge, touches Bee, off")
 
     def test_inline_rename_cancel_and_save_use_the_same_row(self):
         self.layout()

@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from mac_app import kvm_bridge_app
+import kvm_bridge_app
 from core import effects
 import config as mac_config
 

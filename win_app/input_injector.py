@@ -655,25 +655,18 @@ def plan_scroll_units(dy, dx, mode: str, accum: List[float]) -> Tuple[int, int]:
     wheel units via WHEEL_UNITS_PER_PIXEL and accumulated across calls so
     slow, precise motion isn't lost to integer truncation.
 
-    Sign convention: the vertical mapping below (dy -> +120 per unit) is
-    intentionally unchanged from today's dy*120 behaviour, whatever that
-    already works out to with Mac natural scrolling. MOUSEEVENTF_HWHEEL's
-    positive mouseData means "scroll right" (the mirror of
-    MOUSEEVENTF_WHEEL, where positive means "scroll up/away"); dx is
-    forwarded without an extra sign flip, on the assumption that a rightward
-    two-finger swipe on the Mac should scroll content right on Windows, the
-    same direction it would on the Mac itself. That assumption -- and the
-    WHEEL_UNITS_PER_PIXEL constant above -- still needs confirming on real
-    trackpad/mouse hardware; both are easy to retune if the felt direction or
-    speed is wrong.
+    Sign convention: dy and dx are the wire's, Core Graphics' axes 1 and 2.
+    Axis 1 positive moves the view up, as MOUSEEVENTF_WHEEL's positive does;
+    axis 2 positive moves it left, where MOUSEEVENTF_HWHEEL's positive moves
+    it right, so dx is turned round here (test_horizontal_scroll.py).
     """
     if mode == "pixel":
         accum[0] += dy * WHEEL_UNITS_PER_PIXEL
-        accum[1] += dx * WHEEL_UNITS_PER_PIXEL
+        accum[1] -= dx * WHEEL_UNITS_PER_PIXEL
     else:
         # float, not int: a receiver's scroll speed can make a click a fraction of one.
         accum[0] += float(dy) * 120
-        accum[1] += float(dx) * 120
+        accum[1] -= float(dx) * 120
     whole_y = int(accum[0])
     whole_x = int(accum[1])
     accum[0] -= whole_y

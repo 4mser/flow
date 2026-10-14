@@ -102,9 +102,10 @@ class DesignTileMeasurements(unittest.TestCase):
                                 with self.subTest(family=family, style=style, appearance=appearance, scale=scale):
                                     self.assertGreaterEqual(contrast, 3.0)
                                     # The Qt test holds the same 1% floor. The Rule switch is four
-                                    # small ticks round the pointer, under 1% in Light, and its
-                                    # geometry is the effect's own, so it alone is held to 0.5%.
-                                    floor = .005 if (family, style) == ("switch", "rule") else .01
+                                    # small ticks round the pointer, under 1% in Light, so it alone is
+                                    # held to 0.5%; Flint is a few short sparks drawn at their real size,
+                                    # 0.4% at least.
+                                    floor = {("switch", "rule"): .005, ("crossing", "flint"): .004}.get((family, style), .01)
                                     self.assertGreaterEqual(coverage, floor)
         finally:
             theme.set_dark(previous)

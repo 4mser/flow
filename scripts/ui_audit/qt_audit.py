@@ -29,6 +29,10 @@ class FakePairing:
         self.outcome = ""
         self.known = None
         self.discovered = []
+        self.nearby_status = {"state": "inactive"}
+
+    def cancel_nearby(self):
+        self.nearby_status = {"state": "inactive"}
 
     def machines(self):
         return self.discovered

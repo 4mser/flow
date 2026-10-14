@@ -1,6 +1,7 @@
 """Whole-crossing specimens retain the journey and freeze at the seam."""
 
 import unittest
+from unittest import mock
 
 from core import effects
 
@@ -16,23 +17,19 @@ def marks(scene):
 
 
 class StylePreviewTests(unittest.TestCase):
-    def test_the_shipped_still_table_is_what_the_search_finds(self):
-        for style in STYLES:
-            for place, index in effects._PLACE_INDEX.items():
-                with self.subTest(style=style, place=place):
-                    effects._search_still.cache_clear()
-                    self.assertEqual(effects.STILL_SEARCHED[style][index], effects._search_still(style, place))
-
-    def test_a_length_or_size_step_builds_no_scene(self):
-        from unittest import mock
+    def test_still_times_use_the_authored_timeline_without_building_scenes(self):
+        expected = effects.STILL_AT
         with mock.patch.object(effects, "preview_still_scene", side_effect=AssertionError("scene built")):
-            for style in STYLES:
-                for place in (*PLACES, "switch"):
-                    for pace, fraction in ((0.37, 0.021), (1.0, None), (2.5, 0.079)):
-                        at = effects.still_time(style, place, pace=pace, effect_size_fraction=fraction)
-                        start = effects._S_START if place == "switch" else effects._P_CROSS
-                        searched = effects.STILL_SEARCHED[style][effects._PLACE_INDEX[place]]
-                        self.assertAlmostEqual(at, searched if searched < start else start + (searched - start) * pace)
+            for effect, at in expected.items():
+                for place in ("edge", "corner", "notch"):
+                    for pace in (0.25, 1.0, 2.0):
+                        expected_time = effects._P_CROSS + at if at < 0 else effects._P_CROSS + at * pace
+                        with self.subTest(effect=effect, place=place, pace=pace):
+                            self.assertEqual(effects.still_time(effect, place, pace=pace), expected_time)
+                for pace in (0.25, 1.0, 2.0):
+                    with self.subTest(effect=effect, place="switch", pace=pace):
+                        self.assertEqual(effects.still_time(effect, "switch", pace=pace),
+                                         effects._S_START + effects.SWITCH_AT.get(effect, max(at, 0.1)) * pace)
 
     def test_a_still_is_the_same_picture_at_every_length(self):
         for style in STYLES:
@@ -41,15 +38,21 @@ class StylePreviewTests(unittest.TestCase):
                     fx = effects.preview_effect(style)
                     stills = [effects.preview_still_scene(fx, effects.still_time(style, place, pace=pace), place,
                                                           PALETTE, pace=pace) for pace in (0.25, 1.0, 2.5)]
-                    def rounded(value):
-                        if isinstance(value, float):
-                            return round(value, 6)
+                    def flat(value):
                         if isinstance(value, (list, tuple)):
-                            return type(value)(rounded(item) for item in value)
-                        return value
+                            return [leaf for item in value for leaf in flat(item)]
+                        return [value]
+                    # Within a level of colour: the pace divides back out with float error, which can
+                    # tip a mixed colour by one step in 255.
                     for scene in stills[1:]:
-                        self.assertEqual(rounded(scene["pointer"]), rounded(stills[0]["pointer"]))
-                        self.assertEqual(rounded(marks(scene)), rounded(marks(stills[0])))
+                        for got, want in ((flat(scene["pointer"]), flat(stills[0]["pointer"])),
+                                          (flat(marks(scene)), flat(marks(stills[0])))):
+                            self.assertEqual(len(got), len(want))
+                            for a, b in zip(got, want):
+                                if isinstance(a, float) or isinstance(b, float):
+                                    self.assertAlmostEqual(a, b, delta=0.005)
+                                else:
+                                    self.assertEqual(a, b)
 
     def test_hover_begins_at_approach_after_intent_and_reduced_motion_holds_still(self):
         held = effects.still_time("beam", "edge")
@@ -85,9 +88,9 @@ class StylePreviewTests(unittest.TestCase):
                     with self.subTest(style=style, place=place, pace=pace):
                         fx = effects.preview_effect(style)
                         at = effects.still_time(fx, place, pace=pace)
-                        self.assertGreaterEqual(at, effects._P_CROSS - 0.3)
-                        # The same frame of the effect at every Length: after the crossing it comes later.
-                        self.assertLessEqual(at, effects._P_CROSS + 0.3 * max(1.0, pace))
+                        self.assertEqual(at, effects._P_CROSS + effects.STILL_AT[style] * pace
+                                         if effects.STILL_AT[style] >= 0
+                                         else effects._P_CROSS + effects.STILL_AT[style])
                         scene = effects.preview_still_scene(fx, at, place, PALETTE, pace=pace)
                         self.assertIsNotNone(scene["pointer"])
                         self.assertEqual(len(scene["screens"]), 2)
@@ -120,4 +123,5 @@ class StylePreviewTests(unittest.TestCase):
                 _x, top, _w, height, _r = contact["notch"]
                 self.assertGreater(contact["pointer"][1], top + height)
                 self.assertLess(arrival["pointer"][1] + 20, top)
-                self.assertEqual(contact["notch"][2:4], notch)
+                # A real notch's points, drawn at the scale the scene's screens stand for.
+                self.assertEqual(contact["notch"][2:4], tuple(value / effects.PREVIEW_REAL for value in notch))

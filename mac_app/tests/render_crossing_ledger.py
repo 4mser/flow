@@ -62,7 +62,7 @@ def built_state(number, destination):
         assert not control.window.isVisible()
         assert not control.pages["crossing"].hasHorizontalScroller()
         assert not geometry["overflows"], geometry["overflows"]
-        assert (control.crossing_ledger.bounds().size.width < 620) == (number == 7)
+        assert (control.crossing_ledger.bounds().size.width < control.crossing_ledger.narrow_below()) == (number == 7)
         print(f"state {number}: {page.bounds().size.width:g} x {page.bounds().size.height:g} pt, "
               f"{len(control.crossing_ledger.rows)} rows, ledger {control.crossing_ledger.bounds().size.width:g} pt, "
               f"{len(geometry['overflows'])} overflows")

@@ -141,13 +141,14 @@ class Shell:
             self.carry_out(outcome)
             return True
 
-    def edit(self, other, methods, parts=None, corner=None):
+    def edit(self, other, methods, parts=None, corner=None, *, edges=None, corners=None):
         with self.lock:
             settings = self.current()
             held = ways.ways(settings, other.id)
             thirds = list(ways.PARTS) if "edge" in methods else (parts if parts is not None else held["parts"])
             outcome = crossing_state.edit_ways(settings, other.id, edge=bool(set(methods) & {"edge", "part"}),
-                         thirds=thirds, corner="corner" in methods, corner_at=corner,
+                         thirds=thirds, edges=edges, corners=corners,
+                         corner="corner" in methods if corners is None else None, corner_at=corner,
                          notch="notch" in methods, capable=self.capable(), **self._args())
             self.carry_out(outcome)
             return True

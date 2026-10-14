@@ -25,6 +25,70 @@ SESSION = "/org/freedesktop/portal/desktop/session/1_42/beamer2"
 
 
 class BarrierTest(unittest.TestCase):
+    def test_a_scoped_wayland_zone_does_not_create_barriers_on_another_display(self):
+        screens = [Rect(0, 0, 1920, 1080), Rect(1920, 0, 1920, 1080)]
+        model = return_edge.ReturnEdge("left", display="1")
+
+        found = capture_portal.barriers([model], screens, display_map={"0": screens[0], "1": screens[1]})
+
+        self.assertEqual(found, [],
+                         "display 1's left seam is internal and cannot be captured")
+
+    def test_a_display_key_selects_its_zone_by_geometry_side_by_side(self):
+        screens = [Rect(0, 0, 1920, 1080), Rect(1920, 0, 1920, 1080)]
+        models = [return_edge.ReturnEdge("top", display="A")]
+        self.assertEqual(capture_portal.barriers(models, list(reversed(screens)), display_map={"A": screens[0], "B": screens[1]}),
+                         [("top", (0, 0, 1919, 0))])
+
+    def test_a_display_key_selects_its_zone_by_geometry_when_stacked(self):
+        screens = [Rect(0, 0, 1600, 900), Rect(200, 950, 1200, 700)]
+        models = [return_edge.ReturnEdge("right", display="A")]
+        self.assertEqual(capture_portal.barriers(models, list(reversed(screens)), display_map={"A": screens[0], "B": screens[1]}),
+                         [("right", (1600, 0, 1600, 899))])
+
+    def test_kde_places_a_selected_whole_edge_in_reconciled_zone_coordinates(self):
+        qt_screens = [Rect(-1920, 0, 1920, 1080), Rect(0, 0, 2560, 1440)]
+        zones = [Rect(0, 0, 1280, 720), Rect(-960, 0, 960, 540)]
+        desktop_portal._screens = qt_screens
+        desktop_portal.set_zones(zones)
+        self.addCleanup(desktop_portal.set_zones, [])
+        self.addCleanup(setattr, desktop_portal, "_screens", [])
+
+        self.assertEqual(capture_portal.barriers([return_edge.ReturnEdge("top", display="0")], zones,
+                                                 whole_edges=True,
+                                                 display_map=desktop_portal.display_map()),
+                         [("top", (-960, 0, -1, 0))])
+
+    def test_a_display_key_scopes_split_edges_and_corners(self):
+        screens = [Rect(0, 0, 1920, 1080), Rect(1920, 0, 1920, 1080)]
+        display_map = {"A": screens[0], "B": screens[1]}
+        self.assertEqual(capture_portal.barriers([return_edge.PartEdge("left", {"middle"}, display="A")], screens,
+                                                 display_map=display_map),
+                         [("left", (0, 360, 0, 719))])
+        self.assertEqual(sorted(capture_portal.barriers([return_edge.CornerPush("top_right", "right", display="A")], screens,
+                                                        display_map=display_map)),
+                         [("top", (1911, 0, 1919, 0))])
+
+    def test_an_unmatched_display_does_not_install_barriers_on_other_displays(self):
+        screens = [Rect(0, 0, 1920, 1080), Rect(1920, 0, 1920, 1080)]
+        unmatched = []
+        found = capture_portal.barriers([return_edge.ReturnEdge("top", display="missing")], screens,
+                                        display_map={"A": screens[0], "B": screens[1]},
+                                        warn_unmatched=unmatched.append)
+        self.assertEqual(found, [])
+        self.assertEqual(unmatched, ["missing"])
+
+    def test_an_unmatched_display_is_logged_once(self):
+        hooks = capture_portal.Hooks(None, None, None)
+        with self.assertLogs(capture_portal.LOGGER, level="WARNING") as logged:
+            hooks._warn_unmatched_display("missing")
+            hooks._warn_unmatched_display("missing")
+        self.assertEqual(len(logged.records), 1)
+
+    def test_a_display_key_is_part_of_the_barrier_model_key(self):
+        self.assertNotEqual(capture_portal.model_key([return_edge.ReturnEdge("top", display="A")]),
+                            capture_portal.model_key([return_edge.ReturnEdge("top", display="B")]))
+
     def test_kde_uses_one_complete_edge_for_selected_thirds(self):
         models = [return_edge.PartEdge("left", {"middle"}), return_edge.PartEdge("left", {"end"})]
         self.assertEqual(capture_portal.barriers(models, ONE, whole_edges=True), [("left", (0, 0, 0, 1079))])
@@ -232,16 +296,38 @@ class GnomeBus(FakeBus):
         self.emit(portal.OBJECT_PATH, capture_portal.INTERFACE, "Disabled", (SESSION, {}))
 
 
+class KdeBus(FakeBus):
+    """The InputCapture portal as xdg-desktop-portal-kde and KWin run it: SetPointerBarriers on a
+    session not disabled disables it first, KWin saying so with a Disabled signal that reaches the
+    client after the request's Response and so after its own Enable; Enable on an enabled session
+    and Disable (which the portal sends as an enable) are no-ops. `disableds` counts the signals."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.enabled = False
+        self.disableds = 0
+
+    def call(self, path, interface, method, signature, body):
+        if method == "Enable":
+            self.enabled = True
+        result = super().call(path, interface, method, signature, body)
+        if method == "SetPointerBarriers" and self.enabled:
+            self.enabled = False
+            self.disableds += 1
+            self.emit(portal.OBJECT_PATH, capture_portal.INTERFACE, "Disabled", (SESSION, {}))
+        return result
+
+
 class Harness:
     """A Hooks on a fake portal, its callbacks recorded, and a sender stand-in that crosses after
     `push_to_cross` pushes, as the zone model does. `gnome` makes the portal GNOME's, on the zone
     the laptop reports."""
 
-    def __init__(self, version=1, models=None, push_to_cross=2, tokens=None, gnome=False):
+    def __init__(self, version=1, models=None, push_to_cross=2, tokens=None, gnome=False, kde=False):
         if gnome:
             self.bus = GnomeBus(LAPTOP, versions={capture_portal.INTERFACE: version})
         else:
-            self.bus = FakeBus(versions={capture_portal.INTERFACE: version})
+            self.bus = (KdeBus if kde else FakeBus)(versions={capture_portal.INTERFACE: version})
             self.bus.answers["SetPointerBarriers"] = (0, {"failed_barriers": []})
         self.bus.answers["CreateSession"] = (0, {"session_handle": SESSION, "capabilities": 3})
         self.bus.answers["GetZones"] = (0, {"zones": [(1600, 900, 0, 0)] if gnome else [(1920, 1080, 0, 0)], "zone_set": 7})
@@ -580,6 +666,74 @@ class HooksTest(unittest.TestCase):
         self.assertEqual(h.bus.made("Disable"), [])
         self.assertEqual((h.bus.refused, h.bus.wasted), ([], []))
         self.assertEqual(h.failures, [])
+
+    def test_kwins_disabled_after_every_set_of_barriers_does_not_set_them_again_and_again(self):
+        with mock.patch.object(capture_portal, "DISABLED_SECONDS", 0.1):
+            h = self.make(kde=True)
+            h.start()
+            h.models = [return_edge.ReturnEdge("right"), return_edge.ReturnEdge("bottom")]
+            wait_for(lambda: h.bus.disableds == 1, what="the changed barriers placed on the enabled session")
+            time.sleep(0.8)
+            self.assertEqual(len(h.bus.made("SetPointerBarriers")), 2)
+            self.assertEqual(h.bus.disableds, 1)
+            self.assertTrue(h.bus.enabled)
+            self.assertLessEqual(len(h.bus.made("Enable")), 4)
+            self.assertEqual(h.failures, [])
+
+    def devices(self, h):
+        h.ei.feed(("device_added", h.pointer), ("device_added", h.keyboard))
+        time.sleep(0.15)
+
+    def cancel(self, h):
+        """Mutter's cancel shortcut: the session back in init, its input devices removed, no signal."""
+        h.bus.enabled = False
+        h.ei.feed(("device_removed", h.pointer), ("device_removed", h.keyboard))
+
+    def test_gnomes_cancel_shortcut_enables_the_session_again_without_setting_the_barriers(self):
+        with mock.patch.object(capture_portal, "DISABLED_SECONDS", 0.1):
+            h = self.make(gnome=True)
+            h.start()
+            self.devices(h)
+            self.cancel(h)
+            wait_for(lambda: len(h.bus.made("Enable")) == 2, what="the session enabled again")
+            time.sleep(0.4)
+            self.assertEqual(len(h.bus.made("SetPointerBarriers")), 1)
+            self.assertEqual(h.bus.made("Disable"), [])
+            self.assertEqual(len(h.bus.made("Enable")), 2)
+            self.assertTrue(h.bus.enabled)
+            self.assertEqual((h.bus.refused, h.bus.wasted), ([], []))
+
+    def test_the_cancel_shortcut_while_input_is_captured_ends_it_and_the_edges_come_back(self):
+        with mock.patch.object(capture_portal, "DISABLED_SECONDS", 0.1):
+            h = self.make(gnome=True)
+            h.start()
+            self.devices(h)
+            h.activate(x=1600.0, y=450.0)
+            h.bus.emit(portal.OBJECT_PATH, capture_portal.INTERFACE, "Deactivated",
+                       (SESSION, vardict({"activation_id": 3, "cursor_position": (800.0, 450.0)})))
+            wait_for(lambda: not h.hooks.holding, what="the capture to end")
+            time.sleep(0.3)
+            self.assertEqual(len(h.bus.made("Enable")), 1)  # an ordinary end leaves the session as it is
+            self.cancel(h)
+            wait_for(lambda: len(h.bus.made("Enable")) == 2, what="the session enabled again")
+            self.assertTrue(h.bus.enabled)
+            self.assertEqual(len(h.bus.made("SetPointerBarriers")), 1)
+            self.assertEqual((h.bus.refused, h.bus.wasted), ([], []))
+            self.assertEqual(h.failures, [])
+
+    def test_the_devices_a_disable_of_its_own_removes_are_not_taken_for_a_cancel(self):
+        with mock.patch.object(capture_portal, "DISABLED_SECONDS", 0.1):
+            h = self.make(gnome=True, models=[return_edge.ReturnEdge("bottom")])
+            h.start()
+            self.devices(h)
+            h.models = [return_edge.ReturnEdge("bottom"), return_edge.ReturnEdge("left")]
+            wait_for(lambda: len(h.bus.made("Disable")) == 1, what="the session disabled")
+            h.ei.feed(("device_removed", h.pointer), ("device_removed", h.keyboard))
+            wait_for(lambda: len(h.bus.made("Enable")) == 2, what="the session enabled with the new barriers")
+            time.sleep(0.5)
+            self.assertEqual(len(h.bus.made("Enable")), 2)
+            self.assertEqual(len(h.bus.made("SetPointerBarriers")), 2)
+            self.assertEqual((h.bus.refused, h.bus.wasted), ([], []))
 
     def test_a_disable_the_portal_refuses_is_logged_and_the_barriers_are_still_set(self):
         h = self.make(models=[return_edge.ReturnEdge("bottom")])

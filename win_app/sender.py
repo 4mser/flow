@@ -641,14 +641,16 @@ class LinkSender:
         return self._input({"type": protocol.MSG_MOUSEDOWN if down else protocol.MSG_MOUSEUP, "data": {"button": name}})
 
     def on_wheel(self, dy: float, dx: float) -> bool:
-        """The wheel, in notches, positive away from the hand: True when it is not for this PC."""
+        """The wheel in notches, as Windows counts them, positive up and right: True when it is
+        not for this PC. The wire's dx is Core Graphics' axis 2, positive left, so it goes out
+        turned round."""
         if not self.redirecting:
             return False
         if not self._live():
             self._lost()
             return False
         self._send_pending_windows_key()
-        return self._input(protocol.scroll_msg(dy, dx, "line"))
+        return self._input(protocol.scroll_msg(dy, -dx, "line"))
 
     def on_pointer_move(self) -> bool:
         """A move the hook saw, never the distance it covered, which comes from on_motion. While
@@ -745,9 +747,10 @@ class LinkSender:
     def zone_models(self) -> list:
         """The models of this PC's ways out, where a desktop that captures input at barriers puts
         them; none while the edges are held."""
-        if self.edges_held or self._owner is None:
-            return []
-        return [model for _peer, model in list(self._models)]
+        with self._lock:
+            if self.edges_held or self._owner is None:
+                return []
+            return [model for _peer, model in self._models]
 
     def seam_clip_position(self, x: int, y: int):
         """Keep a local pointer on an armed display edge when it enters an adjacent display."""
@@ -1269,6 +1272,8 @@ class LinkSender:
             if isinstance(moved.other, bytes) and moved.other != self._own_id:
                 other = peerlist.label_for(self._entries, peer_id=protocol.id_text(moved.other))
             reason = peerlist.refusal_text(moved.why, self._name(moved.left), other)
+            if moved.why == "taken_over":
+                reason = f"{other or 'Another machine'} took over {self._name(moved.left)}"
             if reason is None:
                 reason = HOME_REASONS.get(moved.why, "{name} returned the input").format(name=self._name(moved.left))
             self._alert(reason)

@@ -54,6 +54,7 @@ DEFAULT_CROSSING = {
     "effect_size": "medium",
     "effect_pace": 1.0,
     "effect_size_fraction": 0.045,
+    "frame_rate": "display",
     # Unix seconds at the moment this Mac last changed the arrangement -- which
     # edge leads to the PC. Either machine may change it, so when two ends meet
     # holding different answers the newer stamp wins. Never read by the engine;
@@ -118,6 +119,8 @@ class Ways:
     display: str = None
     target_display: str = None
     target_side: str = None
+    contact_span: tuple = None
+    target_span: tuple = None
 
 
 class CrossingEngine:
@@ -139,6 +142,9 @@ class CrossingEngine:
         # Outside reset(): a click while the pointer lands must not end the grace (keep_grace for a rebuild).
         self._grace_inward = dict.fromkeys(EDGES, 0.0)
         self._grace_at = None
+        self._seam_overshoot = False
+        self._seam_pin = None
+        self._seam_previous = None
         self.reset()
 
     def start_grace(self, now):
@@ -179,10 +185,15 @@ class CrossingEngine:
                 continue
             display = zone.get("display")
             edge = zone.get("side", sides[peer])
-            key = (peer, display, edge)
+            corner_key = zone.get("corner") if zone.get("kind") == "corner" else None
+            contact_span = return_edge._normalised_span(zone.get("contact_span"))
+            target_span = return_edge._normalised_span(zone.get("target_span"))
+            key = (peer, display, edge, corner_key, zone.get("target_display"), contact_span, target_span)
             held = found.setdefault(key, {"methods": set(), "parts": ("middle",), "corner": "top_right",
                                           "target_display": zone.get("target_display"),
-                                          "target_side": zone.get("target_side")})
+                                          "target_side": zone.get("target_side"),
+                                          "contact_span": zone.get("contact_span"),
+                                          "target_span": zone.get("target_span")})
             kind = zone.get("kind")
             if kind in ("edge", "part") and edge not in EDGES:
                 continue
@@ -197,8 +208,10 @@ class CrossingEngine:
             held["methods"].add(kind)
         ways = [Ways(peer, frozenset(held["methods"]), edge if edge in EDGES else "right",
                      frozenset(held["parts"]), held["corner"], display, held["target_display"],
-                     held["target_side"])
-                for (peer, display, edge), held in found.items() if held["methods"]]
+                     held["target_side"], return_edge._normalised_span(held["contact_span"]),
+                     return_edge._normalised_span(held["target_span"]))
+                for (peer, display, edge, _corner, _target_display, _contact_span, _target_span), held
+                in found.items() if held["methods"]]
         return cls(resistance_px=crossing["resistance_px"], block_while_dragging=crossing["block_while_dragging"],
                    ways=ways)
 
@@ -269,17 +282,31 @@ class CrossingEngine:
             self.touching = False
             return self._release()
 
-        target = self._target(x, y, bounds, notch_range, displays, ready=ready)
+        self._seam_overshoot = False
+        self._seam_pin = None
+        target = self._target(x, y, bounds, notch_range, displays, ready=ready,
+                              previous=(previous_x, previous_y), delta=(dx, dy))
         # Whether the pointer is at an armed region at all, whatever the pressure: a slow push
         # drains to nothing between events and releases, but is still against the edge.
         self.touching = target is not None
         if target is None:
             return self._release()
         mac_edge, region, diagonal, via, peer = target
-        outward, inward = self._push(mac_edge, diagonal, x, y, dx, dy, previous_x, previous_y, self._push_box)
+        if self._seam_overshoot and previous_x is None and self._seam_previous is not None:
+            previous_x, previous_y = self._seam_previous
+        if via == "corner" and self._selected_way and self._selected_way.display is not None:
+            vertical, horizontal = self._selected_way.corner.split("_")
+            out_x = -dx if horizontal == "left" else dx
+            out_y = -dy if vertical == "top" else dy
+            outward = (out_x * out_x + out_y * out_y) ** 0.5 if out_x > 0 and out_y > 0 else 0.0
+            inward = (min(0.0, out_x) ** 2 + min(0.0, out_y) ** 2) ** 0.5
+        else:
+            outward, inward = self._push(mac_edge, diagonal, x, y, dx, dy,
+                                         previous_x, previous_y, self._push_box)
         if via == "corner" and outward <= 0.0:
             # A straight push in the corner's box is still a push on the edge it sits on, as on the PC.
-            edge_target = self._target(x, y, bounds, notch_range, displays, corner=False, ready=ready)
+            edge_target = self._target(x, y, bounds, notch_range, displays, corner=False, ready=ready,
+                                       previous=(previous_x, previous_y))
             if edge_target is not None:
                 mac_edge, region, diagonal, via, peer = edge_target
                 outward, inward = self._push(mac_edge, diagonal, x, y, dx, dy, previous_x, previous_y, self._push_box)
@@ -296,17 +323,23 @@ class CrossingEngine:
         if self.pressure <= 0.0:
             return self._release()
         if self.pin is None:
-            self.pin = (x, y)
+            self.pin = self._seam_pin or (self._pin_point(x, y, self._push_box)
+                                          if self._seam_overshoot else (x, y))
         self.mac_edge = mac_edge
         self.region = region
 
         if outward > 0.0 and self.pressure >= self.resistance_px:
+            source_bounds = bounds
+            display = self._selected_way.display if self._selected_way else None
+            if isinstance(display, str) and display.isdigit() and int(display) < len(displays or ()):
+                source_bounds = displays[int(display)]
             step = Step(
                 pressure=1.0,
                 crossed=True,
                 pin=self.pin,
                 edge=OPPOSITE[mac_edge],
-                offset=self._offset(mac_edge, self.pin, bounds),
+                offset=self._landing_offset(self._offset(mac_edge, self.pin, source_bounds),
+                                            self._selected_way),
                 mac_edge=mac_edge,
                 region=region,
                 via=via,
@@ -323,9 +356,12 @@ class CrossingEngine:
         quarter = self._quarter(self.pressure)
         tick = quarter > self._quarter_reached
         self._quarter_reached = max(self._quarter_reached, quarter)
+        holding = before >= HOLD_MIN_PX or self._seam_overshoot
+        if holding:
+            self._last_x, self._last_y = self.pin
         return Step(
             pressure=self._fraction(self.pressure),
-            hold=before >= HOLD_MIN_PX,
+            hold=holding,
             pin=self.pin,
             tick=tick,
             mac_edge=mac_edge,
@@ -373,6 +409,14 @@ class CrossingEngine:
             return (left + inset if edge == "left" else right - 1 - inset, along)
         return (along, top + inset if edge == "top" else bottom - 1 - inset)
 
+    @staticmethod
+    def notch_arrival_point(notch_range, depth, bounds, displays=None):
+        """Where input coming home through the notch lands: the middle of the notch's span, just below
+        it, through the same top-edge landing as any arrival."""
+        left, _top, right, _bottom = bounds
+        offset = ((notch_range[0] + notch_range[1]) / 2 - left) / max(1, right - 1 - left)
+        return CrossingEngine.arrival_point("top", offset, bounds, inset=depth + 2.0, displays=displays)
+
     def _decay(self, elapsed):
         if elapsed <= 0 or self.resistance_px <= 0:
             return 0.0
@@ -398,7 +442,8 @@ class CrossingEngine:
             return 0
         return min(3, int(4 * pressure / self.resistance_px))
 
-    def _target(self, x, y, bounds, notch_range, displays=None, corner=True, ready=None):
+    def _target(self, x, y, bounds, notch_range, displays=None, corner=True, ready=None,
+                previous=None, delta=(0.0, 0.0)):
         """Which armed region the pointer is touching, as (mac_edge, region, diagonal, method, peer).
         Every machine's corners are checked first, then edges, then thirds, then the notch (WIRE.md
         section 8): a corner wins over the edge it sits on, since its box is inside that edge's strip.
@@ -424,10 +469,60 @@ class CrossingEngine:
                 edge_box[edge] = own
         # What the push is measured against: the display's own edge when that is the wall.
         self._push_box = bounds
+        previous_point = previous if previous and previous[0] is not None and previous[1] is not None else None
         for way in ways if corner else ():
             if "corner" not in way.methods:
                 continue
             vertical, horizontal = way.corner.split("_")
+            screen = display_frames.get(way.display) if way.display is not None else None
+            if way.display is not None and screen is None:
+                continue
+            if screen is not None:
+                sx, sy, sr, sb = screen
+                if sx <= x < sr and sy <= y < sb:
+                    near_x = x <= sx + CORNER_PX if horizontal == "left" else x >= sr - CORNER_PX
+                    near_y = y <= sy + CORNER_PX if vertical == "top" else y >= sb - CORNER_PX
+                    at_x = x <= sx + EDGE_TOLERANCE if horizontal == "left" else x >= sr - 1 - EDGE_TOLERANCE
+                    at_y = y <= sy + EDGE_TOLERANCE if vertical == "top" else y >= sb - 1 - EDGE_TOLERANCE
+                    if near_x and near_y and (at_x or at_y):
+                        box_x = sx if horizontal == "left" else sr - CORNER_PX
+                        box_y = sy if vertical == "top" else sb - CORNER_PX
+                        self._push_box = screen
+                        self._selected_way = way
+                        return horizontal, (box_x, box_y, CORNER_PX, CORNER_PX), vertical, "corner", way.peer
+                prior = previous_point
+                if prior is None:
+                    candidate = (x - delta[0], y - delta[1])
+                    if not (x < sx or x >= sr or y < sy or y >= sb):
+                        continue
+                    prior = candidate
+                px, py = prior
+                in_corner = (sx <= px < sr and sy <= py < sb
+                             and (px <= sx + CORNER_PX if horizontal == "left" else px >= sr - CORNER_PX)
+                             and (py <= sy + CORNER_PX if vertical == "top" else py >= sb - CORNER_PX))
+                crossed_x = px < sr <= x if horizontal == "right" else x < sx <= px
+                crossed_y = py < sb <= y if vertical == "bottom" else y < sy <= py
+                if in_corner and (crossed_x or crossed_y):
+                    box_x = sx if horizontal == "left" else sr - CORNER_PX
+                    box_y = sy if vertical == "top" else sb - CORNER_PX
+                    self._seam_overshoot = True
+                    fractions = []
+                    if crossed_x:
+                        wall_x = sx if horizontal == "left" else sr
+                        fractions.append((wall_x - px) / (x - px))
+                    if crossed_y:
+                        wall_y = sy if vertical == "top" else sb
+                        fractions.append((wall_y - py) / (y - py))
+                    fraction = min(fractions)
+                    hit_x, hit_y = px + fraction * (x - px), py + fraction * (y - py)
+                    pin_x = min(max(hit_x, sx), sr - 1)
+                    pin_y = min(max(hit_y, sy), sb - 1)
+                    self._seam_pin = (pin_x, pin_y)
+                    self._seam_previous = prior
+                    self._push_box = screen
+                    self._selected_way = way
+                    return horizontal, (box_x, box_y, CORNER_PX, CORNER_PX), vertical, "corner", way.peer
+                continue
             near_x = x <= left + CORNER_PX if horizontal == "left" else x >= x_max - CORNER_PX
             near_y = y <= top + CORNER_PX if vertical == "top" else y >= y_max - CORNER_PX
             if near_x and near_y and (at[horizontal] or at[vertical]):
@@ -437,7 +532,10 @@ class CrossingEngine:
                 return horizontal, (box_x, box_y, CORNER_PX, CORNER_PX), vertical, "corner", way.peer
         for way in ways:
             screen = display_frames.get(way.display) if way.display is not None else None
+            if way.display is not None and screen is None:
+                continue
             edge_at = at[way.edge]
+            overshot_pin = None
             if screen is not None:
                 sx, sy, sr, sb = screen
                 edge_at = (sx <= x < sr and sy <= y < sb and {
@@ -446,13 +544,26 @@ class CrossingEngine:
                     "top": y <= sy + EDGE_TOLERANCE,
                     "bottom": y >= sb - 1 - EDGE_TOLERANCE,
                 }[way.edge])
+                overshot_pin = self._overshot_edge(way.edge, previous, (x, y), delta, screen)
+                edge_at = edge_at or overshot_pin is not None
             if "edge" in way.methods and edge_at:
+                point = overshot_pin or (x, y)
+                if not self._within_contact(way, point, screen, bounds):
+                    continue
+                if screen is not None and overshot_pin is not None:
+                    self._seam_overshoot = True
+                    self._seam_pin = overshot_pin
+                    self._seam_previous = (previous if previous[0] is not None else
+                                           (x - delta[0], y - delta[1]))
                 self._push_box = screen or edge_box[way.edge]
                 self._selected_way = way
                 return way.edge, self._strip(way.edge, self._push_box), None, "edge", way.peer
         for way in ways:
             screen = display_frames.get(way.display) if way.display is not None else None
+            if way.display is not None and screen is None:
+                continue
             edge_at = at[way.edge]
+            overshot_pin = None
             if screen is not None:
                 sx, sy, sr, sb = screen
                 edge_at = (sx <= x < sr and sy <= y < sb and {
@@ -461,12 +572,22 @@ class CrossingEngine:
                     "top": y <= sy + EDGE_TOLERANCE,
                     "bottom": y >= sb - 1 - EDGE_TOLERANCE,
                 }[way.edge])
+                overshot_pin = self._overshot_edge(way.edge, previous, (x, y), delta, screen)
+                edge_at = edge_at or overshot_pin is not None
             if "part" in way.methods and edge_at:
                 # The thirds are the pointer's own display's, as the PC measures them: along the whole
                 # desktop, a short display beside a tall one could hold none of the middle third.
                 local_bounds = screen or own or bounds
-                part = return_edge.part_of(self._offset(way.edge, (x, y), local_bounds))
+                point = overshot_pin or (x, y)
+                if not self._within_contact(way, point, screen, bounds):
+                    continue
+                part = return_edge.part_of(self._offset(way.edge, point, local_bounds))
                 if part in way.parts:
+                    if screen is not None and overshot_pin is not None:
+                        self._seam_overshoot = True
+                        self._seam_pin = overshot_pin
+                        self._seam_previous = (previous if previous[0] is not None else
+                                               (x - delta[0], y - delta[1]))
                     self._push_box = local_bounds
                     self._selected_way = way
                     return way.edge, self._part_strip(way.edge, local_bounds, part), None, "edge", way.peer
@@ -476,6 +597,56 @@ class CrossingEngine:
                 if notch_left <= x <= notch_right:
                     return "top", (notch_left, top, notch_right - notch_left, 1), None, "notch", way.peer
         return None
+
+    @classmethod
+    def _within_contact(cls, way, point, screen, bounds=None):
+        if way.contact_span is None:
+            return True
+        target = screen or bounds
+        if target is None:
+            return False
+        fraction = cls._offset(way.edge, point, target)
+        return way.contact_span[0] <= fraction <= way.contact_span[1]
+
+    @staticmethod
+    def _landing_offset(offset, way):
+        if way is None or way.contact_span is None or way.target_span is None:
+            return offset
+        low, high = way.contact_span
+        target_low, target_high = way.target_span
+        ratio = max(0.0, min(1.0, (offset - low) / max(high - low, 1e-12)))
+        return round(target_low + ratio * (target_high - target_low), 4)
+
+    def _overshot_edge(self, edge, previous, current, delta, screen):
+        if previous is None or previous[0] is None or previous[1] is None:
+            previous = (current[0] - delta[0], current[1] - delta[1])
+        sx, sy, sr, sb = screen
+        px, py = previous
+        x, y = current
+        delta_x, delta_y = x - px, y - py
+        if not (sx <= px < sr and sy <= py < sb):
+            return None
+        if edge == "right" and sx <= px < sr and delta_x > 0 and x >= sr:
+            fraction = (sr - px) / delta_x
+        elif edge == "left" and sx <= px < sr and delta_x < 0 and x < sx:
+            fraction = (sx - px) / delta_x
+        elif edge == "bottom" and sy <= py < sb and delta_y > 0 and y >= sb:
+            fraction = (sb - py) / delta_y
+        elif edge == "top" and sy <= py < sb and delta_y < 0 and y < sy:
+            fraction = (sy - py) / delta_y
+        else:
+            return None
+        along = py + fraction * delta_y if edge in ("left", "right") else px + fraction * delta_x
+        low, high = (sy, sb) if edge in ("left", "right") else (sx, sr)
+        if not low <= along < high:
+            return None
+        return ((sx if edge == "left" else sr - 1, along) if edge in ("left", "right")
+                else (along, sy if edge == "top" else sb - 1))
+
+    @staticmethod
+    def _pin_point(x, y, bounds):
+        left, top, right, bottom = bounds
+        return min(max(x, left), right - 1), min(max(y, top), bottom - 1)
 
     @staticmethod
     def _exposed(edge, x, y, own, displays):

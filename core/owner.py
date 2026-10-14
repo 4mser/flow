@@ -235,7 +235,9 @@ class Owner:
         if nxt == self.own_id:
             if not isinstance(route, int) or route < self._visit_route:
                 return []
-            return self._come_home("switch", edge, offset, display=display, side=side)
+            other = data.get("taken_over_by")
+            return self._come_home("taken_over" if other is not None else "switch", edge, offset,
+                                   other=other, display=display, side=side)
         if route != self.route or (self._wait is not None and self._wait.chain):
             return []
         if nxt not in self.reach_sent or nxt not in self._links & self._accepting:

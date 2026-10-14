@@ -102,7 +102,7 @@ class PartEdgeCornersTests(unittest.TestCase):
         self.assertFalse(ways.has_way(app_config.load_settings(self.path), peer))
         self.assertEqual(picked_row(window), [])
         self.assertTrue(window.atlas_canvas.states[peer]["edge_off"])
-        window.crossing_ledger.rows[peer].edge_text.click()
+        next(chip for chip in window.crossing_ledger.rows[peer].edge_chips.chips.values() if chip.kind == "contact").click()
         self.assertEqual(picked_row(window), list(ways.PARTS))
         self.assertTrue(window.atlas_canvas.states[peer]["crosses"])
 
@@ -119,7 +119,7 @@ class PartEdgeCornersTests(unittest.TestCase):
             window._layout_dropped(layout, peer)
             parity.settle(window)
             row = window.crossing_ledger.rows[peer]
-            self.assertEqual(row.edge_glyph.side, side)
+            self.assertEqual([chip.side for chip in row.edge_chips.chips.values() if chip.kind == "contact"], [side])
             for third in ways.PARTS:
                 QTest.mouseClick(window.atlas_canvas, Qt.MouseButton.LeftButton, pos=band_point(window.atlas_canvas, third, side))
                 self.assertNotIn(third, picked_row(window))
@@ -175,17 +175,17 @@ class PartEdgeCornersTests(unittest.TestCase):
         self.window._canvas_left_out(peer, True)
         paint(self.window.atlas_canvas)
         self.assertFalse(self.window.atlas_canvas.corner_marks)
-        self.assertEqual(self.window.crossing_ledger.rows[peer].corner_value.text(), "Top right")
+        self.assertEqual([corner for corner, button in self.window.crossing_ledger.rows[peer].corner_grid.buttons.items()
+                          if button.isChecked()], ["top_right"])
 
-    def test_edge_detail_waits_for_contact_but_corner_stays_live(self):
+    def test_contact_chip_and_corner_buttons_wait_for_a_side_contact(self):
         window, peer = self.window, self.peers[0]["id"]
         layout = copy.deepcopy(window.atlas_canvas.tiles)
         layout[peer].update(x=600, y=300)
         window._layout_dropped(layout, peer)
         row = window.crossing_ledger.rows[peer]
-        self.assertEqual(row.edge_detail.text(), "place it on the map")
-        self.assertFalse(row.edge_text.isEnabled())
-        self.assertTrue(row.corner_glyph.buttons["top_right"].isEnabled())
+        self.assertFalse(any(chip.kind == "contact" for chip in row.edge_chips.chips.values()))
+        self.assertFalse(row.corner_grid.buttons["top_right"].isEnabled())
 
 
 if __name__ == "__main__":

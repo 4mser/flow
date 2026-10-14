@@ -5,6 +5,7 @@ starts no receiver, hooks or announcer; the two links' sends are recorded instea
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -69,6 +70,124 @@ class SameOnBothTest(unittest.TestCase):
         self.assertFalse(self.window.same_checks["everything"].isChecked())
         self.assertEqual(set(self.window.same_checks), {"crossing", "design", "shortcut", "names", "everything"})
         self.assertEqual(self.window.scope_labels["design"].text(), pages_win.SCOPE["design"])
+
+    def test_unchanged_refresh_does_not_reload_settings_for_same_on_all(self):
+        self.window._show_same()
+        with mock.patch.object(app_config, "load_settings", wraps=app_config.load_settings) as load:
+            self.window._show_same()
+            self.window._show_same()
+        load.assert_not_called()
+
+    def test_same_on_all_reloads_a_changed_settings_file(self):
+        self.window._show_same()
+        settings = app_config.load_settings(self.path)
+        settings["same_before_sync"] = {"saved_at": int(time.time()), "groups": [],
+                                         "values": {"shortcut": False}, "names": {}}
+        app_config.write_settings(self.path, settings)
+
+        with mock.patch.object(app_config, "load_settings", wraps=app_config.load_settings) as load:
+            self.window._show_same()
+
+        load.assert_called_once_with(self.path)
+        self.assertFalse(self.window.same_revert.isHidden())
+
+    def test_same_on_all_rechecks_a_write_that_lands_during_the_read(self):
+        original_load = app_config.load_settings
+        saved = {"saved_at": int(time.time()), "groups": [], "values": {"shortcut": False}, "names": {}}
+        calls = 0
+
+        def load_then_write(path):
+            nonlocal calls
+            settings = original_load(path)
+            if calls == 0:
+                changed = original_load(path)
+                changed["same_before_sync"] = saved
+                app_config.write_settings(path, changed)
+            calls += 1
+            return settings
+
+        self.window._same_settings_signature = object()
+        with mock.patch.object(app_config, "load_settings", side_effect=load_then_write):
+            self.window._show_same()
+            self.window._show_same()
+
+        self.assertEqual(calls, 2)
+        self.assertFalse(self.window.same_revert.isHidden())
+
+    def test_display_reconciliation_skips_unchanged_inputs_and_runs_for_changes(self):
+        self.window._refresh_own_displays = lambda: None
+        self.window._own_display_map = {"screen": {"x": 0, "y": 0, "width": 1920, "height": 1080}}
+        self.window._carry_crossing = mock.Mock()
+        with mock.patch.object(kvm_bridge_win.crossing_state, "displays_changed",
+                               wraps=kvm_bridge_win.crossing_state.displays_changed) as reconcile:
+            self.window._displays_changed()
+            self.window._displays_changed()
+            self.assertEqual(reconcile.call_count, 1)
+            self.window._own_display_map = {"screen": {"x": 0, "y": 0, "width": 1600, "height": 900}}
+            self.window._displays_changed()
+            self.assertEqual(reconcile.call_count, 2)
+            settings = app_config.load_settings(self.path)
+            settings["name"] = "Changed from another process"
+            app_config.write_settings(self.path, settings)
+            self.window._displays_changed()
+            self.assertEqual(reconcile.call_count, 3)
+
+    def test_display_reconciliation_rechecks_a_write_that_lands_during_the_read(self):
+        self.window._refresh_own_displays = lambda: None
+        self.window._own_display_map = {"screen": {"x": 0, "y": 0, "width": 1920, "height": 1080}}
+        self.window._carry_crossing = mock.Mock()
+        original = kvm_bridge_win.crossing_state.displays_changed
+        calls = 0
+
+        def reconcile_then_write(*args, **kwargs):
+            nonlocal calls
+            outcome = original(*args, **kwargs)
+            if calls == 0:
+                settings = app_config.load_settings(self.path)
+                settings["name"] = "Changed during reconciliation"
+                app_config.write_settings(self.path, settings)
+            calls += 1
+            return outcome
+
+        with mock.patch.object(kvm_bridge_win.crossing_state, "displays_changed",
+                               side_effect=reconcile_then_write):
+            self.window._displays_changed()
+            self.window._displays_changed()
+
+        self.assertEqual(calls, 2)
+
+    def test_display_reconciliation_retries_after_a_settings_read_recovers(self):
+        self.window._refresh_own_displays = lambda: None
+        self.window._own_display_map = {"screen": {"x": 0, "y": 0, "width": 1920, "height": 1080}}
+        self.window._carry_crossing = mock.Mock()
+        self.window._window_settings_version = None
+        self.window._displays_signature = None
+        original_load = app_config.load_settings
+
+        with mock.patch.object(app_config, "load_settings",
+                               side_effect=[OSError("temporary read failure"), original_load(self.path)]), \
+             mock.patch.object(kvm_bridge_win.crossing_state, "displays_changed",
+                               wraps=kvm_bridge_win.crossing_state.displays_changed) as reconcile:
+            self.window._displays_changed()
+            self.assertTrue(self.window._window_settings_stale)
+            self.window._displays_changed()
+
+        self.assertFalse(self.window._window_settings_stale)
+        self.assertEqual(reconcile.call_count, 1)
+
+    def test_display_reconciliation_tracks_legacy_settings_changes(self):
+        self.window._refresh_own_displays = lambda: None
+        self.window._own_display_map = {"screen": {"x": 0, "y": 0, "width": 1920, "height": 1080}}
+        self.window._carry_crossing = mock.Mock()
+        legacy_path = app_config.legacy_config_path(self.path)
+
+        with mock.patch.object(kvm_bridge_win.crossing_state, "displays_changed",
+                               wraps=kvm_bridge_win.crossing_state.displays_changed) as reconcile:
+            self.window._displays_changed()
+            legacy_path.write_text(legacy_path.read_text() + "\n")
+            self.window._displays_changed()
+
+        self.assertEqual(reconcile.call_count, 2)
 
     def test_everything_can_be_turned_off(self):
         self.window._set_same_groups(settings_sync.ALL_GROUPS)
@@ -429,6 +548,103 @@ class SameOnBothTest(unittest.TestCase):
 
         self.assertFalse(self.window.design_follow_choice.model().item(1).isEnabled())
         self.assertIn("Needs beta.6 or later", self.window.design_follow_choice.itemText(1))
+
+    def test_design_follow_keeps_its_model_until_inputs_change(self):
+        self.window._design_peer_caps = lambda: {}
+        self.window._refresh_design_follow()
+        model = self.window.design_follow_choice.model()
+
+        self.window._refresh_design_follow()
+
+        self.assertIs(self.window.design_follow_choice.model(), model)
+
+    def test_design_follow_refreshes_rows_when_peer_capabilities_change(self):
+        peer = harness.entry(harness.B, "MacBook Pro")
+        self.window._peer_entries = [peer]
+        caps = {}
+        self.window._design_peer_caps = lambda: caps
+        self.window._refresh_design_follow()
+        model = self.window.design_follow_choice.model()
+        self.assertEqual(model.rowCount(), 1)
+
+        caps[peer["id"]] = {"settings"}
+        self.window._refresh_design_follow()
+
+        self.assertIs(self.window.design_follow_choice.model(), model)
+        self.assertEqual(model.rowCount(), 2)
+
+    def test_design_follow_updates_lock_when_same_on_design_changes(self):
+        peer = harness.entry(harness.B, "MacBook Pro")
+        self.window._peer_entries = [peer]
+        self.window._design_peer_caps = lambda: {peer["id"]: {"settings", "layout", "design_sync"}}
+        self.window._config.design_follow_peer = peer["id"]
+        self.window._config.same_on_both = False
+        self.window._config.same_groups = []
+        self.window._design_states[peer["id"]] = {"set_at": 1, "by": peer["id"], "values": {}}
+        self.window._refresh_design_follow()
+        self.assertFalse(self.window.follow_banner.isHidden())
+
+        self.window._config.same_on_both = True
+        self.window._config.same_groups = ["design"]
+        self.window._refresh_design_follow()
+
+        self.assertTrue(self.window.follow_banner.isHidden())
+
+    def test_design_follow_label_refreshes_when_hide_addresses_changes(self):
+        peer = harness.entry(harness.B, "192.168.1.10")
+        self.window._peer_entries = [peer]
+        self.window._design_peer_caps = lambda: {peer["id"]: {"settings", "layout", "design_sync"}}
+        self.window._config.design_follow_peer = peer["id"]
+        self.window._design_states[peer["id"]] = {"set_at": 1, "by": peer["id"], "values": {}}
+        self.window._config.hide_addresses = False
+        self.window._refresh_design_follow()
+        model = self.window.design_follow_choice.model()
+        self.assertEqual(model.item(1).text(), "192.168.1.10")
+
+        self.window._config.hide_addresses = True
+        self.window._refresh_design_follow()
+
+        self.assertEqual(model.item(1).text(), pages_win.HIDDEN)
+
+    def test_peer_refresh_reads_peers_and_zones_from_one_snapshot(self):
+        peer = harness.entry(harness.B, "MacBook Pro")
+        zone = {"peer": peer["id"], "side": "left"}
+        snapshot = mock.Mock(return_value=([peer], [zone]))
+        self.window.book.snapshot = snapshot
+        peers = mock.Mock(side_effect=AssertionError("peers() must not read a second snapshot"))
+        zones = mock.Mock(side_effect=AssertionError("zones() must not read a second snapshot"))
+        self.window.book.peers = peers
+        self.window.book.zones = zones
+
+        self.window._refresh_peers()
+
+        snapshot.assert_called_once_with()
+        peers.assert_not_called()
+        zones.assert_not_called()
+        self.assertEqual(self.window._peer_entries, [peer])
+        self.assertEqual(self.window._zone_entries, [zone])
+        snapshot.return_value = ([], [])
+        self.window._refresh_peers()
+        self.assertEqual(snapshot.call_count, 2)
+        self.assertEqual(self.window._peer_entries, [])
+
+    def test_unchanged_refreshes_have_bounded_retained_python_memory(self):
+        import gc
+        import tracemalloc
+
+        self.window._show_same()
+        gc.collect()
+        tracemalloc.start()
+        before = tracemalloc.take_snapshot()
+        for _ in range(400):
+            self.window._refresh_window()
+        gc.collect()
+        after = tracemalloc.take_snapshot()
+        tracemalloc.stop()
+        retained = sum(stat.size_diff for stat in after.compare_to(before, "filename")
+                       if "/win_app/" in str(stat.traceback))
+
+        self.assertLess(retained, 64 * 1024, f"retained Qt refresh allocations: {retained} bytes")
 
     def test_the_macs_settings_arrive_on_this_pcs_fields_and_controls(self):
         self.window._on_settings(protocol.id_text(harness.B), mac_message(True, 100))

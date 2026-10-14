@@ -200,7 +200,8 @@ class BeaconTests(unittest.TestCase):
 
     def test_id_and_pair_only_while_a_code_is_up(self):
         idle = self._next_beacon()
-        self.assertEqual(idle, {"beamy": 1, "type": "beacon", "name": "Beacon PC", "port": 24820, "pairing": 3, "platform": "windows"})
+        self.assertEqual(idle, {"beamy": 1, "type": "beacon", "name": "Beacon PC", "port": 24820, "pairing": 3,
+                                "platform": "windows", "pair_modes": ["cpace_v3", "sas_v1"]})
         self.pc.service.begin_pairing()
         live = self._next_beacon()
         while "id" not in live:

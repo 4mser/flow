@@ -479,6 +479,28 @@ class ComingHomeTests(Base):
     def arrives(self, message):
         self.link.arrives(self.controller, message)
 
+    def test_a_takeover_comes_home_and_names_the_new_driver(self):
+        peer = dict(self.controller.book.data["peers"][0], id=protocol.id_text(OTHER_ID),
+                    token="second-peer", name="Desk-PC")
+        self.controller.book.data["peers"].append(peer)
+        message = protocol.switch_v6(1, protocol.read_id(self.own))
+        message["data"]["taken_over_by"] = protocol.id_text(OTHER_ID)
+        self.controller.crossing.touching = True
+        self.controller.crossing.pressure = 10
+        self.arrives(message)
+        self.assertFalse(self.controller.redirecting)
+        self.assertEqual(self.alerts, ["Desk-PC took over Office PC"])
+        self.assertEqual(FakeQuartz.associate_calls[-1], True)
+        self.assertFalse(self.controller.pointer._hidden)
+        self.assertFalse(self.controller.crossing.touching)
+        self.assertEqual(self.controller.crossing.pressure, 0)
+
+    def test_a_takeover_by_an_unknown_machine_uses_the_fallback_name(self):
+        message = protocol.switch_v6(1, protocol.read_id(self.own))
+        message["data"]["taken_over_by"] = protocol.id_text(OTHER_ID)
+        self.arrives(message)
+        self.assertEqual(self.alerts, ["Another machine took over Office PC"])
+
     def test_the_peer_sending_input_home_lands_the_pointer_where_it_left(self):
         self.arrives(protocol.switch_v6(1, protocol.read_id(self.own), "right", 0.25))
         self.assertFalse(self.controller.redirecting)

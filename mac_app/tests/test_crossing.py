@@ -31,6 +31,44 @@ def push_right(machine, times, dx=20, y=500.0, dragging=False):
     return drive(machine, RIGHT_X, y, dx, 0, times, dragging=dragging)
 
 
+class ArrivalDirectionTests(unittest.TestCase):
+    def test_left_wrap_departure_preserves_offset_and_lands_on_the_right(self):
+        machine = CrossingEngine(resistance_px=0, ways=[
+            Ways("peer", frozenset({"edge"}), "left", frozenset(), "top_left", "0", "0", "right")])
+        step = machine.feed(0, 335, -20, 0, BOUNDS, 1.0, displays=[BOUNDS])
+        self.assertTrue(step.crossed)
+        self.assertEqual((step.edge, step.display, step.side), ("right", "0", "right"))
+        point = CrossingEngine.arrival_point(step.edge, step.offset, BOUNDS,
+                                              displays=[BOUNDS], display=step.display, side=step.side)
+        self.assertEqual(point[0], RIGHT_X - 2)
+        self.assertAlmostEqual(point[1], 335, delta=1)
+
+
+class ContactSpanTests(unittest.TestCase):
+    def test_single_screen_contact_span_does_not_block_crossing(self):
+        machine = CrossingEngine(resistance_px=0, ways=[
+            Ways("peer", frozenset({"edge"}), "right", frozenset(), "top_right",
+                 contact_span=(0.0, 1.0), target_span=(0.0, 1.0)),
+        ])
+
+        step = machine.feed(1919, 540, 10, 0, (0, 0, 1920, 1080), 1.0)
+
+        self.assertTrue(step.crossed)
+        self.assertAlmostEqual(step.offset, 0.5, places=3)
+
+    def test_single_screen_contact_span_still_gates_crossings(self):
+        ways = [Ways("peer", frozenset({"edge"}), "right", frozenset(), "top_right",
+                     contact_span=(0.25, 0.75), target_span=(0.0, 1.0))]
+
+        inside = CrossingEngine(resistance_px=0, ways=ways).feed(
+            1919, 500, 10, 0, (0, 0, 1920, 1080), 1.0)
+        outside = CrossingEngine(resistance_px=0, ways=ways).feed(
+            1919, 100, 10, 0, (0, 0, 1920, 1080), 1.0)
+
+        self.assertTrue(inside.crossed)
+        self.assertFalse(outside.crossed)
+
+
 class TickStepsTests(unittest.TestCase):
     def test_which_quarter_ticks_are_felt(self):
         from crossing import tick_fires
@@ -170,6 +208,48 @@ class ResistanceTests(unittest.TestCase):
 
 
 class BreakthroughTests(unittest.TestCase):
+    def scoped_corner_step(self):
+        machine = CrossingEngine(resistance_px=120, ways=[
+            Ways("peer", frozenset({"corner"}), "bottom", frozenset(), "bottom_left", "1", "B1", "right")
+        ])
+        displays = [(0, 0, 100, 100), (100, 0, 300, 100)]
+        return machine.feed(100.0, 99.0, -30.0, 30.0, (0, 0, 400, 100), 1.0,
+                            displays=displays, ready=lambda _peer: True)
+
+    def seam_overshoot_step(self):
+        machine = CrossingEngine(resistance_px=120, ways=[
+            Ways("peer", frozenset({"edge"}), "right", frozenset(), "top_right", "0", "B0", "left")
+        ])
+        displays = [(0, 0, 100, 100), (100, 0, 300, 100)]
+        return machine.feed(105.0, 50.0, 10.0, 0.0, (0, 0, 400, 100), 1.0,
+                            displays=displays, ready=lambda _peer: True)
+
+    def test_per_screen_mac_gap_probes_return_steps(self):
+        self.assertIsNotNone(self.scoped_corner_step())
+        self.assertIsNotNone(self.seam_overshoot_step())
+
+    def test_scoped_corner_on_second_display_is_selected_at_that_displays_corner(self):
+        step = self.scoped_corner_step()
+        self.assertGreater(step.pressure, 0,
+                        "Mac scoped corners gap: the B1 route must be evaluated at A1's nominated corner")
+
+    def test_per_screen_seam_captures_a_single_event_overshoot(self):
+        step = self.seam_overshoot_step()
+        self.assertGreater(step.pressure, 0, "Mac seam capture gap: one event crossed the display edge uncaptured")
+
+    def test_per_screen_landing_offset_uses_the_departing_display(self):
+        machine = CrossingEngine(resistance_px=0, ways=[
+            Ways("peer", frozenset({"edge"}), "bottom", frozenset(), "top_right", "1", "B1", "top")
+        ])
+        displays = [(0, 0, 100, 100), (100, 0, 300, 100)]
+
+        step = machine.feed(200.0, 99.0, 0.0, 1.0, (0, 0, 300, 100), 1.0,
+                            displays=displays, ready=lambda _peer: True)
+
+        self.assertTrue(step.crossed)
+        self.assertAlmostEqual(step.offset, 0.5, places=2,
+                               msg="Mac landing offset gap: fraction must be relative to source display A1")
+
     def test_breakthrough_carries_the_windows_edge_and_offset(self):
         machine = engine()
         step = push_right(machine, 8, dx=30, y=558.0)
@@ -392,6 +472,246 @@ class MonitorLayoutTests(unittest.TestCase):
                 break
         self.assertTrue(result.crossed)
         self.assertEqual((result.display, result.side), ("display-a", "left"))
+
+    def test_one_event_can_cross_an_armed_internal_seam_in_any_direction(self):
+        cases = (
+            ("right", [(0, 0, 100, 100), (100, 0, 200, 100)], (0, 0, 200, 100),
+             "0", 105, 50, 10, 0),
+            ("left", [(0, 0, 100, 100), (100, 0, 200, 100)], (0, 0, 200, 100),
+             "1", 95, 50, -10, 0),
+            ("bottom", [(0, 0, 100, 100), (0, 100, 100, 200)], (0, 0, 100, 200),
+             "0", 50, 105, 0, 10),
+            ("top", [(0, 0, 100, 100), (0, 100, 100, 200)], (0, 0, 100, 200),
+             "1", 50, 95, 0, -10),
+        )
+        for edge, displays, bounds, display, x, y, dx, dy in cases:
+            with self.subTest(edge=edge):
+                machine = CrossingEngine(
+                    resistance_px=10,
+                    ways=[Ways("peer", frozenset({"edge"}), edge, frozenset(), "top_right",
+                               display, "peer-display", "left")],
+                )
+                machine.feed(x - dx, y - dy, 0, 0, bounds, 0.99, displays=displays)
+                step = machine.feed(x, y, dx, dy, bounds, 1.0, displays=displays)
+                self.assertTrue(step.hold)
+                self.assertFalse(step.crossed)
+                self.assertGreater(machine.pressure, 0)
+                pinned_x, pinned_y = step.pin
+                step = machine.feed(pinned_x, pinned_y, dx, dy, bounds, 1.01, displays=displays)
+                self.assertTrue(step.crossed)
+                self.assertEqual((step.display, step.side), ("peer-display", "left"))
+
+    def test_consecutive_outward_overshoots_keep_building_from_a_pinned_seam(self):
+        cases = (
+            ("right", (0, 0, 100, 100), (95, 50), (105, 50), (110, 50)),
+            ("left", (100, 0, 200, 100), (105, 50), (95, 50), (90, 50)),
+            ("bottom", (0, 0, 100, 100), (50, 95), (50, 105), (50, 110)),
+            ("top", (0, 100, 100, 200), (50, 105), (50, 95), (50, 90)),
+        )
+        for edge, display, start, first, second in cases:
+            with self.subTest(edge=edge):
+                displays = [display, (200, 200, 300, 300)]
+                bounds = (0, 0, 300, 300)
+                machine = CrossingEngine(
+                    resistance_px=40,
+                    ways=[Ways("peer", frozenset({"edge"}), edge, frozenset(), "top_right",
+                               "0", "peer-display", "left")],
+                )
+
+                def feed(point, previous, now):
+                    dx, dy = point[0] - previous[0], point[1] - previous[1]
+                    return machine.feed(*point, dx, dy, bounds, now, displays=displays)
+
+                first_step = feed(first, start, 1.0)
+                self.assertTrue(first_step.hold)
+                self.assertEqual(first_step.pin, (display[0] if edge == "left" else
+                                                  display[2] - 1 if edge == "right" else first[0],
+                                                  display[1] if edge == "top" else
+                                                  display[3] - 1 if edge == "bottom" else first[1]))
+                first_pressure = machine.pressure
+
+                second_step = feed(second, first, 1.01)
+                self.assertTrue(second_step.hold)
+                self.assertGreater(machine.pressure, first_pressure)
+
+
+    def test_first_scoped_event_uses_its_delta_to_locate_the_previous_point(self):
+        machine = CrossingEngine(
+            resistance_px=20,
+            ways=[Ways("peer", frozenset({"edge"}), "right", frozenset(), "top_right",
+                       "0", "peer-display", "left")],
+        )
+        step = machine.feed(105, 50, 10, 0, (0, 0, 200, 100), 1.0,
+                            displays=[(0, 0, 100, 100), (100, 0, 200, 100)])
+        self.assertTrue(step.hold)
+        self.assertEqual(step.pin, (99, 50))
+        self.assertAlmostEqual(machine.pressure, 6.0)
+
+    def test_scoped_motion_misses_do_not_hold_and_first_wall_event_keeps_legacy_threshold(self):
+        displays = [(0, 0, 100, 100), (100, 0, 200, 100)]
+        machine = CrossingEngine(
+            resistance_px=20,
+            ways=[Ways("peer", frozenset({"edge"}), "right", frozenset(), "top_right", "0")],
+        )
+        machine.feed(50, 50, 0, 0, (0, 0, 200, 100), 0.99, displays=displays)
+        ordinary = machine.feed(60, 50, 10, 0, (0, 0, 200, 100), 1.0, displays=displays)
+        self.assertFalse(ordinary.hold)
+        self.assertFalse(ordinary.crossed)
+        self.assertEqual(machine.pressure, 0.0)
+
+        machine.reset()
+        first_wall = machine.feed(99, 50, 10, 0, (0, 0, 200, 100), 1.1, displays=displays)
+        self.assertFalse(first_wall.hold)
+        self.assertFalse(first_wall.crossed)
+        self.assertEqual(machine.pressure, 10.0)
+        self.assertEqual(first_wall.pin, (99, 50))
+
+    def test_diagonal_overshoot_that_misses_the_display_corner_does_not_hold(self):
+        displays = [(0, 0, 100, 100), (100, 0, 200, 100)]
+        machine = CrossingEngine(
+            resistance_px=20,
+            ways=[Ways("peer", frozenset({"edge"}), "right", frozenset(), "top_right", "0")],
+        )
+        machine.feed(95, 95, 0, 0, (0, 0, 200, 100), 0.99, displays=displays)
+        miss = machine.feed(105, 105, 10, 10, (0, 0, 200, 100), 1.0, displays=displays)
+        self.assertFalse(miss.hold)
+        self.assertFalse(miss.crossed)
+        self.assertEqual(machine.pressure, 0.0)
+
+    def test_scoped_corner_one_wall_overshoot_uses_corner_pressure_and_first_hit_pin(self):
+        displays = [
+            (0, 0, 100, 100), (100, 0, 200, 100), (200, 0, 300, 100),
+            (100, 100, 200, 200),
+        ]
+        machine = CrossingEngine(
+            resistance_px=20,
+            ways=[Ways("peer", frozenset({"corner"}), "right", frozenset(),
+                       "bottom_right", "1")],
+        )
+        machine.feed(195, 95, 0, 0, (0, 0, 300, 200), 0.99, displays=displays)
+        step = machine.feed(205, 99, 10, 4, (0, 0, 300, 200), 1.0, displays=displays)
+        self.assertTrue(step.hold)
+        self.assertEqual(step.pin, (199, 97))
+        self.assertAlmostEqual(machine.pressure, (10 ** 2 + 4 ** 2) ** 0.5)
+
+        machine.reset()
+        at_wall = machine.feed(199, 97, 10, 4, (0, 0, 300, 200), 1.1, displays=displays)
+        self.assertFalse(at_wall.crossed)
+        self.assertAlmostEqual(machine.pressure, (10 ** 2 + 4 ** 2) ** 0.5)
+
+    def test_one_event_overshoot_still_obeys_thirds_reversal_dragging_and_readiness(self):
+        displays = [(0, 0, 100, 100), (100, 0, 200, 100)]
+        bounds = (0, 0, 200, 100)
+        way = Ways("peer", frozenset({"part"}), "right", frozenset({"middle"}), "top_right",
+                   "0", "peer-display", "left")
+
+        def new_engine():
+            return CrossingEngine(resistance_px=20, ways=[way])
+
+        machine = new_engine()
+        machine.feed(95, 10, 0, 0, bounds, 0.99, displays=displays)
+        outside_third = machine.feed(105, 10, 10, 0, bounds, 1.0, displays=displays)
+        self.assertFalse(outside_third.hold)
+        self.assertEqual(machine.pressure, 0.0)
+
+        machine = new_engine()
+        machine.feed(95, 50, 0, 0, bounds, 0.99, displays=displays)
+        machine.feed(105, 50, 10, 0, bounds, 1.0, displays=displays)
+        reverse = machine.feed(95, 50, -10, 0, bounds, 1.01, displays=displays)
+        self.assertFalse(reverse.crossed)
+        self.assertFalse(reverse.hold)
+        self.assertEqual(machine.pressure, 0.0)
+
+        machine = new_engine()
+        machine.feed(95, 50, 0, 0, bounds, 0.99, displays=displays)
+        dragging = machine.feed(105, 50, 10, 0, bounds, 1.0, dragging=True, displays=displays)
+        self.assertFalse(dragging.hold)
+        self.assertEqual(machine.pressure, 0.0)
+
+        machine = CrossingEngine(resistance_px=10, block_while_dragging=False, ways=[way])
+        machine.feed(95, 50, 0, 0, bounds, 0.99, displays=displays)
+        first = machine.feed(105, 50, 10, 0, bounds, 1.0, dragging=True, displays=displays)
+        self.assertTrue(first.hold)
+        crossed = machine.feed(99, 50, 10, 0, bounds, 1.01, dragging=True, displays=displays)
+        self.assertTrue(crossed.crossed)
+
+        machine = new_engine()
+        machine.feed(95, 50, 0, 0, bounds, 0.99, displays=displays)
+        unready = machine.feed(105, 50, 10, 0, bounds, 1.0, displays=displays,
+                               ready=lambda _peer: False)
+        self.assertFalse(unready.hold)
+        self.assertEqual(machine.pressure, 0.0)
+
+    def test_diagonal_seam_overshoot_uses_the_seam_intersection_for_thirds(self):
+        displays = [(0, 0, 100, 100), (100, 0, 200, 100)]
+        machine = CrossingEngine(
+            resistance_px=20,
+            ways=[Ways("peer", frozenset({"part"}), "right", frozenset({"middle"}),
+                       "top_right", "0", "peer-display", "left")],
+        )
+        machine.feed(95, 30, 0, 0, (0, 0, 200, 100), 0.99, displays=displays)
+        step = machine.feed(105, 75, 10, 45, (0, 0, 200, 100), 1.0, displays=displays)
+        self.assertTrue(step.hold)
+        self.assertEqual(step.pin, (99, 52.5))
+
+    def test_scoped_horizontal_and_vertical_departures_use_source_display_offsets(self):
+        cases = (
+            ("left", [(0, 0, 100, 100), (0, 100, 100, 200)],
+             (0, 0, 100, 200), "1", (0, 149.5), (-10, 0)),
+            ("bottom", [(0, 0, 100, 100), (100, 0, 200, 100)],
+             (0, 0, 200, 100), "1", (149.5, 99), (0, 10)),
+        )
+        for edge, displays, bounds, source_display, point, delta in cases:
+            with self.subTest(edge=edge):
+                machine = CrossingEngine(
+                    resistance_px=0,
+                    ways=[Ways("peer", frozenset({"edge"}), edge, frozenset(), "top_right",
+                               source_display, "peer-display", "left")],
+                )
+                x, y = point
+                dx, dy = delta
+                machine.feed(x, y, 0, 0, bounds, 0.99, displays=displays)
+                step = machine.feed(x, y, dx, dy, bounds, 1.0, displays=displays)
+                self.assertTrue(step.crossed)
+                self.assertAlmostEqual(step.offset, 0.5, places=3)
+
+    def test_scoped_corner_uses_its_display_when_both_corner_walls_are_internal(self):
+        displays = [(0, 0, 100, 100), (100, 0, 200, 100),
+                    (200, 0, 300, 100), (100, 100, 200, 200)]
+        machine = CrossingEngine(
+            resistance_px=15,
+            ways=[Ways("peer", frozenset({"corner"}), "right", frozenset(), "bottom_right",
+                       "1", "peer-display", "left")],
+        )
+        machine.feed(199, 99, 0, 0, (0, 0, 300, 200), 0.99, displays=displays)
+        step = machine.feed(205, 105, 10, 10, (0, 0, 300, 200), 1.0, displays=displays)
+        self.assertTrue(step.hold)
+        self.assertEqual(step.pin, (199, 99))
+        step = machine.feed(199, 99, 10, 10, (0, 0, 300, 200), 1.01, displays=displays)
+        self.assertTrue(step.crossed)
+        self.assertEqual((step.via, step.mac_edge, step.display, step.side),
+                         ("corner", "right", "peer-display", "left"))
+
+    def test_unknown_scoped_corner_does_not_fall_back_to_desktop_corner(self):
+        displays = [(0, 0, 100, 100), (100, 0, 200, 100)]
+        machine = CrossingEngine(
+            ways=[Ways("peer", frozenset({"corner"}), "right", frozenset(), "bottom_right",
+                       "missing", "peer-display", "left")],
+        )
+        step = machine.feed(199, 99, 10, 10, (0, 0, 200, 100), 1.0, displays=displays)
+        self.assertFalse(step.crossed)
+        self.assertEqual(machine.pressure, 0.0)
+
+    def test_scoped_corner_box_without_wall_contact_does_not_hold(self):
+        displays = [(0, 0, 100, 100), (100, 0, 200, 100),
+                    (200, 0, 300, 100), (100, 100, 200, 200)]
+        machine = CrossingEngine(
+            ways=[Ways("peer", frozenset({"corner"}), "right", frozenset(), "bottom_right",
+                       "1", "peer-display", "left")],
+        )
+        step = machine.feed(194, 94, 0, 0, (0, 0, 300, 200), 1.0, displays=displays)
+        self.assertFalse(step.hold)
+        self.assertEqual(machine.pressure, 0.0)
 
     def test_the_bottom_of_a_short_display_beside_a_tall_one_crosses(self):
         tall_short = [(0, 0, 100, 300), (100, 0, 200, 100)]

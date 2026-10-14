@@ -90,7 +90,7 @@ class CornerMarks(Page):
 
     def test_disabled_ways_have_no_marks(self):
         canvas = self.marked(off=True, notch=True, has_notch=True).atlas_canvas
-        self.assertNotIn("corner_way", canvas.states[BEE])
+        self.assertFalse(canvas.states[BEE]["corner_ways"])
         self.assertFalse(canvas.states[BEE].get("notch_way"))
         self.assertEqual(canvas.mark_layers, {})
 
@@ -106,7 +106,7 @@ class CornerMarks(Page):
         for extra in ({"left_out": True}, {"dormant": True}, {"in_use": False}):
             with self.subTest(extra=extra):
                 canvas = self.marked(extra=extra, notch=True, has_notch=True).atlas_canvas
-                self.assertNotIn("corner_way", canvas.states[BEE])
+                self.assertFalse(canvas.states[BEE]["corner_ways"])
                 self.assertFalse(canvas.states[BEE].get("notch_way"))
                 self.assertEqual(canvas.mark_layers, {})
 
@@ -174,7 +174,7 @@ class CanvasCornerGeometry(unittest.TestCase):
         canvas.tiles = {"own": own, BEE: peer}
         canvas.states = {BEE: {"state": "edge", "crosses": not edge_off, "edge_off": edge_off,
                               "linked": True, "picked_thirds": picked or [],
-                              "lit_thirds": picked or [], "corner_way": "top_right"}}
+                              "lit_thirds": picked or [], "corner_ways": ["top_right"]}}
         return canvas, {"own": (30, 40, 160, 100), BEE: (190, 40, 160, 100)}
 
     def test_corner_mark_is_square_pad_with_halo_and_outward_chevron(self):
@@ -206,8 +206,8 @@ class CanvasCornerGeometry(unittest.TestCase):
 
     def test_halo_clips_another_machines_seam_at_the_same_vertex(self):
         canvas, frames = self.canvas(picked=["start", "middle", "end"])
-        canvas.states[BEE].pop("corner_way")
-        canvas.states[SEA] = {"corner_way": "top_right"}
+        canvas.states[BEE]["corner_ways"] = []
+        canvas.states[SEA] = {"corner_ways": ["top_right"]}
         frames[SEA] = (350, 40, 160, 100)
         canvas._draw_contacts(frames)
         bounds = Quartz.CGPathGetBoundingBox(canvas.contact_layers[("own", BEE, "signal")].path())

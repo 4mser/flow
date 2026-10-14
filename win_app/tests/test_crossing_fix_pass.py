@@ -137,13 +137,21 @@ class CrossingFixPass(unittest.TestCase):
                     bottom = canvas.mapTo(root, QPoint(0, canvas.height())).y()
                     self.assertEqual(hint.mapTo(root, QPoint()).y() - bottom, 12)
 
-    def test_wrapped_edge_text_has_room_for_every_line_and_detail(self):
+    def test_wrapped_chips_have_room_for_every_line_in_the_edges_cell(self):
         row = self.window.crossing_ledger.rows[self.peers[0]["id"]]
-        self.window._ledger_edge(row.peer)
-        self.window._ledger_third(row.peer, "middle")
-        parity.settle(self.window)
-        self.assertGreaterEqual(row.edge_value.height(), row.edge_value.heightForWidth(row.edge_value.width()))
-        self.assertGreaterEqual(row.edge_text.height(), row.edge_text.layout().heightForWidth(row.edge_text.width()))
+        self.window._ledger_side(row.peer, "top")
+        self.window._ledger_side(row.peer, "bottom")
+        for width in (900, 640):
+            self.window.resize(width, 760)
+            parity.settle(self.window)
+            chips = row.edge_chips
+            shown = [chip for chip in chips.chips.values() if not chip.isHidden()]
+            self.assertEqual(len(shown), 4)
+            self.assertGreaterEqual(chips.height(), chips.flow.heightForWidth(chips.width()))
+            self.assertGreaterEqual(row.height(), chips.mapTo(row, QPoint()).y() + chips.height())
+            for chip in shown:
+                self.assertLessEqual(chip.geometry().right(), chips.width())
+                self.assertLessEqual(chip.geometry().bottom(), chips.height())
 
     def test_narrow_jump_stays_beside_its_label(self):
         self.window.resize(640, 700)

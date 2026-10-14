@@ -73,17 +73,15 @@ EDGE_FALLOFF = ((0.0, 1.0), (0.08, 0.85), (0.3, 0.25), (1.0, 0.0))
 
 
 def mask_edge_falloff(layer, edge, beam):
-    """Cut the along-edge mask inward as Windows' live Beam does. Layer coordinates run up."""
-    if not beam:
-        layer.setMask_(None)
-        return
+    """Cut the along-edge mask inward as Windows' live styles do. Layer coordinates run up."""
     falloff = layer.mask()
     if falloff is None:
         falloff = Quartz.CAGradientLayer.layer()
-        falloff.setLocations_([at for at, _alpha in EDGE_FALLOFF])
-        falloff.setColors_([AppKit.NSColor.colorWithWhite_alpha_(1.0, alpha).CGColor()
-                           for _at, alpha in EDGE_FALLOFF])
         layer.setMask_(falloff)
+    stops = EDGE_FALLOFF if beam else ((0.0, 1.0), (1.0, 0.0))
+    falloff.setLocations_([at for at, _alpha in stops])
+    falloff.setColors_([AppKit.NSColor.colorWithWhite_alpha_(1.0, alpha).CGColor()
+                       for _at, alpha in stops])
     falloff.setFrame_(layer.bounds())
     start, end = {
         "left": ((0.0, 0.5), (1.0, 0.5)),

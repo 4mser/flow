@@ -94,6 +94,9 @@ class NullTray:
     def show(self):
         pass
 
+    def setVisible(self, _shown):
+        pass
+
     def showMessage(self, *_args):
         pass
 

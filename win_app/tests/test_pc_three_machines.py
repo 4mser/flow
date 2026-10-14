@@ -17,7 +17,7 @@ from tests.links_rig import B, C, HERE, Rig, edge_zone
 import app_config
 import pages_win
 import sender as sender_module
-from core import protocol
+from core import crossing_state, protocol
 from core import ways
 from core.tests import responder_harness as harness
 
@@ -499,6 +499,19 @@ class CrossingPageTests(WindowTests):
         self.assertTrue(window.crossing_ledger.rows[CT].selected)
         self.assertFalse(hasattr(window, "blocked_note"))
 
+    def test_removing_a_machine_that_shared_a_side_leaves_the_zones_as_a_fresh_compile(self):
+        # rc16 bug hunt #6 suspected the PC kept stale zones until the next link-up, as it skips the
+        # Mac's compile on save; the narrowed thirds are the remaining machine's own saved choice, so
+        # a compile changes nothing. This holds that.
+        self.sharing_side()
+        self.assertTrue(self.drop(CT, 160, 80, 160, 20, {BT: dict(x=160, y=0, w=160, h=80)}))
+        self.assertIn((BT, "part"), {(z["peer"], z["kind"]) for z in self.saved()["zones"]})
+        self.window._remove_peer(harness.TOKENS[C])
+        saved = self.saved()
+        compiled = crossing_state.migrate(saved, "pc", capable=self.window._layout_capable())["settings"]
+        self.assertEqual(saved["zones"], compiled["zones"])
+        self.assertNotIn(CT, {zone["peer"] for zone in saved["zones"]})
+
     def test_dropping_tiles_on_separate_thirds_saves_and_tells_the_new_way_back(self):
         window = self.sharing_side()
         self.assertTrue(self.drop(CT, 160, 67, 160, 33, {BT: dict(x=160, y=0, w=160, h=33)}))
@@ -558,12 +571,12 @@ class CrossingPageTests(WindowTests):
         return [(peer, message["data"]) for peer, message in self.sent if message["type"] == protocol.MSG_ARRANGEMENT]
 
     def test_ledger_way_changes_tell_the_peer_its_current_return_way(self):
-        self.window.crossing_ledger.rows[BT].edge_text.click()
+        next(chip for chip in self.window.crossing_ledger.rows[BT].edge_chips.chips.values() if chip.kind == "contact").click()
         peer, data = self.arrangements()[-1]
         self.assertEqual(peer, B)
         self.assertFalse(data["way_back"])
         self.assertEqual(data["edge"], self.peer(BT)["side"])
-        self.window.crossing_ledger.rows[BT].corner_glyph.buttons["top_left"].click()
+        self.window.crossing_ledger.rows[BT].corner_grid.buttons["top_left"].click()
         self.assertTrue(self.arrangements()[-1][1]["way_back"])
 
     def test_moving_one_machine_tells_every_machine_whose_way_back_it_changed(self):
@@ -617,7 +630,7 @@ class CrossingPageTests(WindowTests):
         window = self.window
         self.assertTrue(self.drop(CT, 160, 0))
         before = dict(self.peer(BT)["ways"])
-        window.crossing_ledger.rows[CT].corner_glyph.buttons["bottom_right"].click()
+        window.crossing_ledger.rows[CT].corner_grid.buttons["bottom_right"].click()
         corners = [z for z in self.saved()["zones"] if z["peer"] == CT and z["kind"] == "corner"]
         self.assertEqual(corners[0]["corner"], "bottom_right")
         self.assertEqual(self.peer(BT)["ways"], before)
@@ -716,6 +729,14 @@ class OneMachineTests(WindowTests):
 
 
 class TrayTests(WindowTests):
+    def setUp(self):
+        # The tray of a desktop that can send input from a menu; on Wayland only an edge can
+        # (test_linux_start), and a Linux test run over SSH reads as Wayland.
+        patcher = mock.patch("platform_parts.WAYLAND", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        super().setUp()
+
     def test_tray_groups_status_version_connection_directions_and_settings(self):
         window = self.window
         actions = window.tray_menu.actions()
@@ -739,6 +760,17 @@ class TrayTests(WindowTests):
         window.machine_actions[CT].trigger()
         self.assertEqual(went, [C])
         self.assertFalse(window.redirect_action.isVisible())
+
+    def test_a_machine_whose_link_is_down_is_dimmed_as_unavailable(self):
+        window = self.window
+        self.linked = {BT}
+        window._refresh_tray_machines()
+        bee, sea = window.machine_actions[BT], window.machine_actions[CT]
+        self.assertEqual((bee.text(), bee.isEnabled()), ("Send input to Bee", True))
+        self.assertEqual((sea.text(), sea.isEnabled()), ("Sea is unavailable", False))
+        self.linked = {BT, CT}
+        window._refresh_tray_machines()
+        self.assertEqual((sea.text(), sea.isEnabled()), ("Send input to Sea", True))
 
     def test_active_target_row_returns_input_and_owner_changes_update_existing_rows(self):
         window = self.window

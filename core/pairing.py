@@ -410,14 +410,23 @@ def decode(data: bytes):
     if len(data) > MAX_DATAGRAM_BYTES:
         return None
     try:
-        message = json.loads(data.decode("utf-8"))
+        message = json.loads(data.decode("utf-8"), object_pairs_hook=_unique_keys)
     except (UnicodeDecodeError, ValueError, RecursionError):
         # RecursionError is what a datagram of nothing but brackets raises on some Pythons, and
         # left uncaught it would end the socket loop that called this.
         return None
-    if not isinstance(message, dict) or message.get("beamy") != BEACON_VERSION:
+    if not isinstance(message, dict) or type(message.get("beamy")) is not int or message.get("beamy") != BEACON_VERSION:
         return None
     return message
+
+
+def _unique_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
 
 
 def beacon_msg(name: str, port: int, pair_id: str = None) -> dict:
@@ -1829,12 +1838,131 @@ class PairingService(Discovery):
         self._own_addresses = frozenset()
         # Why the TCP listener is not up while a code is, or None.
         self.tcp_error = None
+        self._nearby = None
+        self._nearby_choice = False
+        self._nearby_next = 0.0
+
+    def begin_nearby(self) -> None:
+        from .easy_pair import EasyPairWindow
+        with self._host_lock:
+            self.host.cancel()
+            self._close_listener()
+            if self._nearby is not None:
+                self._nearby.cancel()
+            self._nearby = EasyPairWindow(self.name, self.identity, self.platform, self.port_getter(), clock=self.clock)
+            self._nearby_choice = False
+            self._nearby_next = 0.0
+
+    def cancel_nearby(self) -> None:
+        with self._host_lock:
+            if self._nearby is not None:
+                self._nearby.cancel()
+
+    def _nearby_candidates(self):
+        from .easy_pair import eligible
+        paired_ids = {entry.get("id") for entry in self._peer_entries()}
+        # A beacon repeating this machine's own window is a copy: select() refuses it, and as the
+        # sole candidate it would be auto-selected on every tick.
+        own_window = self._nearby.window if self._nearby is not None else None
+        return [item for item in self.machines() if eligible(item) and item["id"] != _b64(self.identity)
+                and item["id"] not in paired_ids and item.get("nearby") != own_window]
+
+    @property
+    def nearby_status(self) -> dict:
+        with self._host_lock:
+            window = self._nearby
+            if window is None:
+                return {"state": "inactive", "seconds_left": 0, "peers": [], "peer": None, "sas": None, "attempt": None}
+            peers = self._nearby_candidates() if window.state == "searching" else []
+            if len(peers) > 1:
+                self._nearby_choice = True
+            state = "choosing" if window.state == "searching" and self._nearby_choice else window.state
+            return {"state": state, "seconds_left": window.seconds_left, "peers": peers,
+                    "peer": dict(window.peer) if window.peer else None, "sas": window.sas, "attempt": window.attempt}
+
+    def choose_nearby(self, machine: dict) -> None:
+        with self._host_lock:
+            window = self._nearby
+            if window is None or not isinstance(machine, dict):
+                raise PairingError(ERROR_NOT_PAIRING)
+            found = next((item for item in self._nearby_candidates()
+                          if all(item.get(key) == machine.get(key) for key in ("id", "nearby", "address"))), None)
+            if found is None:
+                raise PairingError(ERROR_NOT_PAIRING)
+            window.select(found)
+            self._nearby_next = 0.0
+
+    def confirm_nearby(self, sas: str, attempt: str) -> None:
+        with self._host_lock:
+            if self._nearby is None:
+                raise PairingError(ERROR_NOT_PAIRING)
+            self._nearby.approve(sas, attempt)
+            self._nearby_next = 0.0
+
+    def _save_nearby(self):
+        window = self._nearby
+        if window is None or not window.ready:
+            return None
+        remote = window.remote_reveal
+        peers = self._peer_entries()
+        identity = _unb64(remote["id"])
+        known, replaced = _find_known(peers, self.identity, identity, remote["name"], remote["platform"], self.wall())
+        if known is not None or _clashes(peers, window.token, replaced) or (replaced is None and len(peers) >= MAX_PEERS):
+            window.cancel("refused")
+            return None
+        entry = peer_entry(identity, remote["name"], remote["platform"], remote["port"], window.token,
+                           window.peer["address"], self.wall())
+        try:
+            self.store(entry, replaced)
+        except Exception:
+            self.logger.warning("the nearby peer entry could not be saved")
+            window.cancel("not_saved")
+            return None
+        window.saved()
+        self.host.cancel()
+        self._close_listener()
+        return entry
+
+    def _tick_nearby(self, sock) -> None:
+        with self._host_lock:
+            window = self._nearby
+            if window is None:
+                return
+            if window.state == "searching":
+                candidates = self._nearby_candidates()
+                if len(candidates) > 1:
+                    self._nearby_choice = True
+                if len(candidates) == 1 and not self._nearby_choice:
+                    window.select(candidates[0])
+            entry = self._save_nearby()
+            packets = window.messages() if sock is not None and self.clock() >= self._nearby_next else []
+            self._nearby_next = self.clock() + .5 if packets else self._nearby_next
+            target = (window.peer["address"], window.peer["reply_port"]) if packets else None
+        self._paired(entry, entry["host"] if entry else "")
+        for packet in packets:
+            try:
+                # The canonical commitment uses ASCII escaping; wire JSON can use UTF-8 to
+                # keep a full-length non-ASCII name inside the existing datagram ceiling.
+                data = json.dumps({"beamy": BEACON_VERSION, **packet}, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+                self._answer(sock, data, target)
+            except OSError:
+                pass
+
+    def _receive_nearby(self, message, address):
+        with self._host_lock:
+            if self._nearby is None:
+                return
+            self._nearby.receive(message, address[0])
+            entry = self._save_nearby()
+        self._paired(entry, address[0])
 
     # The host's side.
 
     def begin_pairing(self) -> str:
         """Shows a new code; capacity is checked when the requester identity is known."""
         with self._host_lock:
+            if self._nearby is not None:
+                self._nearby.cancel()
             self.host.port = self.port_getter()
             code = self.host.begin()
             self._open_listener()
@@ -1888,6 +2016,8 @@ class PairingService(Discovery):
     def stop(self) -> None:
         super().stop()
         with self._host_lock:
+            if self._nearby is not None:
+                self._nearby.cancel()
             self.host.cancel()
             self._close_listener()
         self._slots.close_all()
@@ -1913,8 +2043,9 @@ class PairingService(Discovery):
             self.tcp_port = listener.getsockname()[1]
             self.tcp_error = None
             stop = threading.Event()
-            self._listener = (listener, stop)
-        threading.Thread(target=self._accept, args=(listener, stop), name="Beamer-pairing-tcp", daemon=True).start()
+            thread = threading.Thread(target=self._accept, args=(listener, stop), name="Beamer-pairing-tcp", daemon=True)
+            self._listener = (listener, stop, thread)
+            thread.start()
 
     def _close_listener(self, only=None) -> None:
         with self._listener_lock:
@@ -1924,6 +2055,8 @@ class PairingService(Discovery):
         if held is not None:
             held[1].set()
             held[0].close()
+            if len(held) > 2 and held[2] is not None and held[2] is not threading.current_thread():
+                held[2].join(timeout=1.0)
 
     def _accept(self, listener, stop) -> None:
         while not stop.is_set():
@@ -1998,6 +2131,8 @@ class PairingService(Discovery):
             reply = self.host.handle(message, address, via)
             paired, self.host.paired = self.host.paired, None
             fresh, self.host.fresh_answer = self.host.fresh_answer, False
+            if paired is not None and self._nearby is not None:
+                self._nearby.cancel()
             if pin is not None and fresh and message.get("type") == MSG_PAIR_START and reply is not None and reply.get("ok") is True:
                 if not pin():
                     # Replaced in the instant before its pin: the code is bound to a connection
@@ -2020,7 +2155,13 @@ class PairingService(Discovery):
 
     def _beacon(self) -> bytes:
         with self._host_lock:
-            return encode(self.host.beacon(self.port_getter()))
+            from .easy_pair import PAIR_MODES
+            beacon = self.host.beacon(self.port_getter())
+            beacon["pair_modes"] = PAIR_MODES.copy()
+            if self._nearby is not None and self._nearby.active:
+                beacon["nearby"] = self._nearby.window
+                beacon["id"] = _b64(self.identity)
+            return encode(beacon)
 
     def _announce(self, sock) -> None:
         beacon = self._beacon()
@@ -2061,6 +2202,15 @@ class PairingService(Discovery):
                     self._announce(sock)
                 self._send_find(sock)
                 try:
+                    self._tick_nearby(sock)
+                except Exception:
+                    # A nearby attempt that fails must not take beacons and code pairing with it,
+                    # and is ended so the same failure is not logged on every pass.
+                    self.logger.exception("nearby pairing tick failed")
+                    with self._host_lock:
+                        if self._nearby is not None:
+                            self._nearby.cancel("refused")
+                try:
                     data, address = sock.recvfrom(MAX_DATAGRAM_BYTES + 1)
                 except socket.timeout:
                     continue
@@ -2091,8 +2241,11 @@ class PairingService(Discovery):
             sock.close()
 
     def _dispatch(self, sock, message: dict, address, arrived: float, answered: dict, refused: dict) -> None:
+        from .easy_pair import EASY_TYPES
         kind = message.get("type")
-        if kind == MSG_BEACON:
+        if isinstance(kind, str) and kind in EASY_TYPES:
+            self._receive_nearby(message, address)
+        elif kind == MSG_BEACON:
             # This machine hears its own broadcasts, from its own port at one of its own addresses.
             if address[1] != self.bind_port or address[0] not in self._own_addresses:
                 self._note_beacon(message, address)
@@ -2148,6 +2301,9 @@ class PairingService(Discovery):
             platform = message.get("platform")
             entry["platform"] = platform if _platform_ok(platform) else None
             entry["id"] = message.get("id") if _id_text_ok(message.get("id")) else None
+            from .easy_pair import PAIR_MODES, window_ok
+            entry["pair_modes"] = PAIR_MODES.copy() if message.get("pair_modes") == PAIR_MODES else []
+            entry["nearby"] = message.get("nearby") if window_ok(message.get("nearby")) else None
         return entry
 
     # The requester's side.
@@ -2258,6 +2414,8 @@ class PairingService(Discovery):
             except Exception as exc:
                 self.logger.warning("the new peer entry could not be saved: %s", exc)
                 raise PairingError("not_saved") from exc
+            if self._nearby is not None:
+                self._nearby.cancel()
         return entry
 
 

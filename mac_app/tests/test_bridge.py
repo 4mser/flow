@@ -853,6 +853,25 @@ class ClipboardSyncTests(unittest.TestCase):
         self._take_with(FakeClipboard("shot.png", pngs.png(16384, 16384)))
         self.assertEqual(self.link.posted[1], protocol.clipboard_msg("shot.png"))
 
+    def test_text_is_sent_only_to_a_peer_advertising_clipboard(self):
+        controller = make_controller(self.clock)
+        link = bring_up(controller, caps=("clipboard_image",))
+        link.posted.clear()
+        controller.clipboard = FakeClipboard("hello from the Mac", None)
+        controller.set_redirecting(True)
+        settle(controller)
+        self.assertEqual(link.types(), [protocol.MSG_FOCUS])
+
+    def test_image_is_sent_only_to_a_peer_advertising_clipboard_image(self):
+        controller = make_controller(self.clock)
+        link = bring_up(controller, caps=("clipboard",))
+        link.posted.clear()
+        controller.clipboard = FakeClipboard("shot.png", FAKE_PNG)
+        controller.set_redirecting(True)
+        settle(controller)
+        self.assertEqual(link.types(), [protocol.MSG_FOCUS, protocol.MSG_CLIPBOARD])
+        self.assertEqual(link.posted[1], protocol.clipboard_msg("shot.png"))
+
     def test_an_inbound_clipboard_sets_text_and_image(self):
         fake = FakeClipboard()
         self.controller.clipboard = fake
@@ -1368,6 +1387,44 @@ class CrossingWiringTests(unittest.TestCase):
 
     def _own(self):
         return protocol.read_id(protocol.id_text(self.controller.identity()["id"]))
+
+    def _install_internal_crossing(self):
+        from crossing import CrossingEngine, Ways
+
+        self.controller.crossing = CrossingEngine(
+            resistance_px=20,
+            ways=[Ways(None, frozenset({"edge"}), "right", frozenset(), "top_right",
+                       "0", "peer-display", "left")],
+        )
+        self.controller._displays_cache = [(0, 0, 100, 100), (100, 0, 200, 100)]
+        self.controller._displays_at = self.clock.value
+        self.controller._bounds_cache = (0, 0, 200, 100)
+        self.controller._bounds_at = self.clock.value
+
+    def test_first_internal_seam_event_is_warped_to_the_source_display(self):
+        self._install_internal_crossing()
+
+        event, returned = self._move(105, 50, 10)
+
+        self.assertIsNone(returned)
+        self.assertEqual(FakeQuartz.warp_calls, [(99, 50)])
+        self.assertGreater(self.controller.crossing.pressure, 0)
+        self.assertFalse(self.controller.redirecting)
+
+    def test_paused_and_unready_internal_seams_do_not_warp_or_build_pressure(self):
+        self._install_internal_crossing()
+        self.controller.crossing_paused = True
+        event, returned = self._move(105, 50, 10)
+        self.assertIs(returned, event)
+        self.assertEqual(FakeQuartz.warp_calls, [])
+        self.assertEqual(self.controller.crossing.pressure, 0.0)
+
+        self.controller.crossing_paused = False
+        self.controller._peers_up.clear()
+        event, returned = self._move(105, 50, 10)
+        self.assertIs(returned, event)
+        self.assertEqual(FakeQuartz.warp_calls, [])
+        self.assertEqual(self.controller.crossing.pressure, 0.0)
 
     def test_movement_away_from_the_edge_passes_through(self):
         event, returned = self._move(800.0, 500.0, 30)

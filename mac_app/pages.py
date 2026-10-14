@@ -237,17 +237,26 @@ def arrangement_description(machines, sentence):
     return " ".join(where + [sentence + "." if sentence else "No way in is on."])
 
 
-def send_items(peers, on, hide):
-    """The menu bar's items for sending input with more than one machine to send to: (id, title)
-    for each machine this Mac sends to, "Bring input back" on the one input is on (`on`). [] with
-    one or none, where the one Send input item stands as it always has."""
+def send_items(peers, on, hide, live=lambda entry: True):
+    """The menu bar's items for sending input with more than one machine to send to: (id, title,
+    enabled) for each machine this Mac sends to, "Bring input back" on the one input is on (`on`). A
+    machine whose link is down (`live`) is listed dimmed as unavailable: Beamer is not running there,
+    or the machine is off or away. [] with one or none, where the one Send input item stands as it
+    always has."""
     labels = peerlist.labels(peers)
     targets = [entry for entry in peers if entry.get("id") and entry.get("in_use", True) is True
                and entry.get("send") is True and entry.get("port") != 0]
     if len(targets) < 2:
         return []
-    return [(entry["id"], "Bring input back" if entry["id"] == on else redact(f"Send input to {labels[entry['token']]}", hide))
-            for entry in targets]
+    items = []
+    for entry in targets:
+        if entry["id"] == on:
+            items.append((entry["id"], "Bring input back", True))
+        elif live(entry):
+            items.append((entry["id"], redact(f"Send input to {labels[entry['token']]}", hide), True))
+        else:
+            items.append((entry["id"], redact(f"{labels[entry['token']]} is unavailable", hide), False))
+    return items
 
 
 def where_caption(label):

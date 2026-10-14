@@ -51,6 +51,12 @@ class BroadcastTargetTests(unittest.TestCase):
 
 
 class InterfaceTests(unittest.TestCase):
+    def test_qr_address_keeps_default_when_it_is_on_lan(self):
+        with mock.patch.object(pairing, "_interfaces", return_value=[("192.168.50.20", "255.255.255.0"),
+                                                                    ("192.168.60.20", "255.255.255.0")]), \
+                mock.patch.object(pairing, "local_address_towards", return_value="192.168.60.20"):
+            self.assertEqual(pairing.pairing_address(), "192.168.60.20")
+
     def test_this_machine_s_interfaces_are_read_with_real_netmasks(self):
         found = pairing._interfaces()
         if not found:
@@ -292,6 +298,54 @@ class OversizedDatagramTests(unittest.TestCase):
         mac.service._seen.clear()
         self.assertTrue(wait_until(lambda: mac.service.machines()), "the PC's beacons are still heard")
         self.assertIsNone(mac.service.error)
+
+
+class HostileNearbyDatagramTests(unittest.TestCase):
+    """Datagrams a LAN host can send while easy pair is in 1.5.3 (reviews of 10-10-2026)."""
+
+    def setUp(self):
+        self.mac = Machine(self, "Loop Mac", MAC_ID, "macos")
+        patcher = mock.patch.object(self.mac.service.logger, "exception")
+        self.dropped = patcher.start()
+        self.addCleanup(patcher.stop)
+        self.stranger = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.addCleanup(self.stranger.close)
+        self.stranger.bind(("127.0.0.1", 0))
+        self.stranger.settimeout(3.0)
+
+    def send(self, message):
+        self.stranger.sendto(pairing.encode(message), ("127.0.0.1", self.mac.udp_port))
+
+    def assert_still_answering(self):
+        # A `find` is answered after everything sent before it has been dispatched, and after a
+        # pass of the loop's nearby tick.
+        self.send({"type": pairing.MSG_FIND})
+        reply, _ = self.stranger.recvfrom(65536)
+        self.assertEqual(pairing.decode(reply)["type"], pairing.MSG_BEACON)
+        self.dropped.assert_not_called()
+        self.assertIsNone(self.mac.service.error)
+
+    def test_a_list_or_object_type_is_dropped_without_a_traceback(self):
+        # `kind in EASY_TYPES` raised TypeError for an unhashable type and logged a traceback per datagram.
+        for kind in ([], ["easy_commit"], {}, {"easy_commit": 1}):
+            self.assertIsNotNone(pairing.decode(pairing.encode({"type": kind})), "the datagram reaches the dispatch")
+            self.send({"type": kind})
+        self.assert_still_answering()
+        self.assertEqual(self.mac.service.nearby_status["state"], "inactive")
+
+    def test_a_beacon_copying_this_machine_s_window_is_not_a_candidate(self):
+        # As the sole candidate it was auto-selected, select() refused it, and the raise ended the
+        # pairing loop: beacons and code pairing stopped until the app restarted.
+        service = self.mac.service
+        service.begin_nearby()
+        forged = pairing.decode(service._beacon())
+        self.assertEqual(forged["nearby"], service._nearby.window)
+        forged["id"] = pairing._b64(PC_ID)
+        self.send(forged)
+        self.assertTrue(wait_until(lambda: any(item["id"] == forged["id"] for item in service.machines())))
+        self.assert_still_answering()
+        status = service.nearby_status
+        self.assertEqual((status["state"], status["peers"], status["peer"]), ("searching", [], None))
 
 
 class HostAnswersFromTheRequesterSNetworkTests(unittest.TestCase):

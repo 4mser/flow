@@ -690,6 +690,14 @@ class Answers(unittest.TestCase):
             with self.subTest(data=data):
                 self.assertIsNone(protocol.read_switch({"type": "switch", "data": data}))
 
+    def test_switch_takeover_names_the_new_driver_and_ignores_invalid_ids(self):
+        message = protocol.switch_v6(3, ID_A)
+        message["data"]["taken_over_by"] = protocol.id_text(ID_B)
+        self.assertEqual(protocol.read_switch(message)["taken_over_by"], ID_B)
+        for invalid in (None, "x", 7, protocol.id_text(bytes(16))):
+            message["data"]["taken_over_by"] = invalid
+            self.assertNotIn("taken_over_by", protocol.read_switch(message))
+
     def test_ack(self):
         self.assertEqual(protocol.read_ack(protocol.ack_v6(4, 250)), {"seq": 4, "held_us": 250, "locked": False})
         self.assertEqual(protocol.ack_v6(4, -3)["data"]["held_us"], 0)

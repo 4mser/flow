@@ -30,6 +30,15 @@ def push(machine, x, y, dx, dy, notch_range=None, displays=None):
 
 
 class EachZoneSaysItsMachine(unittest.TestCase):
+    def test_two_corners_on_one_edge_both_arm_for_the_same_machine(self):
+        machine = engine([peer(A, "right")], [
+            {"peer": A, "kind": "corner", "corner": "top_right", "edge": "right"},
+            {"peer": A, "kind": "corner", "corner": "bottom_right", "edge": "right"},
+        ])
+        self.assertEqual({way.corner for way in machine.ways}, {"top_right", "bottom_right"})
+        self.assertEqual(push(machine, RIGHT_X, 2.0, 20, -20).peer, A)
+        self.assertEqual(push(machine, RIGHT_X, 1114.0, 20, 20).peer, A)
+
     def test_two_machines_on_two_edges_each_take_their_own_push(self):
         machine = engine([peer(A, "right"), peer(B, "left")],
                          [{"peer": A, "kind": "edge"}, {"peer": B, "kind": "edge"}])

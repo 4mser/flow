@@ -1,4 +1,4 @@
-"""Show in Dock through the real window, tray and launch code: which activation policy each moment
+"""Show in Dock and Show in menu bar through the real window, tray and launch code: which activation policy each moment
 asks for. NSApp's calls are recorded rather than made, so no Dock icon or window appears."""
 
 import json
@@ -52,8 +52,9 @@ class DockWindowTests(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
         self.visible = False
+        self.status_item = mock.Mock()
         self.tray = types.SimpleNamespace(
-            settings_store=self.store, hidden=False, notices=mock.Mock(),
+            settings_store=self.store, hidden=False, notices=mock.Mock(), status_item_view=self.status_item,
             control_window=types.SimpleNamespace(window=types.SimpleNamespace(isVisible=lambda: self.visible)))
         self.tray.apply_activation_policy = lambda window_open=None: kvm_bridge_app.TrayApp.apply_activation_policy(
             self.tray, window_open)
@@ -116,6 +117,87 @@ class DockWindowTests(unittest.TestCase):
         self.window._set_same(True)
         self.assertTrue(self.sent)
         self.assertNotIn("show_in_dock", json.dumps(self.sent))
+
+
+    def saved(self):
+        return type(self.store)(self.store.path).current()
+
+    def test_an_existing_settings_file_shows_beamer_in_the_menu_bar(self):
+        self.assertTrue(self.saved()["show_in_tray"])
+        self.assertTrue(self.window.tray_switch.value)
+        self.tray.apply_activation_policy(window_open=False)
+        self.status_item.setVisible_.assert_called_with(True)
+
+    def test_turned_off_the_menu_bar_item_goes_and_the_choice_is_kept(self):
+        self.window._set_show_in_tray(False)
+        self.assertFalse(self.saved()["show_in_tray"])
+        self.assertTrue(self.saved()["show_in_dock"])
+        self.status_item.setVisible_.assert_called_with(False)
+        self.assertEqual(self.policies[-1], REGULAR)
+
+    def test_the_menu_bar_and_the_dock_are_never_both_off(self):
+        self.window._set_show_in_dock(False)
+        self.window._set_show_in_tray(False)
+        self.assertTrue(self.saved()["show_in_tray"])
+        self.assertTrue(self.window.tray_switch.value)
+        self.window._set_show_in_dock(True)
+        self.window._set_show_in_tray(False)
+        self.window._set_show_in_dock(False)
+        self.assertTrue(self.saved()["show_in_dock"])
+        self.assertTrue(self.window.dock_switch.value)
+
+    def test_the_switch_that_would_hide_the_last_one_is_dimmed(self):
+        self.assertTrue(self.window.dock_switch.enabled and self.window.tray_switch.enabled)
+        self.window._set_show_in_dock(False)
+        self.assertFalse(self.window.tray_switch.enabled)
+        self.assertTrue(self.window.tray_switch.value)
+        self.window._set_show_in_dock(True)
+        self.window._set_show_in_tray(False)
+        self.assertFalse(self.window.dock_switch.enabled)
+        self.assertTrue(self.window.dock_switch.value)
+
+    def test_a_settings_file_with_both_off_still_shows_the_menu_bar(self):
+        with self.store.lock:
+            settings = self.store.current()
+            settings.update(show_in_dock=False, show_in_tray=False)
+            self.store.save_settings(settings)
+        self.window._reflect_visibility()
+        self.assertTrue(self.window.tray_switch.value)
+        self.tray.apply_activation_policy(window_open=False)
+        self.status_item.setVisible_.assert_called_with(True)
+        self.assertEqual(self.policies[-1], ACCESSORY)
+
+    def test_turning_the_dock_on_from_a_both_off_file_keeps_the_menu_bar_it_showed(self):
+        with self.store.lock:
+            settings = self.store.current()
+            settings.update(show_in_dock=False, show_in_tray=False)
+            self.store.save_settings(settings)
+        self.window._set_show_in_dock(True)
+        self.assertTrue(self.saved()["show_in_tray"])
+        self.assertTrue(self.saved()["show_in_dock"])
+
+    def test_with_the_menu_bar_off_a_second_launch_or_a_dock_click_raises_the_window(self):
+        self.window._set_show_in_tray(False)
+        self.assertEqual(self.policies[-1], REGULAR)
+        # TrayApp.open_window is what the second-launch socket calls; the Dock click is the delegate.
+        self.tray.control_window.show = self.show
+        kvm_bridge_app.TrayApp.open_window(self.tray, None)
+        self.assertTrue(self.visible)
+        self.close()
+        self.assertEqual(self.policies[-1], REGULAR)
+        with mock.patch.object(kvm_bridge_app, "_reopen_window", self.show):
+            kvm_bridge_app.applicationShouldHandleReopen_hasVisibleWindows_(None, None, False)
+        self.assertTrue(self.visible)
+
+    def test_same_on_all_machines_never_changes_this_macs_menu_bar_choice(self):
+        self.window._set_show_in_tray(False)
+        data = pc_message(True, 100, by=PEER)
+        for section in (data, data["crossing"], data["design"]):
+            section["show_in_tray"] = True
+        self.window.apply_same(data, peer=PEER)
+        self.assertFalse(self.saved()["show_in_tray"])
+        self.window._set_same(True)
+        self.assertNotIn("show_in_tray", json.dumps(self.sent))
 
 
 if __name__ == "__main__":

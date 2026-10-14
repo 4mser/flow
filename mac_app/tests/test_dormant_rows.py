@@ -53,6 +53,8 @@ class DormantRowTests(unittest.TestCase):
         panel.open = False
         panel.chosen = None
         panel._heard_key = None
+        panel.service = None
+        panel._refresh_nearby = mock.Mock()
 
         panel.re_pair(TOKEN)
 

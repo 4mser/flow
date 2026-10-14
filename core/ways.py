@@ -290,6 +290,42 @@ def _display_frames(tile):
             for key, rect in sorted(screens.items(), key=lambda item: (item[1]["y"], item[1]["x"], item[0]))]
 
 
+def _wrap_target(frames, side, leaving, own_tile):
+    """The peer display furthest out on the edge opposite a wrap-around departure."""
+    if not frames or not any(frame.get("display") is not None for frame in frames):
+        return None
+    opposite = return_edge.OPPOSITE[side]
+    coordinate = {"left": lambda frame: frame["x"], "right": lambda frame: frame["x"] + frame["w"],
+                  "top": lambda frame: frame["y"], "bottom": lambda frame: frame["y"] + frame["h"]}
+    extreme = min(coordinate[opposite](frame) for frame in frames) if opposite in ("left", "top") else max(
+        coordinate[opposite](frame) for frame in frames)
+    candidates = [frame for frame in frames if coordinate[opposite](frame) == extreme]
+    along = "y" if side in ("left", "right") else "x"
+    size = "h" if along == "y" else "w"
+    # Spans compared as fractions of each machine's own extent, so a bottom display lands on a bottom one.
+    def fraction(low, high, origin, length):
+        return ((low - origin) / length, (high - origin) / length) if length else (0, 0)
+    start, end = fraction(leaving[along], leaving[along] + leaving[size], own_tile[along], own_tile[size])
+    origin = min(frame[along] for frame in frames)
+    length = max(frame[along] + frame[size] for frame in frames) - origin
+    def rank(frame):
+        low, high = fraction(frame[along], frame[along] + frame[size], origin, length)
+        return max(0, min(end, high) - max(start, low))
+    best_ratio = max(rank(frame) for frame in candidates)
+    return min((frame for frame in candidates if rank(frame) == best_ratio),
+               key=lambda frame: str(frame.get("display", "")))
+
+
+def _corner_screen(screens, corner, tile):
+    """The display vertex nearest the requested outer vertex of the machine tile."""
+    vertical, horizontal = corner.split("_")
+    x = tile["x"] if horizontal == "left" else tile["x"] + tile["w"]
+    y = tile["y"] if vertical == "top" else tile["y"] + tile["h"]
+    return min(screens, key=lambda frame: (((frame["x"] if horizontal == "left" else frame["x"] + frame["w"]) - x) ** 2
+                                          + ((frame["y"] if vertical == "top" else frame["y"] + frame["h"]) - y) ** 2,
+                                          str(frame.get("display", ""))), default=None)
+
+
 def snap_position(tile, own_id, layout, radius=12):
     """Nearest free snap on a side's thirds, centre, flush alignments or a corner."""
     own = layout.get(own_id, {"x": 0, "y": 0, "w": 160, "h": 100})
@@ -443,14 +479,25 @@ def _read_intent(settings, peer):
     entry = _entry(settings, peer) or {}
     held = entry.get("ways")
     if isinstance(held, dict):
+        corner = held.get("corner", False) is True
+        corner_at = held.get("corner_at") if held.get("corner_at") in CORNERS else DEFAULT_CORNER
+        raw_corners = held.get("corners")
+        picked_corners = ([value for value in CORNERS if value in raw_corners]
+                          if isinstance(raw_corners, list) else [])
+        corners_agree = (isinstance(raw_corners, list) and raw_corners == picked_corners
+                         and bool(picked_corners) == corner
+                         and (not corner or corner_at in picked_corners))
+        corners = picked_corners if corners_agree else ([corner_at] if corner else [])
+        raw_edges = held.get("edges", [])
         return {"edge": held.get("edge", True) is True,
                 "thirds": [part for part in PARTS if part in held.get("thirds", PARTS)] or list(PARTS),
-                "corner": held.get("corner", False) is True,
-                "corner_at": held.get("corner_at") if held.get("corner_at") in CORNERS else DEFAULT_CORNER,
+                "edges": [side for side in EDGES if isinstance(raw_edges, list) and side in raw_edges],
+                "corner": corner, "corner_at": corner_at, "corners": corners,
                 "notch": held.get("notch", False) is True}
     mine = [zone for zone in settings.get("zones", []) if zone.get("peer") == peer]
     if not mine:
-        return dict(edge=True, thirds=list(PARTS), corner=False, corner_at=DEFAULT_CORNER, notch=False)
+        return dict(edge=True, thirds=list(PARTS), edges=[], corner=False,
+                    corner_at=DEFAULT_CORNER, corners=[], notch=False)
     kept = entry.get("left_out_ways") if entry.get("left_out") is True else None
     if isinstance(kept, list):
         # Left out in rc12: every zone is off and the kinds in use were kept here for Put back.
@@ -475,10 +522,12 @@ def _read_intent(settings, peer):
         parts = next((zone.get("parts") for zone in mine if zone.get("kind") == "part"
                       and zone.get("parts")), list(PARTS))
     corner = next((zone.get("corner") for zone in mine if zone.get("kind") == "corner"), DEFAULT_CORNER)
+    if corner not in CORNERS:
+        corner = DEFAULT_CORNER
+    corner_on = any(zone.get("kind") == "corner" and on(zone) for zone in mine)
     return dict(edge=active_edge or bool(active_part),
                 thirds=[part for part in PARTS if part in parts] or list(PARTS),
-                corner=any(zone.get("kind") == "corner" and on(zone) for zone in mine),
-                corner_at=corner if corner in CORNERS else DEFAULT_CORNER,
+                edges=[], corner=corner_on, corner_at=corner, corners=[corner] if corner_on else [],
                 notch=any(zone.get("kind") == "notch" and on(zone) for zone in mine))
 
 
@@ -539,7 +588,8 @@ def compile_layout(settings, layout, moved=None, capable=(), now=None, platform=
         if moved in active and moved != own_id:
             result.update(snap={moved: snap_position(active[moved], own_id,
                           {key: tile for key, tile in active.items() if key != moved})},
-                          tiles={moved: {"state": "overlap", "thirds": [], "sentence_keys": []}})
+                          tiles={moved: {"state": "overlap", "thirds": [], "wraps": [], "corners": [],
+                                         "sentence_keys": []}})
         return result
     capable = picture_capable(saved, capable)
     picture_peers = set(capable) if capable else set(layout)
@@ -551,9 +601,12 @@ def compile_layout(settings, layout, moved=None, capable=(), now=None, platform=
     else:
         saved["layout"] = copy.deepcopy(layout)
     allocations = {}
+    # Thirds a wrap-around edge may not take: an old peer's picked contact, and a picture peer's contact
+    # with its Edge off, which would otherwise take the side back silently when turned on.
+    old_contact_blocks = set()
     for peer, found in contacts.items():
         entry = peers[peer]
-        if peer not in picture_peers or not _zoned(entry) or not entry["ways"]["edge"]:
+        if not _zoned(entry):
             continue
         for index, (screen, contact, target) in enumerate(found):
             side, start, end = contact
@@ -565,12 +618,19 @@ def compile_layout(settings, layout, moved=None, capable=(), now=None, platform=
                 if overlap + 1e-9 < length / 6:
                     continue
                 key = (screen["display"], side, part)
-                rank = (overlap, _id_bytes(peer) or peer.encode(), -index)
+                if peer not in picture_peers:
+                    if entry["ways"]["edge"] and part in entry["ways"]["thirds"]:
+                        old_contact_blocks.add(key)
+                    continue
+                if not entry["ways"]["edge"]:
+                    old_contact_blocks.add(key)
+                    continue
+                rank =(overlap, _id_bytes(peer) or peer.encode(), -index)
                 if key not in allocations or rank > allocations[key][0]:
                     allocations[key] = (rank, peer, index)
-    zones, tiles, corners = [], {}, set()
+    zones, tiles, corners, wrap_taken = [], {}, set(), set()
     notch_taken = False
-    def add_zone(peer, kind, screen=None, side=None, target=None, **fields):
+    def add_zone(peer, kind, screen=None, side=None, target=None, contact=None, **fields):
         zone = dict(peer=peer, kind=kind, **fields)
         if screen is not None:
             if screen["display"] is not None:
@@ -578,50 +638,117 @@ def compile_layout(settings, layout, moved=None, capable=(), now=None, platform=
             zone["side"] = side
             if target is not None and target["display"] is not None and side in EDGES:
                 zone.update(target_display=target["display"], target_side=return_edge.OPPOSITE[side])
+            if target is not None and side in EDGES and contact is not None:
+                axis = "y" if side in ("left", "right") else "x"
+                size = "h" if axis == "y" else "w"
+                start, end = contact[1:]
+                zone["contact_span"] = [(start - screen[axis]) / screen[size],
+                                         (end - screen[axis]) / screen[size]]
+                zone["target_span"] = [(start - target[axis]) / target[size],
+                                        (end - target[axis]) / target[size]]
         zones.append(zone)
     for peer, entry in peers.items():
         if not _zoned(entry):
-            tiles[peer] = {"state": "gap", "thirds": [], "sentence_keys": ["gap"]}
+            tiles[peer] = {"state": "gap", "thirds": [], "wraps": [], "corners": [],
+                           "sentence_keys": ["gap"]}
             continue
         intent = entry["ways"]
         found = contacts.get(peer, [])
         if peer in inactive:
-            tiles[peer] = {"state": "dormant", "thirds": [], "sentence_keys": []}
+            tiles[peer] = {"state": "dormant", "thirds": [], "wraps": [], "corners": [],
+                           "sentence_keys": []}
             continue
         if peer in picture_peers:
             side = next((contact[0] for screen, contact, target in found if contact[0] in EDGES), "")
             if side != entry.get("side", ""):
                 entry.update(side=side, side_set_at=saved.get("layout_set_at", int(stamp)),
                              side_by=saved.get("layout_by") or own_id)
-        states, touched = [], set()
+        derived_side = entry.get("side", "")
+        states, touched, wraps, corner_zones = [], set(), [], []
         if peer in picture_peers:
             for index, (screen, contact, target) in enumerate(found):
-                side = contact[0]
+                side, start, end = contact
                 if side == "corner":
                     corner = contact[1]
-                    key = (screen["display"], corner)
-                    if (intent["edge"] or intent["corner"]) and key not in corners:
-                        corners.add(key)
+                    if (intent["edge"] or intent["corner"]) and corner not in corners:
+                        corners.add(corner)
                         edge = corner.split("_")[1]
                         add_zone(peer, "corner", screen, edge, target, corner=corner, edge=edge)
+                        corner_zones.append(corner)
                         states.append("corner")
                     continue
-                assigned = [part for part in PARTS if allocations.get((screen["display"], side, part), (None, None, None))[1:] == (peer, index)]
+                origin, length = ((screen["y"], screen["h"]) if side in ("left", "right")
+                                  else (screen["x"], screen["w"]))
+                assigned = []
+                for part_index, part in enumerate(PARTS):
+                    if allocations.get((screen["display"], side, part), (None, None, None))[1] != peer:
+                        continue
+                    low = origin + part_index * length / 3
+                    high = origin + (part_index + 1) * length / 3
+                    if min(end, high) - max(start, low) + 1e-9 >= length / 6:
+                        assigned.append(part)
                 touched.update(assigned)
                 kept = [part for part in assigned if part in intent["thirds"]]
                 if intent["edge"] and kept:
-                    kind = "edge" if len(kept) == 3 else "part"
-                    add_zone(peer, kind, screen, side, target, **({"parts": kept} if kind == "part" else {}))
+                    kind = "edge" if len(kept) == len(PARTS) else "part"
+                    add_zone(peer, kind, screen, side, target, contact=contact,
+                             **({"parts": kept} if kind == "part" else {}))
                     states.append(kind)
-                if intent["corner"]:
-                    corner = intent["corner_at"]
-                    key = (screen["display"], corner)
-                    if key not in corners:
-                        corners.add(key)
-                        edge = corner.split("_")[1] if platform == "mac" else corner_edge(corner, side)
-                        # A corner may cross a different edge from the contact; its landing pair follows that edge.
-                        add_zone(peer, "corner", screen, edge, target, corner=corner, edge=edge)
-                        states.append("corner")
+            side_contacts = {contact[0] for _screen, contact, _target in found if contact[0] in EDGES}
+            own_tile = active.get(own_id, layout[own_id])
+            peer_frames = screens.get(peer, [])
+            if intent["edge"] and peer not in overlaps:
+                for wrap_side in intent["edges"]:
+                    if wrap_side in side_contacts:
+                        continue
+                    for screen in screens.get(own_id, []):
+                        origin, length = ((screen["y"], screen["h"]) if wrap_side in ("left", "right")
+                                          else (screen["x"], screen["w"]))
+                        free = []
+                        for part_index, part in enumerate(PARTS):
+                            key = (screen["display"], wrap_side, part)
+                            if key in wrap_taken or key in allocations or key in old_contact_blocks:
+                                continue
+                            low, high = origin + part_index * length / 3, origin + (part_index + 1) * length / 3
+                            internal = False
+                            for other_screen in screens.get(own_id, []):
+                                if other_screen is screen:
+                                    continue
+                                internal_contact = _rect_contact(screen, other_screen)
+                                if internal_contact is None or internal_contact[0] != wrap_side:
+                                    continue
+                                overlap = max(0, min(high, internal_contact[2]) - max(low, internal_contact[1]))
+                                if overlap >= (high - low) / 6:
+                                    internal = True
+                                    break
+                            if not internal:
+                                free.append(part)
+                                wrap_taken.add(key)
+                        if not free:
+                            continue
+                        target = _wrap_target(peer_frames, wrap_side, screen, own_tile)
+                        kind = "edge" if len(free) == len(PARTS) else "part"
+                        add_zone(peer, kind, screen, wrap_side, target,
+                                 **({"parts": free} if kind == "part" else {}))
+                        wraps.append({"display": screen["display"], "side": wrap_side, "parts": free})
+                        states.append(kind)
+            if side_contacts:
+                for corner in intent["corners"]:
+                    if corner in corners:
+                        continue
+                    screen = _corner_screen(screens.get(own_id, []), corner, own_tile)
+                    if screen is None:
+                        continue
+                    _vertical, horizontal = corner.split("_")
+                    edge = horizontal if platform == "mac" else corner_edge(corner, derived_side)
+                    contact_target = next((target for contact_screen, contact, target in found
+                                           if contact_screen["display"] == screen["display"]
+                                           and contact[0] == edge), None)
+                    target = contact_target or _wrap_target(peer_frames, edge, screen, own_tile)
+                    corners.add(corner)
+                    add_zone(peer, "corner", screen, edge, target, corner=corner, edge=edge)
+                    corner_zones.append(corner)
+                    states.append("corner")
         else:
             side = entry.get("side", "")
             # Picture contacts reserve their thirds even when the local pick narrows them.
@@ -635,16 +762,18 @@ def compile_layout(settings, layout, moved=None, capable=(), now=None, platform=
                 add_zone(peer, kind, **({"parts": kept} if kind == "part" else {}))
                 states.append(kind)
                 touched.update(kept)
-            if intent["corner"] and (None, intent["corner_at"]) not in corners:
-                corners.add((None, intent["corner_at"]))
+            if intent["corner"] and intent["corner_at"] not in corners:
+                corners.add(intent["corner_at"])
                 edge = intent["corner_at"].split("_")[1] if platform == "mac" else corner_edge(intent["corner_at"], side)
                 add_zone(peer, "corner", corner=intent["corner_at"], edge=edge)
+                corner_zones.append(intent["corner_at"])
                 states.append("corner")
         if platform == "mac" and intent["notch"] and not notch_taken:
-            add_zone(peer, "notch")
+            add_zone(peer, "notch", **({"return_here": True} if entry.get("notch_return") is True else {}))
             notch_taken = True
         state = next((kind for kind in ("edge", "part", "corner") if kind in states), "gap")
         tiles[peer] = {"state": state, "thirds": [part for part in PARTS if part in touched],
+                       "wraps": wraps, "corners": corner_zones,
                        "sentence_keys": ["gap"] if state == "gap" else []}
         if found and not states and intent["edge"] and touched:
             tiles[peer].update(unpicked=True, sentence_keys=["unpicked"])
@@ -654,10 +783,12 @@ def compile_layout(settings, layout, moved=None, capable=(), now=None, platform=
         for other in contacts:
             if other != peer and other not in inactive and not contacts[other] and other in active and _rect_contact(active[peer], active[other]):
                 state = "between" if peer in capable and other in capable else "set-elsewhere"
-                tiles[peer] = {"state": state, "thirds": [], "sentence_keys": ["between" if state == "between" else "set_elsewhere"]}
+                tiles[peer] = {"state": state, "thirds": [], "wraps": [], "corners": [],
+                               "sentence_keys": ["between" if state == "between" else "set_elsewhere"]}
     for peer, others in overlaps.items():
         if peer in peers and peer not in inactive:
-            tiles[peer] = {"state": "overlap", "thirds": [], "sentence_keys": ["overlap"], "overlap_with": min(others)}
+            tiles[peer] = {"state": "overlap", "thirds": [], "wraps": [], "corners": [],
+                           "sentence_keys": ["overlap"], "overlap_with": min(others)}
     saved["zones"] = zones
     arrangements = [{"peer": peer, "side": entry.get("side", ""), "set_at": entry.get("side_set_at", 0),
                      "by": entry.get("side_by", "")} for peer, entry in peers.items()
@@ -760,17 +891,33 @@ def toggle_edge(methods, parts):
     return pick_thirds(methods, PARTS)
 
 
+def notch_holder(settings: dict) -> Optional[str]:
+    """The one machine the notch leads to: the first active one in ways order whose intent has it. A
+    file from before 1.5.3 could tick several; the first keeps it, as the zones always did. A machine
+    left out does not hold it, so it never keeps the notch from one in use."""
+    return next((entry["id"] for entry in settings.get("peers", [])
+                 if _zoned(entry) and entry.get("left_out") is not True and entry.get("in_use", True) is not False
+                 and peerlist.dormant_reason(entry) is None and _read_intent(settings, entry["id"])["notch"]),
+                None)
+
+
 def corner_holder(settings: dict, corner: str, exclude: Optional[str] = None) -> Optional[str]:
-    """The machine, other than `exclude`, whose Corner is on at `corner` of this machine's screen:
-    one corner per machine, never shared, so the page refuses that corner to anyone else. Left-out,
-    not-in-use and phone entries hold none."""
+    """The first active machine, other than `exclude`, holding this screen corner by intent or contact."""
+    layout = settings.get("layout") if isinstance(settings.get("layout"), dict) else {}
+    own_tile = layout.get(settings.get("machine_id"))
     for entry in settings.get("peers", []):
         ident = entry.get("id")
         if (ident == exclude or not _zoned(entry) or entry.get("left_out") is True
-                or entry.get("in_use", True) is False):
+                or entry.get("in_use", True) is False or peerlist.dormant_reason(entry) is not None):
             continue
         intent = _read_intent(settings, ident)
-        if intent["corner"] and intent["corner_at"] == corner:
+        if corner in intent["corners"]:
+            return ident
+        tile = layout.get(ident)
+        if (own_tile and isinstance(tile, dict) and (intent["edge"] or intent["corner"])
+                and any((contact := _rect_contact(screen, target)) is not None
+                        and contact[0] == "corner" and contact[1] == corner
+                        for screen in _display_frames(own_tile) for target in _display_frames(tile))):
             return ident
     return None
 
@@ -909,9 +1056,104 @@ def ways(settings: dict, peer: str) -> dict:
     methods = []
     if entry and intent["edge"]:
         methods.append("edge" if len(intent["thirds"]) == 3 else "part")
-    methods += [kind for kind in ("corner", "notch") if entry and intent[kind]]
+    methods += [kind for kind in ("corner", "notch") if entry and intent[kind]
+                and (kind != "notch" or notch_holder(settings) == peer)]
     return dict(side=entry.get("side") if entry.get("side") in EDGES else "",
-                methods=methods, parts=list(intent["thirds"]), corner=intent["corner_at"])
+                methods=methods, parts=list(intent["thirds"]), corner=intent["corner_at"],
+                edges=list(intent["edges"]), corners=list(intent["corners"]))
+
+
+def reach(settings: dict, peer: str, *, platform, capable=(), live=None, gone=None) -> dict:
+    """Describe each side and corner for one peer from the current compiled map."""
+    entry = _entry(settings, peer)
+    layout = settings.get("layout") if isinstance(settings.get("layout"), dict) else {}
+    if peer not in layout and entry and _zoned(entry):
+        # A tile not in the picture yet sits where the derived layout puts it, as the map draws it.
+        layout = {**derive_layout(settings, gap=0), **layout}
+    tile = layout.get(peer)
+    unavailable = {"state": "unavailable", "by": None}
+    if not entry or not _zoned(entry) or not isinstance(tile, dict):
+        return {"sides": {side: dict(unavailable) for side in EDGES},
+                "corners": {corner: dict(unavailable) for corner in CORNERS}}
+    if entry.get("left_out") is True or entry.get("in_use", True) is False:
+        # A left-out row still shows its kept ways (the page makes them inert), as if put back.
+        back = copy.deepcopy(settings)
+        _entry(back, peer).pop("left_out", None)
+        _entry(back, peer)["in_use"] = True
+        return reach(back, peer, platform=platform, capable=capable, live=live, gone=gone)
+    compiled = compile_layout(settings, layout, platform=platform, capable=capable, live=live, gone=gone)
+    if not compiled.get("accepted", True):
+        return {"sides": {side: dict(unavailable) for side in EDGES},
+                "corners": {corner: dict(unavailable) for corner in CORNERS}}
+    map_entry = compiled.get("tiles", {}).get(peer, {})
+    if map_entry.get("state") in ("overlap", "dormant"):
+        return {"sides": {side: dict(unavailable) for side in EDGES},
+                "corners": {corner: dict(unavailable) for corner in CORNERS}}
+    picture_peers = set(capable) if capable else set(layout)
+    if not capable and any("caps" in item for item in settings.get("peers", [])):
+        picture_peers = {settings.get("machine_id")} | {
+            item.get("id") for item in settings.get("peers", []) if "layout" in item.get("caps", [])}
+    intent = _read_intent(settings, peer)
+    if peer not in picture_peers:
+        # An old peer (1.5.0, 1.5.1) crosses by its side and one corner: no wrap-around, no second corner.
+        side_held = entry.get("side")
+        holder = lambda corner: corner_holder(settings, corner, exclude=peer)
+        return {"sides": {side: ({"state": "contact", "by": peer} if side == side_held else dict(unavailable))
+                          for side in EDGES},
+                "corners": {corner: ({"state": "on", "by": None} if corner in intent["corners"]
+                                     else {"state": "held", "by": holder(corner)} if holder(corner)
+                                     else dict(unavailable) if intent["corners"] or side_held not in EDGES
+                                     else {"state": "free", "by": None})
+                            for corner in CORNERS}}
+    wrap_sides = {item["side"]: item["parts"] for item in map_entry.get("wraps", [])}
+    zones = compiled.get("settings", {}).get("zones", [])
+    own_frames = _display_frames(compiled.get("settings", {}).get("layout", {}).get(
+        settings.get("machine_id", ""), derive_layout(settings).get(settings.get("machine_id", ""))))
+    peer_frames = _display_frames(tile)
+    peer_contacts = [_rect_contact(own, other) for own in own_frames for other in peer_frames]
+    contact_sides = {contact[0] for contact in peer_contacts if contact and contact[0] in EDGES}
+    sides = {}
+    for side in EDGES:
+        if side in contact_sides:
+            sides[side] = {"state": "contact", "by": peer}
+        elif side in wrap_sides:
+            sides[side] = {"state": "on", "by": None}
+        elif side in intent["edges"]:
+            sides[side] = {"state": "kept", "by": None}
+        else:
+            # Free exactly when picking it would cross now: the compile answers, so the two never differ.
+            trial = copy.deepcopy(settings)
+            _entry(trial, peer)["ways"] = {**intent, "edge": True, "edges": [*intent["edges"], side]}
+            tried = compile_layout(trial, layout, platform=platform, capable=capable, live=live, gone=gone)
+            if any(item["side"] == side for item in tried.get("tiles", {}).get(peer, {}).get("wraps", [])):
+                sides[side] = {"state": "free", "by": None}
+                continue
+            holder = next((zone.get("peer") for zone in zones if zone.get("peer") != peer
+                           and zone.get("side") == side and zone.get("kind") in ("edge", "part")), None)
+            if holder is None:
+                inactive = {item.get("id") for item in settings.get("peers", [])
+                            if item.get("left_out") is True or item.get("in_use", True) is False
+                            or peerlist.dormant_reason(item) is not None or (gone is not None and gone(item.get("id")))}
+                holder = next((other for other, other_tile in layout.items()
+                               if other not in (peer, settings.get("machine_id")) and other not in inactive
+                               and isinstance(other_tile, dict)
+                               and any((contact := _rect_contact(own, frame)) is not None and contact[0] == side
+                                       for own in own_frames for frame in _display_frames(other_tile))), None)
+            sides[side] = {"state": "held", "by": holder} if holder else dict(unavailable)
+    corner_states = {}
+    for corner in CORNERS:
+        holder = next((zone.get("peer") for zone in zones if zone.get("peer") != peer
+                       and zone.get("kind") == "corner" and zone.get("corner") == corner),
+                      None) or corner_holder(settings, corner, exclude=peer)
+        if corner in map_entry.get("corners", []):
+            corner_states[corner] = {"state": "on", "by": None}
+        elif not contact_sides:
+            corner_states[corner] = dict(unavailable)
+        elif holder:
+            corner_states[corner] = {"state": "held", "by": holder}
+        else:
+            corner_states[corner] = {"state": "free", "by": None}
+    return {"sides": sides, "corners": corner_states}
 
 
 def edit(settings: dict, peer: str, *, side: str, methods, parts, corner: str, kinds,

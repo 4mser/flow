@@ -40,7 +40,7 @@ CROSSING_KEYS = ("resistance_px", "block_while_dragging", "shortcut", "trigger_k
 SHORTCUT_KEYS = ("shortcut", "trigger_key", "shortcut_goes_to", "trigger_style", "double_tap_ms")
 CROSSING_GROUP_KEYS = ("resistance_px", "block_while_dragging")
 DESIGN_KEYS = ("glow_style", "glow_colour", "effect_length", "effect_size", "effect_pace",
-               "effect_size_fraction", "shortcut_arrival", "shortcut_arrival_style")
+               "effect_size_fraction", "frame_rate", "shortcut_arrival", "shortcut_arrival_style")
 GROUP_KEYS = {"crossing": CROSSING_GROUP_KEYS, "design": DESIGN_KEYS, "shortcut": SHORTCUT_KEYS, "names": ()}
 ALL_GROUPS = tuple(GROUP_KEYS)
 DESIGN_UNAVAILABLE = "Design not available yet: connect to this machine with Beamer 1.5.0 beta.6 or later."
@@ -171,6 +171,7 @@ PC_FIELDS = {
     "trigger_style": "trigger_style", "double_tap_ms": "double_tap_ms",
     "glow_style": "glow_style", "glow_colour": "glow_colour", "effect_length": "effect_length",
     "effect_size": "effect_size", "effect_pace": "effect_pace", "effect_size_fraction": "effect_size_fraction",
+    "frame_rate": "frame_rate",
     "shortcut_arrival": "shortcut_arrival", "shortcut_arrival_style": "shortcut_arrival_style",
 }
 # The Mac keeps the shortcut's key at the top of its settings and the rest in `crossing`.
@@ -206,6 +207,8 @@ def _valid(key, value, trigger_keys):
         return effects.valid_effect_pace(value)
     if key == "effect_size_fraction":
         return effects.valid_effect_size_fraction(value)
+    if key == "frame_rate":
+        return value in tuple(value for value, _name, _divisor in effects.FRAME_RATES)
     if key == "shortcut_arrival_style":
         return value in effects.SWITCH_STYLES
     return False

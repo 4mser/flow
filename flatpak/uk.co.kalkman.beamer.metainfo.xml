@@ -15,7 +15,7 @@
   <url type="homepage">https://kalkmancode.co.uk/beamer</url>
   <url type="bugtracker">https://github.com/kalkman-code/beamer/issues</url>
   <url type="vcs-browser">https://github.com/kalkman-code/beamer</url>
-  <url type="contribute">https://github.com/kalkman-code/beamer/blob/v1.5.2/CONTRIBUTING.md</url>
+  <url type="contribute">https://github.com/kalkman-code/beamer/blob/v1.5.3/CONTRIBUTING.md</url>
   <branding>
     <color type="primary" scheme_preference="light">#006a88</color>
     <color type="primary" scheme_preference="dark">#5fd4f4</color>
@@ -29,21 +29,24 @@
   </recommends>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/kalkman-code/beamer/v1.5.2/assets/linux-overview.png</image>
+      <image>https://raw.githubusercontent.com/kalkman-code/beamer/v1.5.3/assets/linux-overview.png</image>
       <caption>See which machine has input and manage paired computers</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/kalkman-code/beamer/v1.5.2/assets/linux-crossing.png</image>
+      <image>https://raw.githubusercontent.com/kalkman-code/beamer/v1.5.3/assets/linux-crossing.png</image>
       <caption>Choose where input crosses between screens</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/kalkman-code/beamer/v1.5.2/assets/linux-design.png</image>
+      <image>https://raw.githubusercontent.com/kalkman-code/beamer/v1.5.3/assets/linux-design.png</image>
       <caption>Choose crossing styles and colours for screen edges and machine hand-offs</caption>
     </screenshot>
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="1.5.2" date="2026-10-08">
+    <release version="1.5.3" date="2026-10-13">
+      <description><p>Adds pointer hiding on idle screens, idle takeover, per-screen crossing with contact-span matching, and Mac and Qt refresh improvements.</p></description>
+    </release>
+    <release version="1.5.2" date="2026-10-11">
       <description><p>Adds the shared desk map, granular settings, dormant pairing repair and Linux crossing effects.</p></description>
     </release>
     <release version="1.5.1" date="2026-10-06">

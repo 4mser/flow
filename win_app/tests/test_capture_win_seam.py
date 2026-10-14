@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import capture_win
-from core.return_edge import PartEdge, Rect, ReturnEdge
+from core.return_edge import CornerPush, PartEdge, Rect, ReturnEdge
 
 
 class HookPoint(ctypes.Structure):
@@ -59,6 +59,15 @@ class InternalSeamTests(unittest.TestCase):
             capture_win.internal_seam_position((50, 105), [upper, lower], {"upper": upper}, [bottom_edge]),
             (50, 99),
         )
+
+    def test_scoped_corner_is_checked_on_its_display_when_both_walls_are_internal(self):
+        upper_left = Rect(0, 0, 100, 100)
+        nominated = Rect(100, 0, 100, 100)
+        right = Rect(200, 0, 100, 100)
+        below = Rect(100, 100, 100, 100)
+        monitors = [upper_left, nominated, right, below]
+        corner = CornerPush("bottom_right", "right", display="b0")
+        self.assertTrue(corner._at_edge(monitors, (199, 99), {"b0": nominated}))
 
     def test_mouse_hook_restores_the_cursor_and_swallows_the_seam_move(self):
         on_mouse = Mock(return_value=False)

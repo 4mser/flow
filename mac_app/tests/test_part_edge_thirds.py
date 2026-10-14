@@ -51,19 +51,19 @@ class PartEdgeThirds(Page):
         return self.window.crossing_ledger.rows[BEE]
 
     def picked(self):
-        return [part for part, button in self.row().edge_glyph.hits.items()
+        return [part for part, button in self.row().contact().segments.items()
                 if button.accessibilityValue() == "on"]
 
     def pick_thirds(self, picked):
         self.whole_edge()
         for part in ways.PARTS:
             if part not in picked:
-                press(self.row().edge_glyph.hits[part])
+                press(self.row().contact().segments[part])
 
     def whole_edge(self):
         if self.picked():
-            press(self.row().edge_title)
-        press(self.row().edge_title)
+            press(self.row().contact())
+        press(self.row().contact())
 
     def third_point(self, third, offset=0, peer=BEE):
         canvas = self.window.atlas_canvas
@@ -96,7 +96,7 @@ class PartEdgeThirds(Page):
     def test_all_seven_choices_round_trip_ledger_saved_intent_and_map(self):
         window = self.layout()
         row = self.row()
-        buttons = dict(row.edge_glyph.hits)
+        buttons = dict(row.contact().segments)
         for count in (1, 2, 3):
             for picked in itertools.combinations(ways.PARTS, count):
                 with self.subTest(picked=picked):
@@ -110,7 +110,7 @@ class PartEdgeThirds(Page):
                     self.assertEqual(window.atlas_canvas.states[BEE]["picked_thirds"], list(picked))
                     self.assertIs(self.row(), row)
                     for part, button in buttons.items():
-                        self.assertIs(row.edge_glyph.hits[part], button)
+                        self.assertIs(row.contact().segments[part], button)
 
     def test_map_clicks_each_third_on_each_side_and_ledger_follows(self):
         for side in ways.EDGES:
@@ -228,12 +228,12 @@ class PartEdgeThirds(Page):
             with self.subTest(scoped=scoped):
                 window = self.layout(scoped=scoped)
                 self.pick_thirds(["start", "end"])
-                press(self.row().edge_title)
+                press(self.row().contact())
                 window._atlas_layout_changed(copy.deepcopy(self.store.current()["layout"]), BEE, snap=False)
                 self.assertFalse(set(self.ways_of(BEE)["methods"]) & {"edge", "part"})
                 self.assertEqual(self.picked(), [])
                 window.atlas_canvas._draw(False)
                 self.assertFalse(any(key[-1] == "track" for key in window.atlas_canvas.third_layers))
-                press(self.row().edge_title)
+                press(self.row().contact())
                 self.assertEqual(self.picked(), list(ways.PARTS))
                 self.assertEqual(self.ways_of(BEE)["methods"], ["edge"])

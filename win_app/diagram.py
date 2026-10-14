@@ -376,6 +376,8 @@ class AtlasCanvas(QWidget):
         self._hover = None
         self._third_press = None
         self.corner_marks = []
+        self.wrap_marks = []
+        self.wrap_label_rects = []
         self.seam_paths = []
         self.ledger_height = False
         self._height_timer = QTimer(self)
@@ -402,6 +404,10 @@ class AtlasCanvas(QWidget):
 
     def set_tiles(self, tiles, labels, states, selected, cycle_mode="last", cycle=None, capable=(), own_id=None,
                   rename_values=None):
+        seen = (tiles, labels, states, selected, cycle_mode, cycle, tuple(sorted(capable or ())), own_id, rename_values)
+        if seen == getattr(self, "_tiles_seen", None):
+            return
+        self._tiles_seen = seen
         self.tiles = {key: dict(tile) for key, tile in tiles.items()}
         self.labels = dict(labels)
         self.rename_values = dict(rename_values if rename_values is not None else labels)
@@ -427,6 +433,10 @@ class AtlasCanvas(QWidget):
             self.update()
 
     def set_left_out(self, peers, in_use=None, dormant=()):
+        seen = (set(peers), in_use, set(dormant))
+        if seen == getattr(self, "_left_out_seen", None):
+            return
+        self._left_out_seen = seen
         self.left_out_ids = set(peers)
         self.in_use = dict(in_use or {})
         self.shelf_ids = self.left_out_ids | set(dormant) | {peer for peer, enabled in self.in_use.items() if enabled is False}
@@ -626,8 +636,7 @@ class AtlasCanvas(QWidget):
         if broken and high - high_inset <= low + low_inset:
             return None
         if tile is self.tiles.get(self._own_id()):
-            corners = {data.get("corner_way") for peer, data in self.states.items()
-                       if peer in self.tiles and peer not in self.shelf_ids}
+            corners = self._pad_corners()
             near, far = {"top": ("top_left", "top_right"), "bottom": ("bottom_left", "bottom_right"),
                          "left": ("top_left", "bottom_left"), "right": ("top_right", "bottom_right")}[side]
             if near in corners and abs(low - first) < 2.1:
@@ -648,6 +657,118 @@ class AtlasCanvas(QWidget):
         """[(screen, contact)]: this machine's display frames that meet `peer`'s along a side, as the
         engine finds them; thirds are measured along `screen`, the pointer's own display."""
         return ways.side_contacts(self.tiles[self._own_id()], self.tiles[peer])
+
+    def _pad_corners(self):
+        """Every corner of This PC that carries a pad, whichever machine holds it."""
+        return {corner for peer, data in self.states.items()
+                if peer in self.tiles and peer not in self.shelf_ids and peer != self._own_id()
+                for corner in data.get("corners", ()) if corner in pages_win.CORNER_NAMES}
+
+    @staticmethod
+    def _wrap_sides(data):
+        """The sides of This PC a machine's wrap-around crosses by now, each once, in map order."""
+        sides = {item["side"] if isinstance(item, dict) else item for item in data.get("wraps", ())}
+        return [side for side in ways.EDGES if side in sides]
+
+    def wrap_seam(self, rect, side):
+        """Pixel endpoints of a wrap-around seam along one of This PC's own sides: inset 2 px at each
+        end, or 13 px where a corner pad sits on that vertex, so it stops at the pad's halo."""
+        pads = self._pad_corners()
+        vertical = side in ("left", "right")
+        first, last = (rect.top(), rect.bottom()) if vertical else (rect.left(), rect.right())
+        near, far = {"top": ("top_left", "top_right"), "bottom": ("bottom_left", "bottom_right"),
+                     "left": ("top_left", "bottom_left"), "right": ("top_right", "bottom_right")}[side]
+        low = first + (13 if near in pads else 2)
+        high = max(low, last - (13 if far in pads else 2))
+        fixed = rect.left() if side == "left" else rect.right() if side == "right" else rect.top() if side == "top" else rect.bottom()
+        return (QPointF(fixed, low), QPointF(fixed, high)) if vertical else (QPointF(low, fixed), QPointF(high, fixed))
+
+    @staticmethod
+    def _paint_push_arrow(painter, tip, side, colour):
+        dx, dy = {"left": (-1, 0), "right": (1, 0), "top": (0, -1), "bottom": (0, 1)}[side]
+        pen = QPen(colour, 1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(QPointF(tip.x() - dx * 9, tip.y() - dy * 9), tip)
+        path = QPainterPath(QPointF(tip.x() - dx * 4 - dy * 4, tip.y() - dy * 4 - dx * 4))
+        path.lineTo(tip)
+        path.lineTo(QPointF(tip.x() - dx * 4 + dy * 4, tip.y() - dy * 4 + dx * 4))
+        painter.drawPath(path)
+
+    def _paint_wrap(self, painter, rect, side, name, kept, alpha, peer=None):
+        """A wrap-around side: the seam along This PC's own edge and, inside the tile, where it leads."""
+        one, two = self.wrap_seam(rect, side)
+        if kept:
+            pen = QPen(_colour("signal", .35), 2.0)
+            pen.setDashPattern([2.0, 2.5])
+        else:
+            pen = QPen(_colour("signal", alpha), 4.0)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(one, two)
+        self.seam_paths.append((side, one, two, .35 if kept else alpha, pen.widthF()))
+        text = "wrap kept, Edge off" if kept else f"wraps to {name}"
+        self.wrap_marks.append((peer, side, text, kept, .35 if kept else alpha))
+
+    def _paint_wrap_labels(self, painter, rect, marks):
+        """Each wrap label gets its own row below This PC's name and detail line, so none ever lands on
+        them or on another label: a top side's row nearest the name, a bottom side's nearest the
+        bottom edge, left and right in between, sharing one row when both fit. Sides that say the
+        same thing, as when one machine wraps on several, share one label naming them. Rows that do
+        not fit the tile are left out; the seam still shows the side."""
+        self.wrap_label_rects = []
+        if rect.height() < 78:
+            return
+        painter.setFont(theme.font(tokens.TYPE["small"]))
+        metrics = painter.fontMetrics()
+        order = {"merged": 0, "top": 0, "left": 1, "right": 2, "bottom": 3}
+        said = {}
+        for side, text, kept, alpha in sorted(marks, key=lambda mark: order[mark[0]]):
+            said.setdefault((text, kept), []).append((side, text, kept, alpha))
+        labels = []
+        for same in said.values():
+            side, text, kept, alpha = same[0]
+            if len(same) > 1:
+                # The sides named, else counted, else the plain words: the seams still show which.
+                text = next((option for option in (f"{text} · {', '.join(mark[0] for mark in same)}",
+                                                   f"{text} · {len(same)} sides")
+                             if metrics.horizontalAdvance(option) <= rect.width() - 24), text)
+                side = "merged"
+            room = rect.width() - (52 if side in ("left", "right") else 24)
+            text = metrics.elidedText(text, Qt.TextElideMode.ElideRight, max(1, round(room)))
+            labels.append((side, text, kept, alpha, metrics.horizontalAdvance(text)))
+        rows = []
+        for label in sorted(labels, key=lambda label: order[label[0]]):
+            if (label[0] == "right" and rows and len(rows[-1]) == 1 and rows[-1][0][0] == "left"
+                    and 26 + rows[-1][0][4] + 8 + label[4] + 26 <= rect.width()):
+                rows[-1].append(label)
+            else:
+                rows.append([label])
+        first, last = rect.top() + 51, rect.bottom() - 22
+        room = int((last - first) // 18) + 1 if last >= first else 0
+        wanted = {"top": first, "merged": first, "left": rect.center().y() + 10,
+                  "right": rect.center().y() + 10, "bottom": last}
+        tops = []
+        for row in rows[:room]:
+            tops.append(max(min(last, wanted[row[0][0]]), tops[-1] + 18 if tops else first))
+        for index in range(len(tops) - 1, -1, -1):
+            tops[index] = min(tops[index], last if index == len(tops) - 1 else tops[index + 1] - 18)
+        for top, row in zip(tops, rows):
+            for side, text, kept, alpha, width in row:
+                ink = _colour("ink_3", .8) if kept else _colour("signal", alpha)
+                x = (rect.left() + 26 if side == "left" else rect.right() - 26 - width if side == "right"
+                     else rect.right() - 12 - width)
+                box = QRectF(x, top, width + 1, 16)
+                if side in ("left", "right"):
+                    self._paint_push_arrow(painter, QPointF(rect.left() + 16 if side == "left" else rect.right() - 16,
+                                                            box.center().y()), side, ink)
+                painter.setFont(theme.font(tokens.TYPE["small"]))
+                painter.setPen(ink)
+                painter.drawText(box, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+                self.wrap_label_rects.append((side, text, box))
 
     def _third_segment_at(self, point):
         own_id, peer = self._own_id(), self.selected
@@ -743,6 +864,8 @@ class AtlasCanvas(QWidget):
     def paintEvent(self, _event):
         self._geometry()
         self.seam_paths = []
+        self.wrap_marks = []
+        self.wrap_label_rects = []
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(QPen(_colour("edge"), 1.0))
@@ -818,7 +941,8 @@ class AtlasCanvas(QWidget):
                 painter.setFont(theme.font(tokens.TYPE["note"]))
                 painter.drawText(rect.adjusted(4, 0, -4, -6), Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, label)
             foot = ("" if is_own else "Offline" if state_data.get("linked") is False else
-                    "Crosses" if state_data.get("corner_way") else "Edge off" if state_data.get("edge_off") else
+                    "Crosses" if state_data.get("corners") or state_data.get("wraps") else
+                    "Edge off" if state_data.get("edge_off") else
                     "Drag to connect" if state == "gap" else "Overlaps" if state == "overlap" else
                     outcome_for_tile(state, state_data.get("crosses", is_own), is_own,
                                      state_data.get("other_name", "")))
@@ -884,15 +1008,29 @@ class AtlasCanvas(QWidget):
                     for screen, contact in found:
                         for stretch in ways.crossing_stretches(contact, screen, held.get("lit", held.get("thirds", []))):
                             self._paint_contact(painter, own, own_rect, stretch, alpha=seam_alpha, screen=screen)
+            for peer, data in self.states.items():
+                if peer == own_id or peer not in self.tiles or peer in self.shelf_ids:
+                    continue
+                alpha = (1.0 if data.get("linked", True) else .55) * (1.0 if peer == self.selected else .7)
+                name = self.labels.get(peer, OTHER)
+                for side in self._wrap_sides(data):
+                    self._paint_wrap(painter, own_rect, side, name, False, alpha, peer)
+                crossing = set(self._wrap_sides(data))
+                for side in data.get("kept_wraps", ()):
+                    if side in ways.EDGES and side not in crossing:
+                        self._paint_wrap(painter, own_rect, side, name, True, alpha, peer)
+            self._paint_wrap_labels(painter, own_rect, [(side, text, kept, alpha)
+                                                        for _peer, side, text, kept, alpha in self.wrap_marks])
             self.corner_marks = []
             for peer, data in self.states.items():
-                corner = data.get("corner_way", "")
-                if (peer == own_id or peer not in self.tiles or peer in self.shelf_ids
-                        or corner not in pages_win.CORNER_NAMES):
+                if peer == own_id or peer not in self.tiles or peer in self.shelf_ids:
                     continue
-                opacity = 1.0 if peer == self.selected else 0.55
-                self.corner_marks.append((peer, corner, opacity))
-                self._paint_corner_pad(painter, own_rect, corner, opacity)
+                for corner in ways.CORNERS:
+                    if corner not in data.get("corners", ()):
+                        continue
+                    opacity = 1.0 if peer == self.selected else 0.55
+                    self.corner_marks.append((peer, corner, opacity))
+                    self._paint_corner_pad(painter, own_rect, corner, opacity)
         else:
             self.corner_marks = []
         peers = [peer for peer in self.tiles if peer != own_id and peer not in self.shelf_ids]

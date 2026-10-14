@@ -147,6 +147,13 @@ class OverlappingZonesTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             config_from_dict({**BASE, "effect_size": "huge"})
 
+    def test_frame_rate_defaults_to_display_and_round_trips(self):
+        self.assertEqual(config_from_dict(dict(BASE)).frame_rate, "display")
+        config = config_from_dict({**BASE, "frame_rate": "quarter"})
+        self.assertEqual(config_to_dict(config)["frame_rate"], "quarter")
+        with self.assertRaises(ConfigError):
+            config_from_dict({**BASE, "frame_rate": "eighth"})
+
     def test_a_saved_warp_choice_reads_as_its_stand_in(self):
         # Warp is offered nowhere for now; a PC that chose it keeps working.
         config = config_from_dict({**BASE, "glow_style": "light_slit", "glow_colour": "neon",

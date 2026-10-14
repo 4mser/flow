@@ -85,7 +85,6 @@ XI_HIERARCHY_CHANGED = 11
 XI_RAW_KEY_PRESS, XI_RAW_KEY_RELEASE = 13, 14
 XI_RAW_BUTTON_PRESS, XI_RAW_BUTTON_RELEASE = 15, 16
 XI_RAW_MOTION = 17
-XI_BARRIER_HIT, XI_BARRIER_LEAVE = x11_seams.XI_BARRIER_HIT, x11_seams.XI_BARRIER_LEAVE
 XI_ALL_DEVICES, XI_ALL_MASTER_DEVICES = 0, 1
 XI_MASTER_POINTER, XI_MASTER_KEYBOARD, XI_SLAVE_POINTER = 1, 2, 3
 XI_KEY_REPEAT = 1 << 16
@@ -296,8 +295,7 @@ class _Connection:
             if not self.display.has_extension("XTEST"):
                 raise RuntimeError("This X server has no XTEST extension")
             self._opcode = self.display.display.get_extension_major("XInputExtension")
-            # XI 2.3 adds barrier-hit events and the release request used for seam resistance.
-            # Older servers negotiate down and retain the existing 2.1 capture behaviour.
+            # XI 2.3 is needed only for the optional XFixes seam barriers.
             reply = xinput.XIQueryVersion(display=self.display.display, opcode=self._opcode, major_version=2, minor_version=3)
             self._xi_version = (reply.major_version, reply.minor_version)
             if (reply.major_version, reply.minor_version) < (2, 1):
@@ -342,8 +340,6 @@ class _Connection:
 
     def _generic(self, event) -> list:
         kind = event.evtype
-        if kind in (XI_BARRIER_HIT, XI_BARRIER_LEAVE):
-            return [x11_seams.parse_barrier_event(kind, event.data)]
         if XI_RAW_KEY_PRESS <= kind <= XI_RAW_MOTION:
             deviceid, detail, sourceid, flags, raw = parse_raw(event.data)
             return [("raw", kind, detail, sourceid, flags, raw, deviceid, event.sequence_number)]
@@ -421,15 +417,16 @@ class _Connection:
         finally:
             self.display.close()
 
-    def configure_seams(self, monitors, resistance_px: int, enabled: bool = True) -> bool:
+    def configure_seams(self, monitors, resistance_px: int, enabled: bool = True,
+                        display_map=None, models=()) -> bool:
         """Configure XFixes holds on internal RandR monitor seams."""
         if self._seam_unavailable:
             return False
         try:
             if self._seam_controller is None:
-                if self._xi_version < (2, 3) or not self.display.has_extension("XFIXES"):
+                if not self.display.has_extension("XFIXES"):
                     self._seam_unavailable = True
-                    LOGGER.info("X11 seam holds need XInput 2.3 and XFixes 5; leaving this desktop unchanged")
+                    LOGGER.info("X11 seam holds need XFixes 5; leaving this desktop unchanged")
                     return False
                 from Xlib.ext import xfixes
 
@@ -445,12 +442,13 @@ class _Connection:
                     LOGGER.info("X11 seam holds need XFixes 5; leaving this desktop unchanged")
                     return False
                 self.root.xinput_select_events([
-                    (XI_ALL_MASTER_DEVICES, RAW_MASK | x11_seams.XI_BARRIER_EVENTS),
+                    (XI_ALL_MASTER_DEVICES, RAW_MASK),
                     (XI_ALL_DEVICES, 1 << XI_HIERARCHY_CHANGED),
                 ])
                 self.display.sync()
                 self._seam_controller = x11_seams.Controller(x11_seams.XlibBackend(self.display, self.root))
-            self._seam_controller.configure(monitors, resistance_px, enabled)
+            self._seam_controller.configure(monitors, resistance_px, enabled,
+                                            display_map=display_map, models=models)
             self.display.flush()
             return True
         except Exception:
@@ -463,11 +461,6 @@ class _Connection:
                     LOGGER.exception("Could not remove X11 seam barriers after setup failed")
                 self._seam_controller = None
             return False
-
-    def handle_seam_event(self, event: tuple) -> None:
-        if self._seam_controller is not None:
-            self._seam_controller.handle(event)
-
 
 class Hooks:
     """The listener, the grab and the thread that owns both, with capture_win.Hooks' callbacks:
@@ -519,14 +512,14 @@ class Hooks:
         and never block."""
         self._predicate = predicate
 
-    def configure_seams(self, monitors, resistance_px: int) -> None:
+    def configure_seams(self, monitors, resistance_px: int, display_map=None, models=()) -> None:
         """Enable X11 internal-monitor seam holds using X root-pixel rectangles.
 
-        Call again when the monitor layout or crossing resistance changes. Barriers are managed
-        on the capture thread, and are suspended while a peer is driving this machine.
+        Live providers are read on the capture thread, so hot-plug and changes to armed zones take
+        effect together with the existing pause and redirect state.
         """
         with self._seam_lock:
-            self._seam_config = (tuple(monitors), max(0, int(resistance_px)))
+            self._seam_config = (monitors, max(0, int(resistance_px)), display_map, models)
 
     @property
     def grabbed(self) -> bool:
@@ -640,7 +633,14 @@ class Hooks:
         if config is None:
             return
         try:
-            configure(config[0], config[1], enabled=enabled)
+            monitors, resistance, display_map, models = config
+            if callable(monitors):
+                monitors = monitors()
+            if callable(display_map):
+                display_map = display_map()
+            if callable(models):
+                models = models()
+            configure(monitors, resistance, enabled=enabled, display_map=display_map, models=models)
         except Exception:
             LOGGER.exception("Could not update X11 seam barriers; disabling them")
             try:
@@ -760,11 +760,7 @@ class Hooks:
 
     def _handle(self, event: tuple) -> None:
         kind = event[0]
-        if kind == "barrier":
-            handle = getattr(self._connection, "handle_seam_event", None)
-            if callable(handle):
-                handle(event)
-        elif kind == "raw":
+        if kind == "raw":
             _, evtype, detail, sourceid, flags, raw, master, sequence = event
             if self.drop_injected and sourceid in self._xtest:
                 return

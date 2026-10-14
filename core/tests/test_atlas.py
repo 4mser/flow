@@ -3,9 +3,130 @@ import math
 import unittest
 
 from core import settings_sync, ways
+from core.tests.crossing_harness import per_screen_layout
 
 
 class AtlasTests(unittest.TestCase):
+    def test_taller_a_display_keeps_both_contacts_that_share_its_end_third(self):
+        held = {"machine_id": "A", "peers": [{"id": "B", "port": 24820, "side": ""}], "zones": []}
+        layout = {
+            "A": {"x": 100, "y": 0, "w": 200, "h": 120, "displays": {
+                "a1": {"x": 0, "y": 0, "w": 100, "h": 120},
+                "a0": {"x": 100, "y": 0, "w": 100, "h": 100},
+            }},
+            "B": {"x": 0, "y": 0, "w": 100, "h": 200, "displays": {
+                "b0": {"x": 0, "y": 0, "w": 100, "h": 100},
+                "b1": {"x": 0, "y": 100, "w": 100, "h": 100},
+            }},
+        }
+
+        result = ways.compile_layout(held, layout, now=10)
+
+        routes = {(zone.get("display"), zone.get("target_display"), zone["kind"])
+                  for zone in result["settings"]["zones"] if zone.get("side") == "left"}
+        self.assertIn(("a1", "b1", "part"), routes)
+
+    def test_per_screen_contact_zones_keep_only_the_shared_span(self):
+        own, other = "own", "other"
+        held = {"machine_id": own, "peers": [{"id": other, "port": 24820, "side": "right"}], "zones": []}
+        layout = {
+            own: {"x": 0, "y": 0, "w": 100, "h": 100,
+                  "displays": {"source": {"x": 0, "y": 0, "w": 100, "h": 100}}},
+            other: {"x": 100, "y": 0, "w": 100, "h": 125,
+                    "displays": {"above": {"x": 0, "y": 0, "w": 100, "h": 25},
+                                 "target": {"x": 0, "y": 25, "w": 100, "h": 100}}},
+        }
+
+        result = ways.compile_layout(held, layout, now=10)
+
+        zone = next(zone for zone in result["settings"]["zones"] if zone.get("target_display") == "target")
+        self.assertEqual(zone["contact_span"], [0.25, 1.0])
+        self.assertEqual(zone["target_span"], [0.0, 0.75])
+
+    def test_per_screen_aba_below_compiles_on_both_machines(self):
+        def routes(result):
+            return {(zone["kind"], zone.get("display"), zone.get("side"), zone.get("corner"),
+                     zone.get("target_display"), zone.get("target_side"), tuple(zone.get("parts", ())))
+                    for zone in result["settings"]["zones"]}
+
+        cases = (
+            ("equal displays", {}, "right", "left",
+             {("edge", "0", "right", None, "0", "left", ()),
+              ("corner", "0", "right", "bottom_right", "1", "left", ()),
+              ("edge", "1", "left", None, "0", "right", ()),
+              ("corner", "1", "left", "bottom_left", "1", "right", ())},
+             {("edge", "0", "left", None, "0", "right", ()),
+              ("edge", "0", "right", None, "1", "left", ()),
+              ("corner", "1", "left", "top_left", "0", "right", ()),
+              ("corner", "1", "right", "top_right", "1", "left", ())}),
+            ("mixed logical display sizes", {"a_sizes": ((120, 100), (150, 100)),
+                                             "b_sizes": ((100, 100), (130, 90))}, "right", "left",
+             {("edge", "0", "right", None, "0", "left", ()),
+              ("corner", "0", "right", "bottom_right", "1", "left", ()),
+              ("edge", "1", "left", None, "0", "right", ()),
+              ("part", "1", "bottom", None, "1", "top", ("start",))},
+             {("edge", "0", "left", None, "0", "right", ()),
+              ("edge", "0", "right", None, "1", "left", ()),
+              ("corner", "1", "left", "top_left", "0", "right", ()),
+              ("part", "1", "top", None, "1", "bottom", ("end",))}),
+            ("B1 offset left", {"b1_x": 80}, "right", "left",
+             {("edge", "0", "right", None, "0", "left", ()),
+              ("part", "0", "bottom", None, "1", "top", ("end",)),
+              ("edge", "1", "left", None, "0", "right", ())},
+             {("edge", "0", "left", None, "0", "right", ()),
+              ("edge", "0", "right", None, "1", "left", ()),
+              ("part", "1", "top", None, "0", "bottom", ("start",))}),
+            ("B1 offset right", {"b1_x": 120}, "right", "left",
+             {("edge", "0", "right", None, "0", "left", ()),
+              ("edge", "1", "left", None, "0", "right", ()),
+              ("part", "1", "bottom", None, "1", "top", ("start",))},
+             {("edge", "0", "left", None, "0", "right", ()),
+              ("edge", "0", "right", None, "1", "left", ()),
+              ("part", "1", "top", None, "1", "bottom", ("end",))}),
+        )
+        for label, kwargs, side_a, side_b, zones_a, zones_b in cases:
+            with self.subTest(layout=label):
+                tiles = per_screen_layout(A, B, **kwargs)
+                settings_a = {"machine_id": A, "peers": [{"id": B, "port": 24820, "side": ""}], "zones": []}
+                settings_b = {"machine_id": B, "peers": [{"id": A, "port": 24820, "side": ""}], "zones": []}
+                from_a = ways.compile_layout(settings_a, tiles, now=10)
+                from_b = ways.compile_layout(settings_b, tiles, now=10)
+
+                self.assertTrue(from_a["accepted"])
+                self.assertTrue(from_b["accepted"])
+                self.assertEqual(from_a["settings"]["peers"][0]["side"], side_a)
+                self.assertEqual(from_b["settings"]["peers"][0]["side"], side_b)
+                self.assertEqual(routes(from_a), zones_a)
+                self.assertEqual(routes(from_b), zones_b)
+
+    def test_shifted_b1_keeps_the_machine_tile_scale_and_moves_only_its_display(self):
+        for offset in (80, 120):
+            with self.subTest(b1_offset=offset):
+                tile = per_screen_layout(A, B, b1_x=offset)[B]
+                frames = {frame["display"]: frame for frame in ways._display_frames(tile)}
+                self.assertEqual((tile["x"], tile["w"]), (100, 100))
+                self.assertEqual((frames["0"]["x"], frames["0"]["w"]), (100, 100))
+                self.assertEqual((frames["1"]["x"], frames["1"]["w"]), (offset, 100))
+
+    def test_per_screen_zones_include_both_aba_edges_and_b1_corner_routes(self):
+        tiles = per_screen_layout(A, B)
+        settings_a = {"machine_id": A, "peers": [{"id": B, "port": 24820, "side": ""}], "zones": []}
+        settings_b = {"machine_id": B, "peers": [{"id": A, "port": 24820, "side": ""}], "zones": []}
+        from_a = ways.compile_layout(settings_a, tiles, now=10)["settings"]["zones"]
+        from_b = ways.compile_layout(settings_b, tiles, now=10)["settings"]["zones"]
+        a_edges = {(zone.get("display"), zone.get("side"), zone.get("target_display"), zone.get("target_side"))
+                   for zone in from_a if zone["kind"] == "edge"}
+        b_edges = {(zone.get("display"), zone.get("side"), zone.get("target_display"), zone.get("target_side"))
+                   for zone in from_b if zone["kind"] == "edge"}
+        self.assertEqual(a_edges, {("0", "right", "0", "left"), ("1", "left", "0", "right")})
+        self.assertEqual(b_edges, {("0", "left", "0", "right"), ("0", "right", "1", "left")})
+        self.assertEqual({(zone.get("display"), zone.get("corner"), zone.get("target_display"), zone.get("target_side"))
+                          for zone in from_a if zone["kind"] == "corner"},
+                         {("0", "bottom_right", "1", "left"), ("1", "bottom_left", "1", "right")})
+        self.assertEqual({(zone.get("display"), zone.get("corner"), zone.get("target_display"), zone.get("target_side"))
+                          for zone in from_b if zone["kind"] == "corner"},
+                         {("1", "top_left", "0", "right"), ("1", "top_right", "1", "left")})
+
     def test_layout_compile_edge_part_gap_and_corner(self):
         settings = self.settings(A)
         layout = self.picture(settings, A, self.tile(160, 0, 160, 100))
@@ -20,7 +141,9 @@ class AtlasTests(unittest.TestCase):
         result = ways.compile_layout(settings, self.picture(settings, A, self.tile(160, 67, 160, 33)), now=10)
         self.assertEqual(result["tiles"][A]["state"], "part")
         self.assertEqual(ways.ways(result["settings"], A)["parts"], ["start", "middle", "end"])
-        self.assertEqual(result["settings"]["zones"], [{"peer": A, "kind": "part", "parts": ["end"], "side": "right"}])
+        self.assertEqual(result["settings"]["zones"], [{"peer": A, "kind": "part", "parts": ["end"],
+                                                         "side": "right", "contact_span": [0.67, 1.0],
+                                                         "target_span": [0.0, 1.0]}])
 
         settings = self.settings(A)
         result = ways.compile_layout(settings, self.picture(settings, A, self.tile(160, 20, 160, 10)), now=10)
@@ -41,8 +164,10 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(ways.ways(result["settings"], A)["parts"], ["start", "middle", "end"])
         self.assertEqual(ways.ways(result["settings"], B)["parts"], ["start", "middle", "end"])
         self.assertEqual(result["settings"]["zones"], [
-            {"peer": A, "kind": "part", "parts": ["start"], "side": "right"},
-            {"peer": B, "kind": "part", "parts": ["end"], "side": "right"},
+            {"peer": A, "kind": "part", "parts": ["start"], "side": "right",
+             "contact_span": [0.0, 0.33], "target_span": [0.0, 1.0]},
+            {"peer": B, "kind": "part", "parts": ["end"], "side": "right",
+             "contact_span": [0.67, 1.0], "target_span": [0.0, 1.0]},
         ])
         self.assertEqual(result["tiles"][A]["state"], "part")
         self.assertEqual(result["tiles"][B]["state"], "part")

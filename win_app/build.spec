@@ -23,12 +23,21 @@ analysis = Analysis(
     noarchive=False,
 )
 
+# Windows 10/11 provide the UCRT and ApiSet stubs in the OS. Do not bundle copies PyInstaller
+# finds in third-party runtimes; keep Qt's versioned ICU DLLs if a future PySide build needs them.
+excluded_binaries = {"ucrtbase.dll"}
+filtered_binaries = [
+    b for b in analysis.binaries
+    if b[0].lower() not in excluded_binaries
+    and not b[0].lower().startswith("api-ms-win-")
+]
+
 python_archive = PYZ(analysis.pure)
 
 executable = EXE(
     python_archive,
     analysis.scripts,
-    analysis.binaries,
+    filtered_binaries,
     analysis.datas,
     [],
     name="Beamer",

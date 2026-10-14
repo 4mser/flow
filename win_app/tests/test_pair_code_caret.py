@@ -193,6 +193,36 @@ class PairCodeCaretTests(unittest.TestCase):
         finally:
             code.setFont(original_font)
 
+    def test_pasting_digits_with_separators_keeps_digits_and_places_caret_at_next_digit(self):
+        code = self.sheet.code
+        for raw, expected_text, expected_caret in (
+            ("123-456", "123456", 6),
+            ("123–456", "123456", 6),
+            ("123 456", "123456", 6),
+            ("12-3", "123", 3),
+            ("123-456-789", "123456", 6),
+        ):
+            with self.subTest(raw=raw):
+                code.clear()
+                self.app.clipboard().setText(raw)
+                code.paste()
+                self.app.processEvents()
+                self.assertEqual(code.text(), expected_text)
+                self.assertEqual(code.cursorPosition(), expected_caret)
+
+    def test_typing_space_or_hyphen_mid_code_does_not_move_caret_to_end(self):
+        from PySide6.QtTest import QTest
+        code = self.sheet.code
+        for separator in (" ", "-"):
+            with self.subTest(separator=separator):
+                code.setText("1234")
+                code.setCursorPosition(2)
+                self.app.processEvents()
+                QTest.keyClicks(code, separator)
+                self.app.processEvents()
+                self.assertEqual(code.text(), "1234")
+                self.assertEqual(code.cursorPosition(), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

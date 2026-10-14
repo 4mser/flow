@@ -37,7 +37,8 @@ class HideAddressesWindowTests(unittest.TestCase):
             self.window = kvm_bridge_app.ControlWindow.alloc().initWithController_settingsStore_logger_(
                 WakingController(store.load(), logger=logger), store, logger
             )
-        self.service = mock.Mock(machines=mock.Mock(return_value=[]), error=None, code=None)
+        self.service = mock.Mock(machines=mock.Mock(return_value=[]), error=None, code=None,
+                                 nearby_status={"state": "inactive"})
         self.window.panel.service = self.service
 
     def tearDown(self):

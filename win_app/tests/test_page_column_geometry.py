@@ -3,6 +3,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
@@ -27,6 +28,21 @@ class PageColumnGeometryTests(unittest.TestCase):
         for _ in range(5):
             QCoreApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
             self.app.processEvents()
+
+    def test_fit_does_not_reset_an_unchanged_width(self):
+        scroll = QWidget()
+        column = QWidget()
+        scroll.resize(900, 600)
+        target = round(kvm.page_column_width(scroll.width() - 16))
+        column.setFixedWidth(target)
+        fit = kvm.ColumnFit(scroll, column)
+        with mock.patch.object(column, "setFixedWidth", wraps=column.setFixedWidth) as set_width:
+            fit.fit()
+        set_width.assert_not_called()
+        scroll.resize(1000, 600)
+        with mock.patch.object(column, "setFixedWidth", wraps=column.setFixedWidth) as set_width:
+            fit.fit()
+        set_width.assert_called_once_with(round(kvm.page_column_width(scroll.width() - 16)))
 
     def test_centred_column_stays_in_document_after_hidden_page_resize(self):
         window = QWidget()

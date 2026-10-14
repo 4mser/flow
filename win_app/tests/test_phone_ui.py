@@ -30,6 +30,7 @@ def entries():
 def application(*methods, **extra):
     namespace = dict(Optional=Optional, Config=SimpleNamespace, peerlist=peerlist,
                      protocol=protocol, settings_sync=settings_sync, pages_win=pages_win,
+                     platform_parts=SimpleNamespace(WAYLAND=False),
                      Qt=SimpleNamespace(ItemDataRole=SimpleNamespace(UserRole=1)), **extra)
     namespace["TRIGGER_KEYS"] = ()
     return load_methods("win_app/kvm_bridge_win.py", "WindowsApplication", methods, namespace)()
@@ -125,6 +126,7 @@ class PhoneUiTests(unittest.TestCase):
     def test_match_choices_ignore_phone(self):
         class Model:
             def __init__(self, parent): self.items = []
+            def clear(self): self.items.clear()
             def appendRow(self, item): self.items.append(item)
 
         class Item(Control):
@@ -136,6 +138,8 @@ class PhoneUiTests(unittest.TestCase):
         app._design_states = {PHONE: {}, DESKTOP: {}}
         app._design_peer_caps = lambda: {PHONE: {"design_sync"}, DESKTOP: {"design_sync"}}
         app._shown = lambda text: text
+        app._hide_addresses = lambda: False
+        app._design_follow_signature = object()
         choice = app.design_follow_choice = Control()
         choice.setModel = lambda model: setattr(choice, "model", model)
         choice.findData = lambda value, role: 0
@@ -184,6 +188,7 @@ class PhoneUiTests(unittest.TestCase):
         app.pause_action = object()
         app.redirect_action = Control()
         app.sender = SimpleNamespace(owner=None, redirecting=False)
+        app._live = lambda peer: True
         app._refresh_tray_machines()
         self.assertEqual(set(app.machine_actions), {DESKTOP, other["id"]})
         self.assertTrue(all("phone" not in action.text() for action in app.machine_actions.values()))

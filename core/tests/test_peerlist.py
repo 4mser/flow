@@ -107,15 +107,18 @@ class AddPeerTests(unittest.TestCase):
         # (the rig and the laptop, 01-10-2026).
         held = settings(peer(A, side="left"), zones=[{"peer": A, "kind": "edge"}])
         peerlist.add_peer(held, peer(B, token="second"))
-        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "left"},
-                                         {"peer": B, "kind": "edge", "side": "bottom"}])
+        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "left",
+                                         "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0]},
+                                         {"peer": B, "kind": "edge", "side": "bottom",
+                                          "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0]}])
         self.assertEqual(ways.ways(held, B)["methods"], ["edge"])
         self.assertEqual(ways.ways(held, B)["parts"], list(ways.PARTS))
 
     def test_the_replaced_entrys_zones_go_with_it_when_it_was_matched_by_name_alone(self):
         held = settings(peer("", token="legacy", host="10.1.1.9", from_1_4=True), zones=[{"peer": "", "kind": "edge"}])
         peerlist.add_peer(held, peer(A), replaced=copy.deepcopy(held["peers"][0]))
-        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "bottom"}])
+        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "bottom",
+                                         "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0]}])
         self.assertEqual(ways.ways(held, A)["methods"], ["edge"])
 
     def test_the_machine_at_the_1_4_entrys_host_takes_over_its_side_and_zones(self):
@@ -126,7 +129,8 @@ class AddPeerTests(unittest.TestCase):
         held = settings(old, zones=[{"peer": "", "kind": "edge"}, {"peer": "", "kind": "corner", "corner": "top_left",
                                                                     "edge": "left", "off": True}])
         peerlist.add_peer(held, peer(A, token="fresh"), replaced=copy.deepcopy(old))
-        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "left"}])
+        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "left",
+                                         "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0]}])
         self.assertEqual(ways.ways(held, A)["methods"], ["edge"])
         entry = held["peers"][0]
         self.assertEqual((entry["side"], entry["side_set_at"], entry["side_by"]), ("left", 1_790_000_000, C))
@@ -136,7 +140,8 @@ class AddPeerTests(unittest.TestCase):
         old = peer("", token="legacy", platform="macos", from_1_4=True, side="left")
         held = settings(old, zones=[{"peer": "", "kind": "edge"}])
         peerlist.add_peer(held, peer(A, token="fresh"), replaced=copy.deepcopy(old))
-        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "bottom"}])
+        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "bottom",
+                                         "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0]}])
         self.assertEqual(ways.ways(held, A)["methods"], ["edge"])
         self.assertEqual(held["peers"][0]["side"], "bottom")
 
@@ -144,13 +149,15 @@ class AddPeerTests(unittest.TestCase):
         old = peer(B, token="legacy", linked=False, side="left")
         held = settings(old, zones=[{"peer": B, "kind": "edge"}])
         peerlist.add_peer(held, peer(A, token="fresh"), replaced=copy.deepcopy(old))
-        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "bottom"}])
+        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "bottom",
+                                         "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0]}])
         self.assertEqual(ways.ways(held, A)["methods"], ["edge"])
 
     def test_zones_of_a_machine_paired_again_under_its_own_id_stay(self):
         held = settings(peer(A, linked=False), zones=[{"peer": A, "kind": "edge"}])
         peerlist.add_peer(held, peer(A, token="fresh"), replaced=copy.deepcopy(held["peers"][0]))
-        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "bottom"}])
+        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "bottom",
+                                         "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0]}])
         self.assertEqual(ways.ways(held, A)["methods"], ["edge"])
         self.assertEqual(held["peers"][0]["token"], "fresh")
 
@@ -158,8 +165,10 @@ class AddPeerTests(unittest.TestCase):
         held = settings(peer(A), peer("", token="legacy", from_1_4=True), zones=[{"peer": A, "kind": "edge"}])
         peerlist.add_peer(held, peer(B), replaced=copy.deepcopy(held["peers"][1]))
         self.assertEqual(held["zones"], [
-            {"peer": A, "kind": "part", "parts": ["start"], "side": "bottom"},
-            {"peer": B, "kind": "part", "parts": ["middle", "end"], "side": "bottom"},
+            {"peer": A, "kind": "part", "parts": ["start"], "side": "bottom",
+             "contact_span": [0.0, 0.5], "target_span": [0.5, 1.0]},
+            {"peer": B, "kind": "part", "parts": ["middle", "end"], "side": "bottom",
+             "contact_span": [0.5, 1.0], "target_span": [0.0, 0.5]},
         ])
         self.assertEqual(ways.ways(held, A)["methods"], ["edge"])
         self.assertEqual(ways.ways(held, B)["methods"], ["edge"])

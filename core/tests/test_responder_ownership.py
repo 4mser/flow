@@ -13,6 +13,96 @@ from core.tests.responder_harness import B, C, D, HERE, TOKENS, Initiator, Machi
 ACCEPT, REFUSE = protocol.MSG_ACCEPT, protocol.MSG_REFUSE
 
 
+class IdleTakeover(unittest.TestCase):
+    def setUp(self):
+        self.machine = Machine([])
+        self.responder = self.machine.responder
+        self.now = 100.0
+        clock = mock.patch.object(receiver.time, "monotonic", side_effect=lambda: self.now)
+        clock.start()
+        self.addCleanup(clock.stop)
+        self.b = self.make_link(B)
+        self.c = self.make_link(C)
+        self.take(self.b, 1)
+
+    def make_link(self, peer):
+        link = mock.Mock(peer_id=peer, own_id=HERE, route=0, allow_drive=True, held={})
+        link.closed.is_set.return_value = False
+        return link
+
+    def take(self, link, route, **fields):
+        self.responder._on_focus(link, protocol.focus_v6(route, HERE, **fields))
+
+    def test_idle_owner_is_sent_home_with_the_new_driver_and_replaced_at_boundary(self):
+        self.now += 3.0
+        self.take(self.c, 1)
+        self.assertEqual(self.responder.owner, C)
+        self.b.post.assert_called_with({"type": protocol.MSG_SWITCH, "data": {
+            "route": 1, "next": protocol.id_text(B), "taken_over_by": protocol.id_text(C)}})
+        self.assertEqual(self.machine.owners, [B, None, C])
+
+    def test_owner_before_boundary_still_refuses(self):
+        self.now += 2.999
+        self.take(self.c, 1)
+        self.assertEqual(self.responder.owner, B)
+        self.c.post.assert_called_with(protocol.refuse_msg(1, "owned", other=B))
+
+    def test_valid_owner_input_refreshes_activity_but_non_owner_input_does_not(self):
+        self.now += 2.0
+        message = protocol.key_msg(protocol.MSG_KEYDOWN, "a")
+        message["data"]["seq"] = 1
+        self.responder._on_input(self.b, message)
+        self.now += 2.0
+        self.take(self.c, 1)
+        self.assertEqual(self.responder.owner, B)
+        self.responder._on_input(self.c, message)
+        self.now += 1.0
+        self.take(self.c, 2)
+        self.assertEqual(self.responder.owner, C)
+        self.assertEqual(self.b.held, {})
+        injected = self.machine.injected()
+        self.responder._on_input(self.b, message)
+        self.assertEqual(self.machine.injected(), injected)
+        self.responder._on_focus(self.b, protocol.focus_v6(2, B))
+        self.assertEqual(self.responder.owner, C)
+        self.take(self.b, 3)
+        self.b.post.assert_called_with(protocol.refuse_msg(3, "sent_home"))
+        new_input = protocol.key_msg(protocol.MSG_KEYDOWN, "b")
+        new_input["data"]["seq"] = 2
+        self.responder._on_input(self.c, new_input)
+        self.assertEqual(self.machine.injected(), [
+            ("key", "a", True), ("key", "a", False), ("key", "b", True)])
+
+    def test_malformed_owner_input_does_not_refresh_activity(self):
+        self.now += 2.0
+        self.responder._on_input(self.b, {"type": protocol.MSG_MOUSEMOVE, "data": {"seq": 1}})
+        self.now += 1.0
+        self.take(self.c, 1)
+        self.assertEqual(self.responder.owner, C)
+
+    def test_stay_does_not_refresh_idle_time_or_steal_ownership(self):
+        self.now += 2.0
+        self.take(self.b, 2, stay=True, resistance_px=120, reach=[])
+        self.now += 1.0
+        self.take(self.c, 1, stay=True, resistance_px=120, reach=[])
+        self.assertEqual(self.responder.owner, B)
+        self.take(self.c, 2)
+        self.assertEqual(self.responder.owner, C)
+
+    def test_unsupported_input_heartbeat_and_clipboard_do_not_refresh_activity(self):
+        self.b.own_caps = frozenset()
+        self.b.response_time_enabled = True
+        self.now += 2.0
+        message = protocol.gesture_msg(protocol.GESTURE_SWIPE_UP)
+        message["data"]["seq"] = 1
+        self.responder._on_input(self.b, message)
+        self.responder._on_ping(self.b, protocol.ping_msg(probe=1))
+        self.responder._on_clipboard(self.b, protocol.clipboard_msg("clipboard"))
+        self.now += 1.0
+        self.take(self.c, 1)
+        self.assertEqual(self.responder.owner, C)
+
+
 def ids(*peers):
     return [protocol.id_text(peer) for peer in peers]
 
@@ -455,6 +545,7 @@ class Zones(Case):
         self.assertEqual(self.machine.desktop.placed[-1], (0, 500))
         self.assertNotIn(("move", -200, 0), self.machine.injected())
 
+
     def test_resistance_out_of_range_is_malformed(self):
         self.refused(self.link(B), "malformed", resistance_px=1001)
 
@@ -494,6 +585,30 @@ class Zones(Case):
         self.machine.responder.rearm()
         self.push(b, (1919, 500), 200, 0)
         self.assertIsNone(b.expect(protocol.MSG_SWITCH, timeout=0.2))
+
+
+class WrapWayBack(Case):
+    sides = {B: "right"}
+    zones = [{"peer": protocol.id_text(B), "kind": "edge", "display": "main", "side": "right"}]
+
+    def test_wrap_arrival_arms_its_way_back_until_the_visit_ends(self):
+        b = self.link(B)
+        self.own(b, edge="right", offset=0.5, display="main", side="left")
+        marker = (B, "left", "main", "right")
+        self.assertIn(marker, [(peer, model.edge, model.display, model.target_side)
+                               for peer, model in self.machine.responder._armed])
+        self.machine.responder.rearm()
+        self.assertIn(marker, [(peer, model.edge, model.display, model.target_side)
+                               for peer, model in self.machine.responder._armed])
+        b.let_go()
+        self.assertTrue(wait_for(lambda: self.machine.responder.owner is None))
+        self.assertEqual(self.machine.responder._armed, [])
+
+    def test_edge_off_does_not_add_a_way_back(self):
+        self.machine.responder._zones = lambda: []
+        b = self.link(B)
+        self.own(b, edge="right", offset=0.5, display="main", side="left")
+        self.assertEqual(self.machine.responder._armed, [])
 
 
 class ZoneModels(unittest.TestCase):

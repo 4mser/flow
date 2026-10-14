@@ -186,13 +186,14 @@ class Sender:
     """What capture_portal's callbacks reach, with the sender's crossing as a threshold of pushed
     pixels, as the zone model's resistance is."""
 
-    def __init__(self, threshold=60):
+    def __init__(self, threshold=60, axis="x", sign=1):
         self.lock = threading.Lock()
         self.threshold = threshold
         self.away = False
         self.pushed = 0
         self.keys, self.mice, self.motions = [], [], []
         self.block_keys = 0.0
+        self.axis, self.sign = axis, sign
 
     def on_key(self, name, down, vk, us):
         if self.block_keys:
@@ -210,7 +211,7 @@ class Sender:
         with self.lock:
             self.motions.append((dx, dy))
             if not self.away:
-                self.pushed += dx
+                self.pushed += (dx if self.axis == "x" else dy) * self.sign
                 if self.pushed >= self.threshold:
                     self.away = True
 
@@ -221,14 +222,14 @@ class Sender:
         return found
 
 
-def start_capture(hand, sender, observer):
+def start_capture(hand, sender, observer, models=None):
     import capture_portal
     from core import return_edge
 
     observer.close()
     hooks = capture_portal.Hooks(sender.on_key, sender.on_mouse, sender.on_motion)
     hooks.grab_while(lambda: sender.away)
-    hooks.barriers_from(lambda: [return_edge.ReturnEdge("right")])
+    hooks.barriers_from(lambda: models if models is not None else [return_edge.ReturnEdge("right")])
     homes = []
     hooks.on_home = lambda: homes.append(True) or setattr(sender, "away", False)
     failures_seen = []
@@ -238,6 +239,87 @@ def start_capture(hand, sender, observer):
     ok = wait(lambda: hooks._session is not None and hooks._session.enabled, timeout=15)
     observer.launch()
     return hooks, ok, homes, failures_seen
+
+
+def proof_two_monitor_barriers(hand, observer, layout):
+    """Exercise display-scoped real portal barriers and Mutter's cancel shortcut."""
+    import capture_portal
+    import desktop_portal
+    from core import return_edge
+
+    from PySide6.QtGui import QGuiApplication
+
+    app = QGuiApplication.instance()
+    screens = [screen.geometry() for screen in app.screens()] if app is not None else []
+    rects = [return_edge.Rect(r.x(), r.y(), r.width(), r.height()) for r in screens]
+    print(f"NOTE Qt screen geometry for {layout}: {rects}", flush=True)
+    check(f"Mutter exposes two virtual screens for {layout}", len(rects) == 2, rects)
+    if len(rects) != 2:
+        return
+
+    if layout == "stacked":
+        a = min(rects, key=lambda rect: (rect.y, rect.x))
+        b = max(rects, key=lambda rect: (rect.y, rect.x))
+    else:
+        a = min(rects, key=lambda rect: (rect.x, rect.y))
+        b = max(rects, key=lambda rect: (rect.x, rect.y))
+    display_a = str(rects.index(a))
+    desktop_portal.refresh_qt_screens()
+
+    sender = Sender(axis="y", sign=-1)
+    model = return_edge.ReturnEdge("top", display=display_a)
+    hooks, enabled, _homes, _problems = start_capture(hand, sender, observer, [model])
+    try:
+        zones = list(hooks._zones)
+        desktop_portal.refresh_qt_screens()
+        display_map = desktop_portal.display_map()
+        check(f"InputCapture exposes two portal zones for {layout}", len(zones) == 2, zones)
+        check("Qt displays match both portal geometries", len(display_map) == 2 and
+              sorted((r.x, r.y, r.width, r.height) for r in display_map.values()) ==
+              sorted((r.x, r.y, r.width, r.height) for r in zones), display_map)
+        expected = capture_portal.barriers([model], zones, display_map=display_map)
+        check("only display A receives its top barrier", enabled and len(zones) == 2 and
+              len(display_map) == 2 and hooks._placed == expected and
+              len(expected) == 1 and expected[0][0] == "top",
+              f"enabled={enabled} placed={hooks._placed} expected={expected}")
+        check("no display key was rejected by geometry matching", not hooks._unmatched_displays_logged,
+              hooks._unmatched_displays_logged)
+
+        bx = b.x + b.width // 2
+        by = b.y + min(12, max(1, b.height // 8))
+        hand.to(bx, by)
+        for _ in range(12):
+            hand.move(0, -10)
+            time.sleep(0.02)
+        time.sleep(0.2)
+        check("pushing the top of display B stays on this machine", not sender.away and not hooks.holding,
+              f"away={sender.away} holding={hooks.holding} position={desktop_portal.cursor_position()}")
+
+        ax, ay = a.x + a.width // 2, a.y + min(12, max(1, a.height // 8))
+        hand.to(ax, ay)
+        for _ in range(12):
+            hand.move(0, -10)
+            time.sleep(0.02)
+        crossed = wait(lambda: sender.away and hooks.holding)
+        check("pushing the top of display A crosses to the peer", crossed,
+              f"away={sender.away} holding={hooks.holding} walls={hooks._walls}")
+        if crossed:
+            hand.tap(125, 42, ESC)
+            rearmed = wait(lambda: hooks._session is not None and hooks._session.enabled and not hooks.holding,
+                           timeout=4)
+            check("the Mutter cancel shortcut re-arms the capture session", rearmed,
+                  f"enabled={getattr(hooks._session, 'enabled', None)} walls={hooks._walls}")
+            sender.away = False
+            hand.to(ax, ay)
+            for _ in range(12):
+                hand.move(0, -10)
+                time.sleep(0.02)
+            crossed_again = wait(lambda: sender.away and hooks.holding)
+            check("display A crosses again after the cancel shortcut", crossed_again,
+                  f"away={sender.away} holding={hooks.holding} walls={hooks._walls}")
+    finally:
+        hooks.stop()
+        sender.away = False
 
 
 def push_to_edge(hand, y=400, pushes=12, step=10):
@@ -439,6 +521,18 @@ def proof_injection(hand, observer):
     check("keys and text type as the layout has them", typed and keys == expect, str(keys))
 
     observer.mark()
+    # A letter straight after Caps Lock, as a sender sends one: in the new lock's case (KWin typed
+    # the old one before 1.5.3; 14-10-2026).
+    for name in ("caps_lock", "B", "caps_lock", "c"):
+        inject_portal.inject_key(name, True, name.lower() if len(name) == 1 else None)
+        inject_portal.inject_key(name, False, name.lower() if len(name) == 1 else None)
+    expect = [("Caps_Lock", True), ("Caps_Lock", False), ("B", True), ("B", False),
+              ("Caps_Lock", True), ("Caps_Lock", False), ("c", True), ("c", False)]
+    typed = wait(lambda: len(observer.keys()) >= len(expect), timeout=3)
+    check("a letter right after Caps Lock types in the new lock's case", typed and observer.keys() == expect,
+          str(observer.keys()))
+
+    observer.mark()
     inject_portal.inject_key("é", True)
     inject_portal.inject_key("é", False)
     time.sleep(0.4)
@@ -540,6 +634,12 @@ def main():
     import logging
 
     logging.basicConfig(level=logging.INFO, format="LOG %(name)s %(levelname)s %(message)s")
+    layout = os.environ.get("BEAMER_MONITOR_LAYOUT", "single")
+    qt_app = None
+    if layout in ("side-by-side", "stacked"):
+        from PySide6.QtGui import QGuiApplication
+
+        qt_app = QGuiApplication.instance() or QGuiApplication([])
     hand = Hand()
     hand.tap(ESC)  # out of the Overview the headless shell starts in
     # The portal and its GNOME back end start on first use, slowly: woken here, so the first dialog
@@ -550,11 +650,16 @@ def main():
     time.sleep(1.0)
     observer = Observer()
     try:
-        proof_injection(hand, observer)
-        proof_capture(hand, observer)
-        proof_killed_process_lets_go(hand, observer)
+        if layout in ("side-by-side", "stacked"):
+            proof_two_monitor_barriers(hand, observer, layout)
+        else:
+            proof_injection(hand, observer)
+            proof_capture(hand, observer)
+            proof_killed_process_lets_go(hand, observer)
     finally:
         observer.close()
+        if qt_app is not None:
+            qt_app.quit()
 
 
 if __name__ == "__main__":

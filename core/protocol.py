@@ -1109,8 +1109,12 @@ def read_switch(message):
         if (not isinstance(display, str) or not display.isascii() or not _DISPLAY_KEY.fullmatch(display)
                 or side not in EDGES):
             return None
-    return {"route": route, "next": next_id, "edge": edge, "offset": offset,
-            "display": display, "side": side}
+    result = {"route": route, "next": next_id, "edge": edge, "offset": offset,
+              "display": display, "side": side}
+    taken_over_by = read_id(data.get("taken_over_by"))
+    if taken_over_by is not None:
+        result["taken_over_by"] = taken_over_by
+    return result
 
 
 def ack_v6(seq: int, held_us: int, locked: bool = False) -> dict:

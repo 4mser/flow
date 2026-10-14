@@ -1581,7 +1581,7 @@ class Sidebar(QWidget):
         self.setProperty("vernier", "sidebar")
         self._on_select = on_select
         self._selected = ""
-        keyboard_navigation()
+        self._last_keyboard_mode = keyboard_navigation().active
         app = QApplication.instance()
         app.installEventFilter(self)
         focus_connection = app.focusChanged.connect(self._focus_changed)
@@ -1676,11 +1676,16 @@ class Sidebar(QWidget):
     def _update_rings(self):
         if not isValid(self):
             return
+        keyboard_mode = self.keyboard_mode
         for key, button in self._buttons.items():
             if not isValid(button):
                 continue
-            button._keyboard_ring = self.keyboard_mode and key == self._selected
+            button._keyboard_ring = keyboard_mode and key == self._selected
             button.update()
+        if keyboard_mode != self._last_keyboard_mode:
+            for tile in self.window().findChildren(_Tile):
+                tile.outline.update()
+            self._last_keyboard_mode = keyboard_mode
         focused = QApplication.focusWidget()
         tiles = (getattr(self, "_ring_focus", None), focused)
         self._ring_focus = focused
@@ -1697,6 +1702,9 @@ class Sidebar(QWidget):
                 new.clearFocus()
             elif selected is not None and isValid(selected) and new is not selected:
                 selected.setFocus(Qt.FocusReason.TabFocusReason)
+        for widget in (old, new):
+            if isinstance(widget, _Tile) and isValid(widget):
+                widget.outline.update()
         self._update_rings()
 
     def _pointer_select(self, key):

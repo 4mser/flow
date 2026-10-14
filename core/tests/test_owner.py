@@ -274,6 +274,11 @@ class ReachTests(OwnerCase):
 
 
 class SwitchTests(OwnerCase):
+    def test_a_takeover_sends_input_home_with_the_new_driver(self):
+        self.take("B")
+        actions = self.switch("B", "A", taken_over_by="C")
+        self.assertEqual(moved(actions), Moved(None, "B", "taken_over", other="C"))
+
     def test_a_switch_naming_the_owner_brings_the_input_home_landing_where_it_says(self):
         self.take("B")
         actions = self.switch("B", "A", edge="right", offset=0.25)

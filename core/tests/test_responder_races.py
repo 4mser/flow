@@ -53,17 +53,42 @@ class TheClipboardAndTheOwnerCallbacks(Case):
         self.assertTrue(wait_for(lambda: len(self.machine.owners) == 3))
         self.assertEqual(self.machine.owners, [B, None, C])
 
-    def test_a_clipboard_is_never_set_after_its_senders_ownership_ended(self):
+    def test_a_clipboard_waiting_behind_a_slow_write_is_not_set_once_its_senders_ownership_ended(self):
+        b = self.link(B)
+        self.own(b)
+        self.machine.clipboard.slow_set = 0.4
+        b.send(protocol.clipboard_msg("first"))
+        b.send(protocol.clipboard_msg("second"))
+        time.sleep(0.1)
+        self.machine.settings.peer(TOKENS[B])["allow_drive"] = False
+        self.machine.responder.peers_changed()
+        self.assertTrue(wait_for(lambda: ("owner", None) in self.machine.events))
+        # The first write was already under way and cannot be taken back; the second had not begun.
+        self.assertTrue(wait_for(lambda: ("set", "first") in self.machine.events))
+        time.sleep(0.6)
+        self.assertNotIn(("set", "second"), self.machine.events)
+
+    def test_a_let_go_during_a_slow_write_does_not_send_the_owners_own_clipboard_back(self):
         b = self.link(B)
         self.own(b)
         self.machine.clipboard.slow_set = 0.4
         b.send(protocol.clipboard_msg("from b"))
         time.sleep(0.1)
-        self.machine.settings.peer(TOKENS[B])["allow_drive"] = False
-        self.machine.responder.peers_changed()
-        self.assertTrue(wait_for(lambda: ("owner", None) in self.machine.events))
-        events = [e for e in self.machine.events if e in (("set", "from b"), ("owner", None))]
-        self.assertEqual(events, [("set", "from b"), ("owner", None)])
+        b.let_go()
+        self.assertTrue(wait_for(lambda: self.machine.responder.owner is None))
+        self.assertTrue(wait_for(lambda: ("set", "from b") in self.machine.events))
+        self.assertIsNone(b.expect(protocol.MSG_CLIPBOARD, timeout=1.0))
+
+    def test_a_clipboard_write_that_blocks_for_seconds_does_not_delay_the_next_input_acknowledgement(self):
+        b = self.link(B)
+        self.own(b)
+        self.machine.clipboard.slow_set = 3.0
+        b.send(protocol.clipboard_msg("slow"))
+        started = time.monotonic()
+        self.assertIsNotNone(b.acked(b.move(5, 0), timeout=1.0))
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertEqual(self.machine.clipboard.set_calls, [])
+        self.assertTrue(wait_for(lambda: self.machine.clipboard.set_calls == [("slow", None)], timeout=5.0))
 
 
 class ALargeFrameToASlowReader(Case):

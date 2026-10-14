@@ -178,6 +178,8 @@ def migrate_legacy_task(run: Runner = _run, user: Optional[str] = None) -> None:
     owner = root.findtext("t:Principals/t:Principal/t:UserId", "", ns)
     # schtasks can export the principal as a SID rather than its account name.
     if owner.casefold() != user.casefold():
+        if not owner.casefold().startswith("s-1-"):
+            return
         try:
             if owner.casefold() != _user_sid(user).casefold():
                 return

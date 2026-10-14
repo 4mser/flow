@@ -451,6 +451,26 @@ class OnwardTests(unittest.TestCase):
         self.assertEqual(self.rig.desktop.placed, [(0, 540)])
         self.assertEqual(self.rig.arrivals, [("left", 0, 540)])
 
+    def test_a_takeover_comes_home_and_names_the_new_driver(self):
+        message = protocol.switch_v6(self.sender._owner.route, HERE)
+        message["data"]["taken_over_by"] = protocol.id_text(C)
+        old_models = [model for _, model in self.sender._models]
+        for model in old_models:
+            model.armed = False
+        self.rig.inbound(B, message)
+        self.assertFalse(self.sender.redirecting)
+        self.assertIsNone(self.sender._pin_point)
+        self.assertEqual(self.rig.alerts, ["Other took over Mac"])
+        self.assertEqual(self.rig.redirects[-1], False)
+        self.assertTrue(self.sender._models)
+        self.assertTrue(all(model.armed and model not in old_models for _, model in self.sender._models))
+
+    def test_a_takeover_by_an_unknown_machine_uses_the_fallback_name(self):
+        message = protocol.switch_v6(self.sender._owner.route, HERE)
+        message["data"]["taken_over_by"] = protocol.id_text(bytes([99]) * 16)
+        self.rig.inbound(B, message)
+        self.assertEqual(self.rig.alerts, ["Another machine took over Mac"])
+
     def test_the_log_names_the_edge_input_lands_at_both_ways(self):
         with self.assertLogs(sender.LOGGER, "INFO") as said:
             self.switch(C, edge="right", offset=0.25)

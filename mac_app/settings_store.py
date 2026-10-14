@@ -48,7 +48,7 @@ MOVED_CROSSING = ("methods", "edge", "edge_parts", "corner", "arrangement_set_at
 ZONE_KINDS = tuple(method for method in METHODS if method != "shortcut")
 # Fields settings.json has that Config has no name for; everything else in it is Config's own.
 SETTINGS_ONLY = ("schema", "machine_id", "name", "port", "shortcut", "migrated_token_sha256", "peers", "zones", "crossing",
-                 "layout", "layout_set_at", "layout_by", "show_in_dock")
+                 "layout", "layout_set_at", "layout_by", "show_in_dock", "show_in_tray")
 PEER_DEFAULTS = {
     "id": "", "name": "", "platform": "", "token": "", "host": "", "port": 0, "hw": "", "send": True,
     "allow_drive": True, "in_use": True, "side": "", "side_set_at": 0, "side_by": "", "paired_with": [], "paired_at": 0,
@@ -109,6 +109,7 @@ def editable_default_config():
         allow_windows_to_drive=True,
         check_updates=True,
         hide_addresses=False,
+        hide_idle_pointer=True,
         same_on_both=False,
         same_set_at=0,
         same_groups=[],
@@ -146,6 +147,7 @@ def config_to_raw(cfg):
         "allow_windows_to_drive": cfg.allow_windows_to_drive,
         "check_updates": cfg.check_updates,
         "hide_addresses": cfg.hide_addresses,
+        "hide_idle_pointer": cfg.hide_idle_pointer,
         "same_on_both": cfg.same_on_both,
         "same_set_at": cfg.same_set_at,
         "same_groups": list(cfg.same_groups),
@@ -570,6 +572,7 @@ class SettingsStore:
             "layout_by": "",
             "same_groups": [],
             "show_in_dock": True,
+            "show_in_tray": True,
         }
 
     def _read(self):
@@ -821,6 +824,7 @@ class SettingsStore:
             ("shortcut_arrival_style", effects.SWITCH_STYLES),
             ("effect_length", tuple(value for value, _name in effects.LENGTHS)),
             ("effect_size", tuple(value for value, _name in effects.SIZES)),
+            ("frame_rate", tuple(value for value, _name, _divisor in effects.FRAME_RATES)),
         )
         for name, allowed in choices:
             if crossing[name] not in allowed:

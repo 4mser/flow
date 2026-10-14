@@ -15,7 +15,9 @@ the device and whose locks and group it reports as they change. A character is t
 with two differences. The desktop's keymap cannot be changed, so a character the layout has no key
 for is not typed (logged once). And a held key is repeated by the app it reaches, not the server,
 so a key typed with Shift changed around it is let go at once and each of the peer's repeats types
-it again.
+it again. The desktop reports a lock's new state only after the lock key is let go, a moment later,
+so input after a Caps Lock or Num Lock Beamer plays waits for that report (LOCK_SECONDS at most): a
+letter planned before it is typed for the old lock, Shift and all (KWin 6.7.5, 14-10-2026).
 
 The pointer is moved with libei's absolute pointer where the desktop offers one (GNOME does), at
 a position Beamer keeps in desktop_portal, since no Wayland app can ask where the pointer is."""
@@ -57,6 +59,10 @@ REQUEST_SECONDS = 10.0
 RETRY_SECONDS = 5.0
 # How long the desktop has, once connected, to offer the devices input waits for.
 DEVICE_SECONDS = 2.0
+# How long input after a lock key Beamer played waits for the desktop to report the new locks.
+LOCK_SECONDS = 0.15
+# Caps Lock and Num Lock, as evdev numbers them.
+LOCK_KEYS = (58, 69)
 # Input waiting for the session beyond this is dropped, not queued without end.
 MAX_PENDING = 512
 # How long an app pasting Beamer's clipboard has to take it.
@@ -123,11 +129,12 @@ def wayland_steps(steps: list) -> List[Tuple[int, bool]]:
 def scroll_steps(dy: float, dx: float, mode: str, carry: List[float]) -> Tuple[str, float, float]:
     """One scroll message as libei's: ("discrete", x, y) in 120ths of a click for the wheel's lines,
     the fraction carried in `carry` ([y, x]); ("pixels", x, y) for a pixel scroll. The wire's y is
-    positive away from the hand, libei's positive down."""
+    positive away from the hand, libei's positive down; the wire's x is positive left, libei's
+    positive right."""
     if mode == "pixel":
-        return "pixels", float(dx), -float(dy)
+        return "pixels", -float(dx), -float(dy)
     carry[0] += float(dy) * DISCRETE_PER_CLICK
-    carry[1] += float(dx) * DISCRETE_PER_CLICK
+    carry[1] -= float(dx) * DISCRETE_PER_CLICK
     whole_y, whole_x = int(carry[0]), int(carry[1])
     carry[0] -= whole_y
     carry[1] -= whole_x
@@ -200,6 +207,7 @@ class Remote:
         self.layout: Optional[WaylandLayout] = None
         self.group = 0
         self.locks = 0
+        self._locks_due: Optional[float] = None  # set while the desktop's word on a lock key is awaited
         self.state = KeyState()
         self.pressed: Set[int] = set()
         self.buttons: Dict[int, object] = {}
@@ -417,7 +425,12 @@ class Remote:
 
     def _input_ready(self) -> bool:
         """Whether input can be played: a keyboard and a pointer are up, or the desktop has had
-        DEVICE_SECONDS to offer them and what is up is all there will be."""
+        DEVICE_SECONDS to offer them and what is up is all there will be; and no lock key's new
+        state is still awaited."""
+        if self._locks_due is not None:
+            if time.monotonic() < self._locks_due:
+                return False
+            self._locks_due = None
         if self._with(CAP_KEYBOARD) is not None and (self._with(CAP_POINTER_ABSOLUTE) or self._with(CAP_POINTER)):
             return True
         return self._eis_at is not None and time.monotonic() - self._eis_at >= DEVICE_SECONDS
@@ -439,11 +452,14 @@ class Remote:
         if not self._held or not self._input_ready():
             return
         held, self._held = self._held, []
-        for work in held:
+        for index, work in enumerate(held):
             try:
                 work(self)
             except Exception:
                 LOGGER.exception("Could not play an input from the peer")
+            if self._locks_due is not None:
+                self._held = held[index + 1:] + self._held
+                return
 
     def _end(self) -> None:
         desktop_portal.set_mover(None)
@@ -519,9 +535,11 @@ class Remote:
             if event[1] in self._devices:
                 self._devices.remove(event[1])
         elif kind == "modifiers" and self.layout is not None:
-            _device, _depressed, _latched, locked, group = event[1:6]
+            _device, depressed, _latched, locked, group = event[1:6]
             self.group = group
             self.locks = self.layout.keymap.core_mods(locked) & (LOCK_MASK | NUM_LOCK_MASK)
+            if not self.layout.keymap.core_mods(depressed) & (LOCK_MASK | NUM_LOCK_MASK):
+                self._locks_due = None  # the word on the lock key's release, not its press
         elif kind == "disconnect":
             raise _Problem(ENDED.format(detail="its input connection closed"))
 
@@ -558,6 +576,8 @@ class Remote:
                 continue
             self.ei.key(device, code, down)
             self.ei.frame(device)
+            if code in LOCK_KEYS and not down:
+                self._locks_due = time.monotonic() + LOCK_SECONDS
 
     def move_by(self, dx: float, dy: float) -> None:
         x, y = desktop_portal.cursor_position()
@@ -575,7 +595,10 @@ class Remote:
         point = desktop_portal.position()
         device = self._with(CAP_POINTER_ABSOLUTE)
         if device is not None:
-            self.ei.absolute(device, float(point[0]), float(point[1]))
+            absolute = desktop_portal.absolute_position(*point)
+            if absolute is None:
+                return
+            self.ei.absolute(device, float(absolute[0]), float(absolute[1]))
             self.ei.frame(device)
 
     def button(self, code: int, down: bool) -> None:
@@ -752,6 +775,8 @@ def _warn_once(message: str, item: str, _said: Set[str] = set()) -> None:
 
 def inject_key(name: str, down: bool, us: Optional[str] = None) -> None:
     def go(session: Remote) -> None:
+        # As input_injector's: with BEAMER_DEBUG, the key as the peer named it and the locks it is planned for.
+        LOGGER.debug("key %s %s (us %s, locks %s)", name, "down" if down else "up", us, session.locks)
         if session.layout is None and len(name) == 1:
             return  # a named key needs no layout; a character does
         session.keys(wayland_steps(plan_key(name, down, us, session.state, session.layout, session.group, session.locks)))

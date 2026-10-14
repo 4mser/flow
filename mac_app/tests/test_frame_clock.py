@@ -9,17 +9,47 @@ import AppKit
 import Quartz
 from unittest import mock
 
-from frame_clock import PREVIEW_MAX_RATE, FrameClock
+from frame_clock import PREVIEW_MAX_RATE, FrameClock, set_divisor
 
 
 class FrameClockTests(unittest.TestCase):
+    def test_preferred_rate_uses_the_display_divisor(self):
+        ranges = []
+
+        class Link:
+            def setPreferredFrameRateRange_(self, value):
+                ranges.append(value)
+
+            def addToRunLoop_forMode_(self, *_args):
+                pass
+
+            def invalidate(self):
+                pass
+
+        link = Link()
+        screen = mock.Mock()
+        screen.maximumFramesPerSecond.return_value = 120
+        # A view in a window, as the previews give it: NSScreen itself cannot be patched under PyObjC.
+        view = mock.Mock()
+        view.window.return_value.screen.return_value = screen
+        view.displayLinkWithTarget_selector_.return_value = link
+        try:
+            with mock.patch.object(Quartz, "CAFrameRateRangeMake", side_effect=lambda *args: args):
+                for divisor, expected in ((1, (30, 120, 120)), (2, (30, 60, 60)), (4, (30, 30, 30))):
+                    set_divisor(divisor)
+                    clock = FrameClock(view, lambda: None)
+                    clock.start()
+                    clock.stop()
+                    self.assertEqual(ranges[-1], expected)
+        finally:
+            set_divisor(1)
+
     def test_a_preview_clock_runs_at_sixty_at_most(self):
         ranges = []
         link = mock.Mock()
         link.setPreferredFrameRateRange_.side_effect = ranges.append
         screen = mock.Mock()
         screen.maximumFramesPerSecond.return_value = 120
-        # A view in a window, as the previews give it: NSScreen itself cannot be patched under PyObjC.
         view = mock.Mock()
         view.window.return_value.screen.return_value = screen
         view.displayLinkWithTarget_selector_.return_value = link

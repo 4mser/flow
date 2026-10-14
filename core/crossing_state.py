@@ -39,6 +39,11 @@ def _initial(settings, capable=(), fill=True):
         if ways._zoned(entry):
             entry["ways"] = ways._read_intent(settings, entry["id"])
             entry.pop("left_out_ways", None)
+    # With no machine in use holding the notch, a left-out one keeps its tick for Put back.
+    holder = ways.notch_holder(saved)
+    for entry in saved.get("peers", []):
+        if holder is not None and ways._zoned(entry) and entry["id"] != holder:
+            entry["ways"]["notch"] = False
     if not saved.get("layout"):
         saved["layout"] = ways.derive_layout(saved, gap=0)
     elif fill:
@@ -129,8 +134,8 @@ def drop(settings, tiles, moved, *, platform, capable, live, gone, now, snap_rad
     return _outcome(settings, saved, result, tell=_tells(settings, saved, sides=True), send_picture=True)
 
 
-def edit_ways(settings, peer, *, platform, edge=None, thirds=None, corner=None,
-              corner_at=None, notch=None, live, gone, now, capable=()):
+def edit_ways(settings, peer, *, platform, edge=None, thirds=None, edges=None, corners=None,
+              corner=None, corner_at=None, notch=None, notch_return=None, live, gone, now, capable=()):
     """Update only specified choices; an empty third selection keeps the last choice."""
     saved = _initial(settings, capable)
     entry = ways._entry(saved, peer)
@@ -142,12 +147,33 @@ def edit_ways(settings, peer, *, platform, edge=None, thirds=None, corner=None,
     for key, value in (("edge", edge), ("corner", corner), ("notch", notch)):
         if value is not None and (key != "notch" or platform == "mac"):
             intent[key] = bool(value)
+    if notch_return is not None and platform == "mac":
+        entry["notch_return"] = bool(notch_return)
+    if notch and platform == "mac":
+        # One machine has the notch: ticking it here unticks it everywhere else.
+        for other in saved.get("peers", []):
+            if ways._zoned(other) and other["id"] != peer:
+                other["ways"]["notch"] = False
     if thirds is not None:
         picked = [part for part in ways.PARTS if part in thirds]
         if picked:
             intent["thirds"] = picked
-    if corner_at in ways.CORNERS:
-        intent["corner_at"] = corner_at
+    if edges is not None:
+        intent["edges"] = [side for side in ways.EDGES if isinstance(edges, list) and side in edges]
+    if corners is not None:
+        picked = [value for value in ways.CORNERS if isinstance(corners, list) and value in corners
+                  and ways.corner_holder(saved, value, exclude=peer) is None]
+        intent["corners"] = picked
+        intent["corner"] = bool(picked)
+        if picked:
+            intent["corner_at"] = picked[0]
+    if corners is None and (corner is not None or corner_at in ways.CORNERS):
+        # 1.5.2's one-corner form: a held corner is refused without a write, keeping the one held.
+        wanted = corner_at if corner_at in ways.CORNERS else intent["corner_at"]
+        enabled = intent["corner"] if corner is None else bool(corner)
+        if enabled and ways.corner_holder(saved, wanted, exclude=peer) is not None:
+            return _outcome(settings, accepted=False)
+        intent.update(corner_at=wanted, corners=[wanted] if enabled else [], corner=enabled)
     result = _compile(saved, platform, capable=capable, live=live, gone=gone, now=now)
     saved = result["settings"]
     return _outcome(settings, saved, result, tell=_tells(settings, saved))

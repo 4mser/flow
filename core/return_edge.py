@@ -10,6 +10,7 @@ outward travel the edge gives.
 """
 
 import time
+import math
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional, Tuple
 
@@ -132,7 +133,7 @@ def landing_monitor(monitors: List[Rect], edge: str, along: float) -> Rect:
 
     def distance(r: Rect):
         low, high = span(r)
-        return max(low - along, along - (high - 1), 0)
+        return max(low - along, along - high, 0)
 
     return min(monitors, key=lambda r: (distance(r), outer(r)))
 
@@ -148,7 +149,7 @@ def arrival_position(monitors: List[Rect], edge: str, offset: float, display=Non
         if isinstance(target, Rect):
             offset = _clamp(float(offset), 0.0, 1.0)
             along = round((target.y if side in ("left", "right") else target.x)
-                          + offset * ((target.height if side in ("left", "right") else target.width) - 1))
+                          + offset * (target.height if side in ("left", "right") else target.width))
             if side == "left":
                 return target.x, _clear(along, target.y, target.bottom)
             if side == "right":
@@ -187,6 +188,21 @@ def _clear(along, low, high):
     return _clamp(along, low, high)
 
 
+def _normalised_span(value):
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    try:
+        low, high = map(float, value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(low) or not math.isfinite(high) or low < -1e-9 or high > 1 + 1e-9:
+        return None
+    low, high = _clamp(low, 0.0, 1.0), _clamp(high, 0.0, 1.0)
+    if not low < high:
+        return None
+    return low, high
+
+
 def keep_grace(previous, models) -> None:
     """[(peer, model)] rebuilt from `previous` (a settings change, a peer starting to accept) keep the
     arrival grace of the zone each replaces: a re-arm just after a landing must not end it."""
@@ -207,13 +223,16 @@ class ReturnEdge:
 
     def __init__(self, edge: str, resistance_px: int = DEFAULT_RESISTANCE_PX,
                  clock: Callable[[], float] = time.monotonic, display: str = None,
-                 target_display: str = None, target_side: str = None) -> None:
+                 target_display: str = None, target_side: str = None,
+                 contact_span=None, target_span=None) -> None:
         if edge not in EDGES:
             raise ValueError(f"unknown edge {edge!r}")
         self.edge = edge
         self.display = display
         self.target_display = target_display
         self.target_side = target_side
+        self.contact_span = _normalised_span(contact_span)
+        self.target_span = _normalised_span(target_span)
         self.resistance_px = max(0, int(resistance_px))
         self._clock = clock
         self._travel = 0.0
@@ -270,10 +289,15 @@ class ReturnEdge:
                 "top": y <= target.y + 1.5,
                 "bottom": y >= target.bottom - 1.5,
             }[self.edge]
-            return along and near
-        step_x, step_y = {"left": (-1, 0), "right": (1, 0), "top": (0, -1), "bottom": (0, 1)}[self.edge]
-        beyond = (x + step_x, y + step_y)
-        return any(_contains(m, pointer) for m in monitors) and not any(_contains(m, beyond) for m in monitors)
+            at_edge = along and near
+        else:
+            step_x, step_y = {"left": (-1, 0), "right": (1, 0), "top": (0, -1), "bottom": (0, 1)}[self.edge]
+            beyond = (x + step_x, y + step_y)
+            at_edge = any(_contains(m, pointer) for m in monitors) and not any(_contains(m, beyond) for m in monitors)
+        if not at_edge or self.contact_span is None:
+            return at_edge
+        bounds = target if isinstance(target, Rect) else union(monitors)
+        return self.contact_span[0] <= edge_offset(bounds, self.edge, pointer) <= self.contact_span[1]
 
     def feed(self, monitors: List[Rect], pointer: Tuple[int, int], dx: float, dy: float, display_map=None) -> Outcome:
         bounds = union(monitors)
@@ -313,6 +337,11 @@ class ReturnEdge:
         if self._travel >= self.resistance_px:
             self.armed = False
             offset = edge_offset(edge_bounds, self.edge, pointer)
+            if self.contact_span is not None and self.target_span is not None:
+                low, high = self.contact_span
+                target_low, target_high = self.target_span
+                ratio = _clamp((offset - low) / max(high - low, 1e-12), 0.0, 1.0)
+                offset = target_low + ratio * (target_high - target_low)
             self._travel = 0.0
             # A display and its side go together (WIRE.md section 5), as the Mac's engine sends them.
             return Outcome(CROSS, 1.0, edge=OPPOSITE[self.edge], offset=offset,
@@ -331,9 +360,10 @@ class PartEdge(ReturnEdge):
     thirds are measured along the display the pointer is on, by `display_fraction`."""
 
     def __init__(self, edge: str, parts, resistance_px: int = DEFAULT_RESISTANCE_PX, clock=time.monotonic,
-                 display: str = None, target_display: str = None, target_side: str = None) -> None:
+                 display: str = None, target_display: str = None, target_side: str = None,
+                 contact_span=None, target_span=None) -> None:
         super().__init__(edge, resistance_px, clock, display=display, target_display=target_display,
-                         target_side=target_side)
+                         target_side=target_side, contact_span=contact_span, target_span=target_span)
         self.parts = frozenset(part for part in parts if part in PARTS)
 
     def _at_edge(self, monitors: List[Rect], pointer: Tuple[int, int], display_map=None) -> bool:
@@ -373,11 +403,11 @@ class CornerPush(ReturnEdge):
 
     def __init__(self, corner: str, edge: str, resistance_px: int = DEFAULT_RESISTANCE_PX,
                  clock=time.monotonic, display: str = None, target_display: str = None,
-                 target_side: str = None) -> None:
+                 target_side: str = None, contact_span=None, target_span=None) -> None:
         if corner not in CORNERS:
             raise ValueError(f"unknown corner {corner!r}")
         super().__init__(edge, resistance_px, clock, display=display, target_display=target_display,
-                         target_side=target_side)
+                         target_side=target_side, contact_span=contact_span, target_span=target_span)
         self.corner = corner
         self.vertical, self.horizontal = corner.split("_")
 
@@ -395,9 +425,17 @@ class CornerPush(ReturnEdge):
         reason the edge test is: on a staggered arrangement the bounding box
         has corners no display reaches."""
         x, y = pointer
-        home = display_map.get(self.display) if self.display and isinstance(display_map, dict) else None
-        if not isinstance(home, Rect):
-            home = next((m for m in monitors if _contains(m, pointer)), None)
+        if self.display is not None:
+            home = display_map.get(self.display) if isinstance(display_map, dict) else None
+            if not isinstance(home, Rect) or not _contains(home, pointer):
+                return False
+            near_x = x <= home.x + CORNER_PX if self.horizontal == "left" else x >= home.right - CORNER_PX
+            near_y = y <= home.y + CORNER_PX if self.vertical == "top" else y >= home.bottom - CORNER_PX
+            at_x = x <= home.x + 1.5 if self.horizontal == "left" else x >= home.right - 1.5
+            at_y = y <= home.y + 1.5 if self.vertical == "top" else y >= home.bottom - 1.5
+            return near_x and near_y and (at_x or at_y)
+
+        home = next((m for m in monitors if _contains(m, pointer)), None)
         if home is None:
             return False
         near_x = x <= home.x + CORNER_PX if self.horizontal == "left" else x >= home.right - CORNER_PX

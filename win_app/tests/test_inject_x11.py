@@ -207,7 +207,7 @@ class TextTest(unittest.TestCase):
 class ScrollTest(unittest.TestCase):
     def test_line_clicks(self):
         carry = [0.0, 0.0]
-        self.assertEqual(inject_x11.plan_scroll(2, -1, "line", carry), (2, -1))
+        self.assertEqual(inject_x11.plan_scroll(2, 1, "line", carry), (2, -1))
         self.assertEqual(inject_x11.scroll_buttons(2, -1), [4, 4, 6])
         self.assertEqual(inject_x11.scroll_buttons(-1, 1), [5, 7])
 

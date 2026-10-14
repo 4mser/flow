@@ -393,7 +393,7 @@ class AtlasCanvas(AppKit.NSView):
     @objc.python_method
     def setup(self):
         self.setTranslatesAutoresizingMaskIntoConstraints_(False)
-        self.heightAnchor().constraintGreaterThanOrEqualToConstant_(self.HEIGHT).setActive_(True)
+        self.heightAnchor().constraintEqualToConstant_(self.HEIGHT).setActive_(True)
         self.setWantsLayer_(True)
         theme.tint(self.layer(), background="well", border="edge")
         self.layer().setBorderWidth_(1)
@@ -424,6 +424,7 @@ class AtlasCanvas(AppKit.NSView):
         self.seam_segments = []
         self.mark_layers = {}
         self.corner_halo_layers = {}
+        self.wrap_layers = {}
         self.recentre_layer = _box("panel", None, 4)
         self.recentre_label = _text_layer(theme.TYPE["note"], "ink_3")
         self.recentre_layer.addSublayer_(self.recentre_label)
@@ -769,7 +770,8 @@ class AtlasCanvas(AppKit.NSView):
             theme.tint(state_layer, foreground="amber" if gap else "ink_3")
             crosses = status_info.get("crosses", is_own)
             outcome = ("Offline" if not is_own and not status_info.get("linked") else
-                       "Crosses" if crosses and (status_info.get("corner_way") or status_info.get("notch_way")) else
+                       "Crosses" if crosses and (status_info.get("corner_ways") or status_info.get("wrap_sides")
+                                                 or status_info.get("notch_way")) else
                        "Edge off" if status_info.get("edge_off") or status_info.get("unpicked") else
                        outcome_for_tile(state, crosses, is_own))
             if is_own:
@@ -908,6 +910,145 @@ class AtlasCanvas(AppKit.NSView):
                         Quartz.CGPathAddLineToPoint(path, None, x2, y)
             layer.setPath_(path)
         self._draw_thirds(frames)
+        self._draw_wraps(frames)
+
+    @objc.python_method
+    def _draw_wraps(self, frames):
+        """A wrap-around edge: a seam along This Mac's own side, with a label inside the tile naming
+        where it leads and, on a left or right side, an arrow pointing out of it. A side kept while
+        Edge is off is a faint dashed seam and says so."""
+        wanted = {}
+        own = frames.get(self.own_id)
+        if own is not None:
+            pads = self._pad_corners(frames)
+            for peer, state in self.states.items():
+                if peer == self.own_id or peer not in frames or state.get("in_use") is False:
+                    continue
+                opacity = (1.0 if state.get("linked", True) else 0.55) * (1.0 if peer == self.selected else 0.7)
+                for kept, sides in ((False, state.get("wrap_sides", [])), (True, state.get("kept_sides", []))):
+                    for side in sides:
+                        wanted[(peer, side)] = (kept, opacity)
+        for key in list(self.wrap_layers):
+            if key not in wanted:
+                for layer in self.wrap_layers.pop(key):
+                    layer.removeFromSuperlayer()
+        for (peer, side), (kept, opacity) in wanted.items():
+            if (peer, side) not in self.wrap_layers:
+                seam = Quartz.CAShapeLayer.layer()
+                seam.setFillColor_(AppKit.NSColor.clearColor().CGColor())
+                seam.setLineCap_(Quartz.kCALineCapRound)
+                arrow = Quartz.CAShapeLayer.layer()
+                arrow.setFillColor_(AppKit.NSColor.clearColor().CGColor())
+                arrow.setLineWidth_(1.6)
+                arrow.setLineCap_(Quartz.kCALineCapRound)
+                arrow.setLineJoin_(Quartz.kCALineJoinRound)
+                text = _text_layer(theme.TYPE["eyebrow"], "signal", Quartz.kCAAlignmentLeft)
+                for layer in (seam, arrow, text):
+                    layer.setZPosition_(21)
+                    self.layer().addSublayer_(layer)
+                self.wrap_layers[(peer, side)] = (seam, arrow, text)
+            seam, arrow, text = self.wrap_layers[(peer, side)]
+            x, y, width, height = own
+            horizontal = side in ("top", "bottom")
+            first, last = {"left": ("top_left", "bottom_left"), "right": ("top_right", "bottom_right"),
+                           "top": ("top_left", "top_right"), "bottom": ("bottom_left", "bottom_right")}[side]
+            start = (x if horizontal else y) + (13 if first in pads else 2)
+            end = (x + width if horizontal else y + height) - (13 if last in pads else 2)
+            fixed = {"left": x, "right": x + width, "top": y, "bottom": y + height}[side]
+            path = Quartz.CGPathCreateMutable()
+            if end > start:
+                Quartz.CGPathMoveToPoint(path, None, *((start, fixed) if horizontal else (fixed, start)))
+                Quartz.CGPathAddLineToPoint(path, None, *((end, fixed) if horizontal else (fixed, end)))
+            seam.setPath_(path)
+            seam.setLineWidth_(2 if kept else 4)
+            seam.setLineDashPattern_([3, 5] if kept else None)
+            theme.tint(seam, stroke="signal")
+            seam.setOpacity_(0.35 if kept else opacity)
+            ink = "ink_3" if kept else "signal"
+            label = "wrap kept, Edge off" if kept else f"wraps to {self.labels.get(peer, 'another machine')}"
+            text.setString_(label)
+            theme.tint(text, foreground=ink)
+            text.setOpacity_(0.8 if kept else opacity)
+            theme.tint(arrow, stroke=ink)
+            arrow.setOpacity_(0.7 if kept else opacity)
+        if own is not None:
+            self._place_wrap_labels(own, [(side, *self.wrap_layers[(peer, side)][1:]) for peer, side in wanted])
+
+    @objc.python_method
+    def _place_wrap_labels(self, own, marks):
+        """Each wrap label gets its own row below This Mac's name and status line, so none ever lands on
+        them or on another label: a top side's row nearest the name, a bottom side's nearest the
+        bottom edge, left and right in between, sharing one row when both fit. Sides that say the
+        same thing, as when one machine wraps on several, share one label naming them. Rows that do
+        not fit the tile are hidden; the seam still shows the side."""
+        x, y, width, height = own
+        header = y + (51 if height >= 72 else 30)
+        first, last = header + 4, y + height - 22
+        order = {"merged": 0, "top": 0, "left": 1, "right": 2, "bottom": 3}
+        marks = sorted(marks, key=lambda mark: order[mark[0]])
+        said = {}
+        for side, arrow, text in marks:
+            said.setdefault(text.string(), []).append((side, arrow, text))
+        marks = []
+        for words, same in said.items():
+            marks.append(same[0])
+            if len(same) > 1:
+                side, arrow, text = same[0]
+                # The sides named, else counted, else the plain words: the seams still show which.
+                merged = next((option for option in (f"{words} · {', '.join(mark[0] for mark in same)}",
+                                                     f"{words} · {len(same)} sides")
+                               if _text_width(option, text.font()) + 2 <= width - 24), words)
+                text.setString_(merged)
+                marks[-1] = ("merged", arrow, text)
+                for _side, other_arrow, other_text in same[1:]:
+                    other_text.setHidden_(True)
+                    other_arrow.setHidden_(True)
+        rows = []
+        for side, arrow, text in sorted(marks, key=lambda mark: order[mark[0]]):
+            label_width = min(math.ceil(_text_width(text.string(), text.font())) + 2,
+                              max(1, width - (52 if side in ("left", "right") else 24)))
+            mark = (side, arrow, text, label_width)
+            if (side == "right" and rows and len(rows[-1]) == 1 and rows[-1][0][0] == "left"
+                    and 26 + rows[-1][0][3] + 8 + label_width + 26 <= width):
+                rows[-1].append(mark)
+            else:
+                rows.append([mark])
+        room = 0 if height < 56 or last < first else int((last - first) // 18) + 1
+        wanted = {"top": first, "merged": first, "left": y + height / 2 + 10, "right": y + height / 2 + 10,
+                  "bottom": last}
+        tops = []
+        for row in rows[:room]:
+            tops.append(max(min(last, wanted[row[0][0]]), tops[-1] + 18 if tops else first))
+        for index in range(len(tops) - 1, -1, -1):
+            tops[index] = min(tops[index], last if index == len(tops) - 1 else tops[index + 1] - 18)
+        for index, row in enumerate(rows):
+            for side, arrow, text, label_width in row:
+                shown = index < len(tops)
+                text.setHidden_(not shown)
+                arrow.setHidden_(not shown or side not in ("left", "right"))
+                if not shown:
+                    continue
+                label_y = tops[index]
+                label_x = (x + 26 if side == "left" else x + width - 26 - label_width if side == "right"
+                           else x + width - 12 - label_width)
+                _set_layer_frame_if_changed(text, ((label_x, label_y), (label_width, 16)))
+                arrow_path = Quartz.CGPathCreateMutable()
+                if side in ("left", "right"):
+                    direction = -1 if side == "left" else 1
+                    tip, centre = (x + 16 if side == "left" else x + width - 16), label_y + 8
+                    Quartz.CGPathMoveToPoint(arrow_path, None, tip - direction * 9, centre)
+                    Quartz.CGPathAddLineToPoint(arrow_path, None, tip, centre)
+                    Quartz.CGPathMoveToPoint(arrow_path, None, tip - direction * 4, centre - 4)
+                    Quartz.CGPathAddLineToPoint(arrow_path, None, tip, centre)
+                    Quartz.CGPathAddLineToPoint(arrow_path, None, tip - direction * 4, centre + 4)
+                arrow.setPath_(arrow_path)
+
+    @objc.python_method
+    def _pad_corners(self, frames):
+        """Every corner of This Mac's tile that carries a pad, whichever machine's it is."""
+        return {corner for peer, state in self.states.items()
+                if peer != self.own_id and peer in frames and state.get("in_use") is not False
+                for corner in state.get("corner_ways", [])}
 
     @objc.python_method
     def _side_contacts(self, peer):
@@ -950,8 +1091,7 @@ class AtlasCanvas(AppKit.NSView):
     @objc.python_method
     def _stop_at_corner_halos(self, frames, side, start, end):
         x, y, width, height = frames[self.own_id]
-        corners = {state.get("corner_way") for peer, state in self.states.items()
-                   if peer != self.own_id and peer in frames and state.get("in_use") is not False}
+        corners = self._pad_corners(frames)
         if side in ("left", "right"):
             low = y + (11 if f"top_{side}" in corners else 0)
             high = y + height - (11 if f"bottom_{side}" in corners else 0)
@@ -1053,8 +1193,7 @@ class AtlasCanvas(AppKit.NSView):
             for peer, state in self.states.items():
                 if peer == self.own_id or peer not in frames or state.get("in_use") is False:
                     continue
-                corner = state.get("corner_way")
-                if corner in core_ways.CORNERS:
+                for corner in state.get("corner_ways", []):
                     px = x if corner.endswith("left") else x + width
                     py = y if corner.startswith("top") else y + height
                     path = Quartz.CGPathCreateMutable()

@@ -284,7 +284,7 @@ class QtRenderer:
             self.design.resize(1400, 1100)
             self.design.show()
         choice = self.design.glow_style_choice if family == "crossing" else self.design.switch_style_choice
-        self.app.setStyleSheet(self.theme.stylesheet())
+        self.theme.apply_stylesheet(self.app)
         choice.set_value(style if selected else None)
         preview = choice.tile(style).layout().itemAt(0).widget()
         preview._image = None

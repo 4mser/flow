@@ -1,11 +1,12 @@
 """The saved picture and local intent, exercised without either desktop toolkit."""
 
 import copy
+import threading
 import unittest
 from types import SimpleNamespace
 
-from core import owner, protocol, return_edge, ways
-from core.tests.crossing_harness import Hand, Screen
+from core import owner, protocol, return_edge, settings_sync, ways
+from core.tests.crossing_harness import Hand, Net, Screen, per_screen_layout
 from core.tests.responder_harness import ident
 
 
@@ -35,6 +36,48 @@ class CrossingStateTests(unittest.TestCase):
     def args(self):
         return dict(platform="mac", live=lambda _: True, gone=lambda _: False, now=100)
 
+    def test_hand_close_waits_for_keep_alive_thread_to_exit(self):
+        started = threading.Event()
+        release = threading.Event()
+        closed = threading.Event()
+
+        class HeldHand(Hand):
+            def _keep_alive(self):
+                started.set()
+                release.wait()
+
+        before = {thread.ident for thread in threading.enumerate()}
+        hand = HeldHand(SimpleNamespace(own=ident(91)))
+        thread = next(thread for thread in threading.enumerate()
+                      if thread.name == "hand-pings" and thread.ident not in before)
+        closer = threading.Thread(target=lambda: (hand.close(), closed.set()))
+        self.assertTrue(started.wait(1))
+        closer.start()
+        try:
+            self.assertFalse(closed.wait(0.05), "Hand.close returned before its keep-alive thread exited")
+        finally:
+            release.set()
+            closer.join(1)
+        self.assertTrue(closed.is_set())
+        self.assertFalse(thread.is_alive())
+
+    def test_net_add_closes_hand_when_setup_stops_before_start(self):
+        class Shell:
+            def __init__(self, desk):
+                self.desk = desk
+
+            def stop(self):
+                pass
+
+        net = Net(self, {"mac": Shell})
+        desk = net.add("mac", "mac", DISPLAYS, 92)
+        hand = desk.hand
+        try:
+            self.doCleanups()
+            self.assertFalse(hand._keep_alive_thread.is_alive())
+        finally:
+            hand.close()
+
     def test_paired_defaults_and_own_displays_are_pure(self):
         held = settings()
         held["layout"] = {}
@@ -42,7 +85,8 @@ class CrossingStateTests(unittest.TestCase):
         out = self.state().paired(held, platform="mac", own_displays=DISPLAYS, now=100)
         self.assertEqual(held, original)
         self.assertEqual(out["settings"]["peers"][0]["ways"],
-                         dict(edge=True, thirds=ALL, corner=False, corner_at="top_left", notch=False))
+                         dict(edge=True, thirds=ALL, edges=[], corner=False, corner_at="top_left",
+                              corners=[], notch=False))
         self.assertEqual(out["settings"]["layout"][A]["x"], 160)
         self.assertEqual(out["settings"]["layout"][OWN]["displays"]["0"]["w"], 1728)
 
@@ -57,6 +101,19 @@ class CrossingStateTests(unittest.TestCase):
         enabled = self.state().edit_ways(dropped["settings"], A, edge=True, thirds=[], **self.args())
         self.assertEqual(ways.ways(enabled["settings"], A)["parts"], ["start"])
         self.assertEqual(enabled["tell"], [A])
+
+    def test_edit_replaces_edges_and_corners_in_canonical_order_and_drops_held_corners(self):
+        held = settings()
+        held["peers"].append({"id": B, "port": 24820,
+                               "ways": {"edge": True, "thirds": ALL, "edges": [], "corner": True,
+                                        "corner_at": "top_left", "corners": ["top_left"], "notch": False}})
+        out = self.state().edit_ways(held, A, edges=["bottom", "bogus", "left"],
+                                     corners=["bottom_right", "top_left", "bogus"], **self.args())
+        intent = ways.ways(out["settings"], A)
+        self.assertEqual(intent["edges"], ["left", "bottom"])
+        self.assertEqual(intent["corners"], ["bottom_right"])
+        self.assertIn("corner", intent["methods"])
+        self.assertEqual(out["settings"]["peers"][0]["ways"]["corner_at"], "bottom_right")
 
     def test_arrangement_from_picture_peer_never_moves_or_echoes(self):
         held = self.state().paired(settings(), platform="mac", own_displays=DISPLAYS, now=100)["settings"]
@@ -259,7 +316,8 @@ class CrossingStateTests(unittest.TestCase):
         on_upper["peers"] = [dict(id=OWN, port=24820)]
         out = ways.compile_layout(on_upper, on_upper["layout"], platform="pc", now=100)
         self.assertEqual(out["settings"]["zones"], [
-            dict(peer=OWN, kind="part", side="left", parts=["middle", "end"])])
+            dict(peer=OWN, kind="part", side="left", parts=["middle", "end"],
+                 contact_span=[0.5, 1.0], target_span=[0.0, 0.5])])
 
     def test_peer_spanning_two_display_tops_compiles_both_contacts(self):
         held = settings()
@@ -303,7 +361,8 @@ class CrossingStateTests(unittest.TestCase):
         out = ways.compile_layout(held, held["layout"], platform="pc", now=100)
         self.assertEqual(out["settings"]["zones"], [
             dict(peer=B, kind="part", parts=["middle", "end"]),
-            dict(peer=A, kind="part", parts=["start"], side="right")])
+            dict(peer=A, kind="part", parts=["start"], side="right",
+                 contact_span=[0.0, 0.33], target_span=[0.0, 1.0])])
 
     def test_target_fields_are_written_together_and_side_is_derived(self):
         held = settings()
@@ -322,9 +381,76 @@ class CrossingStateTests(unittest.TestCase):
         screen = Screen({"1": return_edge.Rect(0, 0, 100, 100),
                          "2": return_edge.Rect(100, 0, 200, 100)})
         hand = Hand(SimpleNamespace(own=ident(90), screen=screen))
+        self.addCleanup(hand.close)
         hand.carry_out([owner.Moved(None, A, "switch", "bottom", 0.5,
                                    display="2", side="top")])
         self.assertEqual(screen.placed[-1], (200, 0))
+
+    def test_per_screen_split_picture_round_trips_between_mac_pc_and_two_pcs(self):
+        picture = per_screen_layout(OWN, A, b1_x=80)
+        picture[A]["display_offsets"] = {"1": {"x": -20, "y": 12}}
+        picture[OWN]["display_offsets"] = {"1": {"x": 25, "y": -8}}
+        pairs = (("Mac and PC", "mac", "pc"), ("two PCs", "pc", "pc"))
+
+        for label, first_platform, second_platform in pairs:
+            with self.subTest(pair=label):
+                for sender, receiver, receiver_platform in (
+                    (OWN, A, second_platform), (A, OWN, first_platform),
+                ):
+                    state = {"set_at": 100, "by": sender, "tiles": copy.deepcopy(picture)}
+                    wire = settings_sync.message_data(False, 100, by=sender, layout_state=state)
+                    local = picture[receiver]
+                    own_displays = {
+                        display: return_edge.Rect(frame["x"], frame["y"], frame["w"], frame["h"])
+                        for display, frame in local["displays"].items()
+                    }
+                    held = {"machine_id": receiver, "peers": [{"id": sender, "port": 24820, "side": ""}],
+                            "zones": [], "layout": {receiver: copy.deepcopy(local)}}
+                    parsed = settings_sync.read_layout_state(wire, now=101)
+                    out = self.state().receive_picture(held, parsed, source=sender,
+                                                       capable={OWN, A}, own_displays=own_displays,
+                                                       platform=receiver_platform, live=lambda _: True,
+                                                       gone=lambda _: False, now=101)
+                    self.assertTrue(out["changed"])
+                    self.assertEqual(out["settings"]["layout"][receiver]["display_offsets"],
+                                     picture[receiver]["display_offsets"])
+                    self.assertEqual(out["settings"]["layout"][sender]["display_offsets"],
+                                     picture[sender]["display_offsets"])
+                    compiled = ways.compile_layout(out["settings"], out["settings"]["layout"], now=102)
+                    self.assertTrue(compiled["accepted"])
+                    self.assertEqual(compiled["settings"]["zones"], out["settings"]["zones"])
+
+    def test_a_152_peer_keeps_only_the_first_arrangement_side_and_no_display_routes(self):
+        picture = per_screen_layout(OWN, A)
+        wire = settings_sync.message_data(False, 100, by=OWN,
+                                          layout_state={"set_at": 100, "by": OWN, "tiles": picture})
+        old_wire = settings_sync.for_capabilities(wire, {"settings", "layout"})
+        old_state = settings_sync.read_layout_state(old_wire, now=101)
+        self.assertNotIn("displays", old_state["tiles"][OWN])
+        self.assertNotIn("display_offsets", old_state["tiles"][A])
+
+        held = {"machine_id": A, "peers": [{"id": OWN, "port": 24820, "side": ""}], "zones": [],
+                "layout": {A: picture[A]}}
+        received = self.state().receive_arrangement(held, OWN,
+                    {"edge": "right", "set_at": 101, "by": ident(90), "way_back": True},
+                    capable={A}, platform="pc", live=lambda _: True, gone=lambda _: False, now=102)
+        self.assertTrue(received["changed"])
+        self.assertEqual(received["settings"]["peers"][0]["side"], "left")
+        self.assertEqual(received["settings"]["zones"], [{"peer": OWN, "kind": "edge"}])
+
+    def test_reciprocal_landing_grace_holds_the_zone_beside_the_target_display(self):
+        clock = [0.0]
+        display = return_edge.Rect(100, 0, 100, 100)
+        model = return_edge.ReturnEdge("right", resistance_px=10, clock=lambda: clock[0],
+                                       display="B0", target_display="A1", target_side="left")
+        model.start_grace()
+        clock[0] = 0.1
+        held = model.feed([display], (display.right, 50), 12, 0, {"B0": display})
+        self.assertEqual(held.action, return_edge.HOLD)
+        clock[0] = return_edge.ARRIVAL_GRACE_SECONDS + 0.01
+        crossed = model.feed([display], (display.right, 50), 12, 0, {"B0": display})
+        self.assertEqual(crossed.action, return_edge.CROSS)
+        self.assertEqual((crossed.display, crossed.side), ("A1", "left"))
 
     def test_rc12_migration_reads_once_and_removes_old_marks(self):
         own, rig = "TnY4DcwqoBkkPubq9P00QA", "GRMYVCd7dKksFjy5FejD4Q"
@@ -339,10 +465,11 @@ class CrossingStateTests(unittest.TestCase):
                        rig: tile(-329, 241, displays={"0": dict(x=0, y=0, w=3840, h=2160)})}}
         out = self.state().migrate(held, "mac")
         saved = out["settings"]
-        self.assertEqual(saved["peers"][0]["ways"], dict(edge=True, thirds=ALL, corner=False,
-                                                        corner_at="top_left", notch=True))
+        self.assertEqual(saved["peers"][0]["ways"], dict(edge=True, thirds=ALL, edges=[], corner=False,
+                                                        corner_at="top_left", corners=[], notch=True))
         self.assertEqual(saved["zones"], [dict(peer=rig, kind="edge", display="0", side="left",
-                                               target_display="0", target_side="right"),
+                                               target_display="0", target_side="right",
+                                               contact_span=[0.0, 1.0], target_span=[0.0, 1.0]),
                                           dict(peer=rig, kind="notch")])
         self.assertFalse(self.state().migrate(saved, "mac")["changed"])
         held["zones"][0].update(off=True, page_off=True, aside=True)
@@ -352,6 +479,56 @@ class CrossingStateTests(unittest.TestCase):
         self.assertEqual(saved["peers"][0]["ways"]["thirds"], ["end"])
         self.assertEqual(saved["zones"], [dict(peer=rig, kind="notch")])
 
+    def two_with_notch(self, a_notch, b_notch):
+        held = settings()
+        held["peers"].append({"id": B, "port": 24820, "side": "left"})
+        held["layout"][B] = tile(-160)
+        for peer, notch in ((A, a_notch), (B, b_notch)):
+            entry = next(item for item in held["peers"] if item["id"] == peer)
+            entry["ways"] = dict(edge=True, thirds=ALL, edges=[], corner=False, corner_at="top_left",
+                                 corners=[], notch=notch)
+        return held
+
+    def test_the_notch_leads_to_one_machine_ticking_it_on_one_unticks_the_others(self):
+        # 1.5.3: the notch goes to one machine only.
+        held = self.state().edit_ways(self.two_with_notch(True, False), B, notch=True, **self.args())["settings"]
+        self.assertEqual([entry["ways"]["notch"] for entry in held["peers"]], [False, True])
+        self.assertNotIn("notch", ways.ways(held, A)["methods"])
+        self.assertIn("notch", ways.ways(held, B)["methods"])
+        self.assertEqual([zone["peer"] for zone in held["zones"] if zone["kind"] == "notch"], [B])
+
+    def test_an_old_file_with_several_notches_keeps_the_first_in_ways_order(self):
+        held = self.two_with_notch(True, True)
+        self.assertIn("notch", ways.ways(held, A)["methods"])
+        self.assertNotIn("notch", ways.ways(held, B)["methods"])
+        saved = self.state().edit_ways(held, B, edge=True, **self.args())["settings"]
+        self.assertEqual([entry["ways"]["notch"] for entry in saved["peers"]], [True, False])
+        self.assertEqual([zone["peer"] for zone in saved["zones"] if zone["kind"] == "notch"], [A])
+
+    def test_a_left_out_machine_never_keeps_the_notch_from_one_in_use(self):
+        # AGY review, 14-10: a left-out first machine held it, cleared the second, and no notch armed.
+        held = self.two_with_notch(True, True)
+        held["peers"][0]["left_out"] = True
+        self.assertNotIn("notch", ways.ways(held, A)["methods"])
+        self.assertIn("notch", ways.ways(held, B)["methods"])
+        saved = self.state().edit_ways(held, B, edge=True, **self.args())["settings"]
+        self.assertEqual([zone["peer"] for zone in saved["zones"] if zone["kind"] == "notch"], [B])
+        self.assertEqual([entry["ways"]["notch"] for entry in saved["peers"]], [False, True])
+        alone = self.two_with_notch(True, False)
+        alone["peers"][0]["left_out"] = True
+        saved = self.state().edit_ways(alone, B, edge=True, **self.args())["settings"]
+        self.assertTrue(saved["peers"][0]["ways"]["notch"], "kept for Put back while nobody in use has it")
+
+    def test_return_through_the_notch_rides_on_the_notch_zone(self):
+        held = self.state().edit_ways(self.two_with_notch(False, True), B, notch_return=True, **self.args())["settings"]
+        self.assertEqual([zone for zone in held["zones"] if zone["kind"] == "notch"],
+                         [dict(peer=B, kind="notch", return_here=True)])
+        held = self.state().edit_ways(held, B, notch_return=False, **self.args())["settings"]
+        self.assertEqual([zone for zone in held["zones"] if zone["kind"] == "notch"], [dict(peer=B, kind="notch")])
+        pc = self.state().edit_ways(self.two_with_notch(False, True), B, notch_return=True,
+                                    **{**self.args(), "platform": "pc"})["settings"]
+        self.assertNotIn("notch_return", pc["peers"][1])
+
     def test_migration_keeps_a_left_out_machines_ways_for_put_back(self):
         # Codex review, 10-10: rc12 kept the kinds in use in left_out_ways and turned every zone off.
         held = settings()
@@ -360,8 +537,8 @@ class CrossingStateTests(unittest.TestCase):
                                                                    edge="right", off=True),
                          dict(peer=A, kind="notch", off=True)]
         saved = self.state().migrate(held, "mac")["settings"]
-        self.assertEqual(saved["peers"][0]["ways"], dict(edge=True, thirds=ALL, corner=True,
-                                                        corner_at="top_right", notch=True))
+        self.assertEqual(saved["peers"][0]["ways"], dict(edge=True, thirds=ALL, edges=[], corner=True,
+                                                        corner_at="top_right", corners=["top_right"], notch=True))
         self.assertEqual(saved["zones"], [])
         back = self.state().put_back(saved, A, platform="mac", now=100)["settings"]
         self.assertIn("edge", [zone["kind"] for zone in back["zones"]])

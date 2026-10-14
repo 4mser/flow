@@ -99,9 +99,11 @@ class HostedNotchCrossingPreviewTest(unittest.TestCase):
         bounds = changed_bounds(without_marks, with_marks)
         self.assertIsNotNone(bounds)
         left, top, right, bottom = bounds
-        self.assertGreaterEqual(left, 90)
-        self.assertLessEqual(right, 210)
-        self.assertGreaterEqual(top, 55)
+        # Centred on the notch, in a camera fitted to the crossing rather than the whole journey.
+        self.assertGreaterEqual(left, 65)
+        self.assertLessEqual(right, 235)
+        self.assertAlmostEqual((left + right) / 2, 150, delta=8)
+        self.assertGreaterEqual(top, 40)
         self.assertLessEqual(bottom, 115)
 
     def test_renderer_frame_uses_the_selected_notch_duration(self):

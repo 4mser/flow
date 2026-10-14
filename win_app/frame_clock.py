@@ -3,6 +3,17 @@
 from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 
+_DIVISOR = 1
+
+
+def set_divisor(n: int) -> None:
+    global _DIVISOR
+    _DIVISOR = n
+
+
+def divisor() -> int:
+    return _DIVISOR
+
 
 def refresh_rate(widget=None) -> float:
     """`widget`'s screen's refresh rate, or with no widget the fastest screen's: an overlay is
@@ -20,7 +31,7 @@ PREVIEW_MAX_RATE = 60
 
 def frame_interval_ms(widget=None, max_rate=None) -> int:
     rate = refresh_rate(widget)
-    return max(1, int(1000.0 / (min(rate, max_rate) if max_rate else rate)))
+    return max(1, int(1000.0 * _DIVISOR / (min(rate, max_rate) if max_rate else rate)))
 
 
 def frame_timer(parent: QObject, tick, widget=None, max_rate=None) -> QTimer:

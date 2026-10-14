@@ -7,6 +7,13 @@ import Quartz
 # page's work for nothing anyone can see, so they play at 60 at most.
 PREVIEW_MAX_RATE = 60
 
+_DIVISOR = 1
+
+
+def set_divisor(n):
+    global _DIVISOR
+    _DIVISOR = n
+
 
 class _Fire(AppKit.NSObject):
     def fire_(self, _sender):
@@ -41,12 +48,14 @@ class FrameClock:
             rate = max(1, int(screen.maximumFramesPerSecond()))
             if self.max_rate:
                 rate = min(rate, self.max_rate)
-            link.setPreferredFrameRateRange_(Quartz.CAFrameRateRangeMake(min(30, rate), rate, rate))
+            target_rate = max(1, rate // _DIVISOR)
+            link.setPreferredFrameRateRange_(Quartz.CAFrameRateRangeMake(min(30, target_rate), target_rate, target_rate))
             link.addToRunLoop_forMode_(runloop, AppKit.NSRunLoopCommonModes)
             self.source = link
         else:
+            # macOS 13 has no display link for a view or screen: 60 a second, capped and divided alike.
             timer = AppKit.NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
-                1.0 / 60.0, target, "fire:", None, True
+                _DIVISOR / min(60, self.max_rate or 60), target, "fire:", None, True
             )
             runloop.addTimer_forMode_(timer, AppKit.NSRunLoopCommonModes)
             self.source = timer

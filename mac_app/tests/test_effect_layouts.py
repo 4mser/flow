@@ -284,8 +284,10 @@ class ClassicPreviewTests(unittest.TestCase):
         fx = effects.preview_effect("glow")
         pen = effects.preview_scene(fx, 2.0, "corner", PALETTE)["pens"][0]
         w, h = effects.PREVIEW_SCREEN
-        self.assertLess(pen.bounds[0], w - effects.CLASSIC_ARM + 10)
-        self.assertGreater(pen.bounds[3], effects.CLASSIC_ARM - 10)
+        # The arm is a real screen's, drawn at the preview's scale.
+        arm = effects.CLASSIC_ARM / effects.PREVIEW_REAL
+        self.assertLess(pen.bounds[0], w - arm + 10)
+        self.assertGreater(pen.bounds[3], arm - 10)
         self.assertLessEqual(pen.bounds[2], w + 4)
 
     def test_aperture_is_a_light_effect_and_has_a_preview(self):

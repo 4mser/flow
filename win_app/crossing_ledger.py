@@ -1,9 +1,9 @@
 """The Crossing ledger: kept intent, edited directly in each machine's row."""
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QAccessible, QColor, QFontMetrics, QPainter, QPen
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt
+from PySide6.QtGui import QAccessible, QColor, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QAccessibleWidget, QCheckBox, QFrame, QGraphicsOpacityEffect,
-                               QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+                               QGridLayout, QHBoxLayout, QLabel, QLayout, QLineEdit, QPushButton,
                                QSizePolicy, QStyle, QStyleOptionButton, QVBoxLayout, QWidget)
 
 from core import ways
@@ -41,90 +41,455 @@ def _quiet_style(button):
     button.setStyleSheet(f"QPushButton {{ color: {theme.colour('ink_2')}; background: transparent; border: 0; padding: 0; font-size: {round(theme.TYPE['note'])}px; font-weight: 400; text-align: left; }} QPushButton:focus {{ border: 1px solid {theme.colour('signal')}; }}")
 
 
-class ScreenGlyph(QWidget):
-    def __init__(self, kind, callback, parent=None):
-        super().__init__(parent)
-        self.kind, self.callback = kind, callback
-        self.side, self.picked, self.corner, self.holders = "", [], "", {}
-        self.setFixedSize(50, 38)
-        self.buttons = {}
-        details = ways.PARTS if kind == "edge" else ways.CORNERS
-        for detail in details:
-            button = QPushButton(self)
-            button.setCheckable(True)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.setStyleSheet("QPushButton { background: transparent; border: 0; padding: 0; } QPushButton:focus { border: 1px solid " + theme.colour("signal") + "; }")
-            button.clicked.connect(lambda _checked=False, value=detail: self.callback(value))
-            self.buttons[detail] = button
+SIDE_NAMES = {"left": "Left", "right": "Right", "top": "Top", "bottom": "Bottom"}
+CORNER_TITLES = {corner: corner.replace("_", " ").capitalize() for corner in ways.CORNERS}
+CHIP_HEIGHT = 26
 
-    def reflect(self, side="", picked=(), corner="", holders=None, left_out=False):
-        self.side, self.picked, self.corner, self.holders = side or "", list(picked), corner, holders or {}
-        rect = QRectF(7.5, 7.5, 35, 23)
-        for index, (detail, button) in enumerate(self.buttons.items()):
-            button.setStyleSheet("QPushButton { background: transparent; border: 0; padding: 0; } QPushButton:focus { border: 1px solid " + theme.colour("signal") + "; }")
-            if self.kind == "edge":
-                horizontal = side in ("top", "bottom")
-                span = rect.width() if horizontal else rect.height()
-                fixed = rect.top() if side == "top" else rect.bottom() if side == "bottom" else rect.left() if side == "left" else rect.right()
-                start = (rect.left() if horizontal else rect.top()) + index * span / 3
-                hit = QRectF(start, fixed - 6, span / 3, 12) if horizontal else QRectF(fixed - 6, start, 12, span / 3)
-                title = ways.part_names(side or "top")[detail]
-                on = detail in picked
-                name = f"{(side or 'Unplaced').capitalize()} edge, {title.lower()} third, {'on' if on else 'off'}"
-                tooltip = f"{title} third: click to {'leave it out' if on else 'turn it on'}"
-                allowed = bool(side)
+
+def _tone(name, alpha=1.0):
+    tone = QColor(theme.colour(name))
+    tone.setAlphaF(alpha)
+    return tone
+
+
+def _mix(one, two, amount):
+    one, two = QColor(theme.colour(one)), QColor(theme.colour(two))
+    return QColor(*(round(a + (b - a) * amount) for a, b in zip(one.getRgb()[:3], two.getRgb()[:3])))
+
+
+class _Flow(QLayout):
+    """Chips that wrap onto further lines at the cell's width, 6 px apart."""
+
+    def __init__(self, parent=None, gap=6):
+        super().__init__(parent)
+        self._items, self._gap = [], gap
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def order(self, widgets):
+        by_widget = {item.widget(): item for item in self._items}
+        self._items = [by_widget[widget] for widget in widgets if widget in by_widget]
+        self.invalidate()
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._place(QRect(0, 0, width, 0), False)
+
+    def minimumHeightForWidth(self, width):
+        return self.heightForWidth(width)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._place(rect, True)
+
+    def sizeHint(self):
+        shown = [item for item in self._items if not item.isEmpty()]
+        width = sum(item.sizeHint().width() for item in shown) + self._gap * max(0, len(shown) - 1)
+        return QSize(width, CHIP_HEIGHT)
+
+    def minimumSize(self):
+        shown = [item for item in self._items if not item.isEmpty()]
+        return QSize(max((item.minimumSize().width() for item in shown), default=0), CHIP_HEIGHT if shown else 0)
+
+    def _place(self, rect, apply):
+        x, y, line = rect.x(), rect.y(), 0
+        for item in self._items:
+            if item.isEmpty():
+                continue
+            hint = item.sizeHint()
+            width = min(hint.width(), max(1, rect.width()))
+            if x > rect.x() and x + width > rect.x() + rect.width():
+                x, y = rect.x(), y + line + self._gap
+                line = 0
+            if apply:
+                item.setGeometry(QRect(QPoint(x, y), QSize(width, hint.height())))
+            x += width + self._gap
+            line = max(line, hint.height())
+        return y + line - rect.y() if line else 0
+
+
+class _Segment(QPushButton):
+    """One third of a contact chip's bar: a 9 px wide button laid over the drawn bar."""
+
+    def __init__(self, parent, callback):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFlat(True)
+        self.restyle()
+        self.clicked.connect(lambda _checked=False: callback())
+
+    def restyle(self):
+        self.setStyleSheet("QPushButton { background: transparent; border: 0; padding: 0; min-width: 0; min-height: 0; }"
+                           " QPushButton[keyboard_ring=\"true\"]:focus { border: 1px solid " + theme.colour("signal") + "; }")
+
+    def nextCheckState(self):
+        pass
+
+
+class _Chip(QPushButton):
+    """One side of This PC as a chip: a drawn icon, the label, and for the contact side a thirds bar."""
+
+    def __init__(self, side, on_click, on_third):
+        super().__init__()
+        self.side, self.kind, self.text_, self.picked = side, "free", "", ()
+        self.edge_on = False
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(CHIP_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setStyleSheet("QPushButton { padding: 0; min-width: 0; min-height: 0; }")
+        self.setFont(theme.font(12))
+        self.clicked.connect(lambda _checked=False: on_click(self.side))
+        self.segments = {}
+        for third in ways.PARTS:
+            segment = _Segment(self, lambda third=third: on_third(third))
+            segment.hide()
+            self.segments[third] = segment
+
+    def nextCheckState(self):
+        pass
+
+    def set_state(self, kind, text, on, tooltip, name, edge_on=False, picked=(), enabled=True, segments_enabled=True):
+        self.kind, self.text_, self.edge_on, self.picked = kind, text, edge_on, tuple(picked)
+        self.setFont(theme.font(12))
+        self.setToolTip(tooltip)
+        self.setAccessibleName(name)
+        self.setEnabled(enabled)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if enabled else Qt.CursorShape.ArrowCursor)
+        self.blockSignals(True)
+        self.setChecked(on)
+        self.blockSignals(False)
+        for third, segment in self.segments.items():
+            segment.restyle()
+            segment.setVisible(kind == "contact")
+            segment.setEnabled(segments_enabled)
+            title = ways.part_names(self.side)[third]
+            lit = edge_on and third in picked
+            segment.setAccessibleName(f"{SIDE_NAMES[self.side]} edge, {title.lower()} third, {'on' if lit else 'off'}")
+            segment.setToolTip(f"{title} third: click to {'leave it out' if lit else 'turn it on'}")
+            segment.blockSignals(True)
+            segment.setChecked(lit)
+            segment.blockSignals(False)
+        self.updateGeometry()
+        self.update()
+
+    def _natural(self):
+        advance = QFontMetrics(self.font()).horizontalAdvance(self.text_)
+        return 8 + 14 + 6 + advance + 10 + (28 if self.kind == "contact" else 0) + 2
+
+    def sizeHint(self):
+        return QSize(self._natural(), CHIP_HEIGHT)
+
+    def minimumSizeHint(self):
+        return QSize(min(self._natural(), 84), CHIP_HEIGHT)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        bar_x = self.width() - 10 - 22
+        for index, segment in enumerate(self.segments.values()):
+            centre = bar_x + 1 + index * 7.3 + 2.5
+            segment.setGeometry(round(centre - 4.5), 2, 9, CHIP_HEIGHT - 4)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.update()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.update()
+
+    def _icon(self, painter, colour):
+        pen = QPen(colour, 1.5)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.save()
+        painter.translate(8, (CHIP_HEIGHT - 14) / 2)
+        path = QPainterPath()
+        if self.kind == "free":
+            path.moveTo(7, 3)
+            path.lineTo(7, 11)
+            path.moveTo(3, 7)
+            path.lineTo(11, 7)
+        elif self.kind in ("on", "kept"):
+            path.moveTo(10.5, 4.5)
+            path.lineTo(5, 4.5)
+            path.arcTo(QRectF(2.5, 4.5, 5, 5), 90, 180)
+            path.lineTo(11, 9.5)
+            path.moveTo(9, 7.5)
+            path.lineTo(11, 9.5)
+            path.lineTo(9, 11.5)
+        else:
+            path.moveTo(2, 2.5)
+            path.lineTo(2, 11.5)
+            path.moveTo(5, 7)
+            path.lineTo(12, 7)
+            path.moveTo(9.5, 4.5)
+            path.lineTo(12, 7)
+            path.lineTo(9.5, 9.5)
+        painter.drawPath(path)
+        painter.restore()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        kind, live = self.kind, self.isEnabled()
+        lit = kind == "on" or (kind == "contact" and self.edge_on)
+        hover = self.underMouse() and live
+        pressed = self.isDown() and live
+        border, fill, ink, icon = _tone("edge"), None, _tone("ink_2"), _tone("ink_2")
+        dashed = False
+        if lit:
+            border, fill, ink, icon = _tone("signal"), _tone("signal_dim"), _tone("ink"), _tone("signal")
+        elif kind == "contact":
+            ink = icon = _tone("ink_3")
+        elif kind == "kept":
+            border, ink, icon, dashed = _tone("signal", .45), _tone("ink_3"), _tone("ink_3"), True
+        elif kind == "free":
+            dashed = True
+        elif kind == "held":
+            border, ink, icon = _tone("rule"), _tone("ink_3"), _tone("ink_3")
+            painter.setOpacity(.45)
+        if pressed:
+            border, fill, ink, dashed = _tone("signal"), _mix("signal_dim", "signal", .12), _tone("ink"), False
+        elif hover:
+            border, fill, ink, dashed = _tone("ink_2"), _mix("panel", "well", .5), _tone("ink"), False
+        rect = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
+        pen = QPen(border, 1)
+        if dashed:
+            pen.setDashPattern([3.0, 3.0])
+        painter.setPen(pen)
+        painter.setBrush(fill if fill is not None else Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect, 5, 5)
+        if pressed:
+            painter.setPen(QPen(QColor(0, 0, 0, 90), 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 4, 4)
+        self._icon(painter, icon)
+        bar = 28 if kind == "contact" else 0
+        painter.setFont(self.font())
+        painter.setPen(ink)
+        room = max(1, self.width() - 28 - 10 - bar)
+        painter.drawText(QRectF(28, 0, room, CHIP_HEIGHT), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                         QFontMetrics(self.font()).elidedText(self.text_, Qt.TextElideMode.ElideRight, round(room)))
+        if kind == "contact":
+            bar_x = self.width() - 10 - 22
+            for index, third in enumerate(ways.PARTS):
+                on = self.edge_on and third in self.picked
+                stroke = QPen(_tone("signal" if on else "edge"), 3 if on else 1.5)
+                stroke.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(stroke)
+                start = bar_x + 1 + index * 7.3
+                painter.drawLine(QPointF(start, CHIP_HEIGHT / 2), QPointF(start + 5, CHIP_HEIGHT / 2))
+        if widgets.focus_ring_visible(self):
+            painter.setOpacity(1)
+            painter.setPen(QPen(_tone("signal"), 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 5, 5)
+        painter.end()
+
+
+class EdgeChips(QWidget):
+    """The Edges cell: the contact side first, then left, right, top and bottom, as chips."""
+
+    def __init__(self, peer, owner, parent=None):
+        super().__init__(parent)
+        self.setProperty("vernier", "plain")
+        self.setMinimumWidth(0)
+        self.flow = _Flow(self)
+        self.chips = {side: _Chip(side, lambda side, peer=peer: self._clicked(peer, owner, side),
+                                  lambda third, peer=peer: owner._ledger_third(peer, third)) for side in ways.EDGES}
+        for chip in self.chips.values():
+            self.flow.addWidget(chip)
+            chip.hide()
+        self.kinds = {}
+
+    def _clicked(self, peer, owner, side):
+        if self.kinds.get(side) == "contact":
+            owner._ledger_edge(peer)
+        else:
+            owner._ledger_side(peer, side)
+
+    def reflect(self, sides, name, labels, edge_on, picked, contact, left_out):
+        order = ([contact] if contact else []) + [side for side in ways.EDGES if side != contact]
+        self.flow.order([self.chips[side] for side in order])
+        self.kinds = {side: sides.get(side, {}).get("state", "unavailable") for side in ways.EDGES}
+        lock = "Left out: Put back to change its ways"
+        for side in ways.EDGES:
+            chip, kind = self.chips[side], self.kinds[side]
+            title = SIDE_NAMES[side]
+            if kind == "unavailable" or left_out and kind in ("free", "held"):
+                # A left-out row shows only the ways it keeps.
+                chip.hide()
+                continue
+            held_by = labels.get(sides[side].get("by"), "Another machine") if kind == "held" else ""
+            if kind == "contact":
+                answer = "turn it off" if edge_on else "turn it on"
+                chip.set_state("contact", title, edge_on, lock if left_out else f"{title} edge: touches {name}; click to {answer}",
+                               f"{title} edge, touches {name}, {'on' if edge_on else 'off'}", edge_on, picked,
+                               enabled=not left_out, segments_enabled=not left_out)
+            elif kind == "on":
+                chip.set_state("on", f"{title}, wraps", True, lock if left_out else f"{title} edge wraps round to {name}; click to remove",
+                               f"{title} edge, wraps round, on", enabled=not left_out)
+            elif kind == "kept":
+                chip.set_state("kept", f"{title}, wraps", False,
+                               lock if left_out else (f"{title} edge wraps round to {name} once Edge is on; click to turn Edge on" if not edge_on
+                                                      else f"{title} edge: none of it is free just now; click to remove"),
+                               f"{title} edge, wraps round, kept", enabled=not left_out)
+            elif kind == "held":
+                chip.set_state("held", f"{title}, {held_by}", False, f"{title} edge: {held_by}'s",
+                               f"{title} edge, held by {held_by}", enabled=False)
             else:
-                x = 10.5 if detail.endswith("left") else 39.5
-                y = 10.5 if detail.startswith("top") else 27.5
-                hit = QRectF(x - 7, y - 7, 14, 14)
-                title = detail.replace("_", " ").capitalize()
-                on = corner == detail
-                name = f"{title} corner, {'on' if on else 'off'}"
-                tooltip = (f"{self.holders[detail]}'s corner" if detail in self.holders else
-                           f"{title} corner: click to {'turn it off' if on else 'move the corner here' if corner else 'turn it on'}")
-                allowed = detail not in self.holders
-            button.setGeometry(hit.toAlignedRect())
-            button.setAccessibleName(name)
-            button.setToolTip("Left out: Put back to change its ways" if left_out else tooltip)
-            button.setEnabled(allowed and not left_out)
-            button.blockSignals(True)
-            button.setChecked(on)
-            button.blockSignals(False)
+                chip.set_state("free", title, False, lock if left_out else f"{title} edge: click to wrap round to {name}",
+                               f"{title} edge, wraps round, off", enabled=not left_out)
+            chip.show()
+        self.updateGeometry()
+
+    def any_shown(self):
+        return any(kind != "unavailable" for kind in self.kinds.values())
+
+
+class _CornerButton(QPushButton):
+    """One corner of This PC: a 28 px square with an L bracket drawn at that corner."""
+
+    def __init__(self, corner, callback):
+        super().__init__()
+        self.corner, self.kind = corner, "unavailable"
+        self.setCheckable(True)
+        self.setFixedSize(28, 28)
+        self.setStyleSheet("QPushButton { padding: 0; min-width: 0; min-height: 0; }")
+        self.clicked.connect(lambda _checked=False: callback(self.corner))
+
+    def nextCheckState(self):
+        pass
+
+    def set_state(self, kind, tooltip, name, enabled):
+        self.kind = kind
+        self.setToolTip(tooltip)
+        self.setAccessibleName(name)
+        self.setEnabled(enabled)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if enabled else Qt.CursorShape.ArrowCursor)
+        self.blockSignals(True)
+        self.setChecked(kind == "on")
+        self.blockSignals(False)
+        self.update()
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.update()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
         self.update()
 
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor(theme.colour("edge")), 1))
-        painter.setBrush(QColor(theme.colour("well")))
-        rect = QRectF(7.5, 7.5, 35, 23)
-        painter.drawRoundedRect(rect, 2.5, 2.5)
-        if self.kind == "edge" and self.side:
-            horizontal = self.side in ("top", "bottom")
-            fixed = rect.top() if self.side == "top" else rect.bottom() if self.side == "bottom" else rect.left() if self.side == "left" else rect.right()
-            span = rect.width() if horizontal else rect.height()
-            origin = rect.left() if horizontal else rect.top()
-            for index, third in enumerate(ways.PARTS):
-                on = third in self.picked
-                colour = QColor(theme.colour("signal" if on else "edge"))
-                colour.setAlphaF(1 if on else .7)
-                pen = QPen(colour, 3 if on else 1.5)
-                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-                painter.setPen(pen)
-                start, end = origin + index * span / 3 + 1, origin + (index + 1) * span / 3 - 1
-                painter.drawLine(QPointF(start, fixed), QPointF(end, fixed)) if horizontal else painter.drawLine(QPointF(fixed, start), QPointF(fixed, end))
-        elif self.kind == "corner":
-            for corner in ways.CORNERS:
-                x = 10.5 if corner.endswith("left") else 39.5
-                y = 10.5 if corner.startswith("top") else 27.5
-                on, held = corner == self.corner, corner in self.holders
-                colour = QColor(theme.colour("signal" if on or held else "edge"))
-                colour.setAlphaF(.45 if held else 1)
-                painter.setPen(QPen(colour, 1))
-                painter.setBrush(colour if on else Qt.BrushStyle.NoBrush)
-                radius = 3.2 if on else 2
-                painter.drawEllipse(QPointF(x, y), radius, radius)
+        kind = self.kind
+        hover = self.underMouse() and self.isEnabled()
+        pressed = self.isDown() and self.isEnabled()
+        border, fill, bracket, dashed, opacity = _tone("edge"), None, _tone("ink_2"), True, 1.0
+        if kind == "on":
+            border, fill, bracket, dashed = _tone("signal"), _tone("signal"), _tone("ground"), False
+        elif kind == "held":
+            border, bracket, dashed = _tone("signal", .35), _tone("signal", .5), False
+        elif kind == "unavailable":
+            opacity = .4
+        if pressed:
+            border, fill, dashed = _tone("signal"), _mix("signal_dim", "signal", .12), False
+            bracket = _tone("ink")
+        elif hover:
+            border, dashed = _tone("ink_2"), False
+            fill = fill if fill is not None else _mix("panel", "well", .5)
+        painter.setOpacity(opacity)
+        pen = QPen(border, 1)
+        if dashed:
+            pen.setDashPattern([3.0, 3.0])
+        painter.setPen(pen)
+        painter.setBrush(fill if fill is not None else Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 5, 5)
+        vertical, horizontal = self.corner.split("_")
+        dx, dy = (1 if horizontal == "left" else -1), (1 if vertical == "top" else -1)
+        x, y = (10 if horizontal == "left" else 18), (10 if vertical == "top" else 18)
+        stroke = QPen(bracket, 1.8)
+        stroke.setCapStyle(Qt.PenCapStyle.RoundCap)
+        stroke.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(stroke)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        path = QPainterPath(QPointF(x, y + dy * 7))
+        path.lineTo(x, y)
+        path.lineTo(x + dx * 7, y)
+        painter.drawPath(path)
+        if widgets.focus_ring_visible(self):
+            painter.setOpacity(1)
+            painter.setPen(QPen(_tone("signal"), 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 5, 5)
         painter.end()
+
+
+class CornerGrid(QWidget):
+    """The Corners cell: a 2 x 2 grid of corner buttons in screen order."""
+
+    def __init__(self, peer, owner, parent=None):
+        super().__init__(parent)
+        self.setProperty("vernier", "plain")
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(4)
+        self.buttons = {}
+        for index, corner in enumerate(("top_left", "top_right", "bottom_left", "bottom_right")):
+            button = _CornerButton(corner, lambda corner, peer=peer: owner._ledger_corner(peer, corner))
+            self.buttons[corner] = button
+            grid.addWidget(button, index // 2, index % 2)
+        self.setFixedWidth(60)
+
+    def reflect(self, corners, name, labels, platform_word, left_out):
+        lock = "Left out: Put back to change its ways"
+        for corner, button in self.buttons.items():
+            kind = corners.get(corner, {}).get("state", "unavailable")
+            title = CORNER_TITLES[corner]
+            if kind == "held":
+                holder = labels.get(corners[corner].get("by"), "Another machine")
+                button.set_state("held", lock if left_out else f"{holder}'s corner", f"{title} corner, held by {holder}", False)
+            elif kind == "unavailable":
+                button.set_state("unavailable", lock if left_out else f"Place {name} beside this {platform_word} first",
+                                 f"{title} corner, unavailable", False)
+            else:
+                on = kind == "on"
+                button.set_state(kind, lock if left_out else f"{title} corner: click to turn it {'off' if on else 'on'}",
+                                 f"{title} corner, {'on' if on else 'off'}", not left_out)
 
 
 class _Name(QLabel):
@@ -223,6 +588,10 @@ class _Cycle(QCheckBox):
         painter.end()
 
 
+# Machine, Edges, Corners, Keys: minimum width and stretch, the spec's minmax(132, 1.3fr), minmax(220, 2fr), 70, minmax(128, 1fr).
+COLUMNS = (("Machine", 132, 13), ("Edges", 220, 20), ("Corners", 70, 0), ("Keys", 128, 10))
+
+
 class LedgerRow(QFrame):
     def minimumSizeHint(self):
         return QSize(0, self.grid.minimumSize().height())
@@ -280,36 +649,20 @@ class LedgerRow(QFrame):
         actions.addWidget(self.leave)
         actions.addStretch()
         machine.addLayout(actions)
-        self.edge_glyph = ScreenGlyph("edge", lambda third: owner._ledger_third(peer, third))
-        self.corner_glyph = ScreenGlyph("corner", lambda corner: owner._ledger_corner(peer, corner))
-        self.edge_text = _quiet("", lambda: owner._ledger_edge(peer))
-        self.edge_text.setMaximumHeight(16777215)
-        self.edge_text.setMinimumHeight(40)
-        text = QVBoxLayout(self.edge_text)
-        text.setContentsMargins(0, 0, 0, 0)
-        text.setSpacing(1)
-        text.setSizeConstraint(text.SizeConstraint.SetMinimumSize)
-        self.edge_value = widgets.label("", "body", wrap=True)
-        self.edge_detail = widgets.label("", "small", wrap=True)
-        for label in (self.edge_value, self.edge_detail):
-            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-            text.addWidget(label)
-        for cell, glyph, content in ((self.edge, self.edge_glyph, self.edge_text), (self.corner_cell, self.corner_glyph, None)):
-            box = QHBoxLayout(cell)
-            box.setContentsMargins(0, 0, 0, 0)
-            box.setSpacing(4)
-            box.addWidget(glyph, 0, Qt.AlignmentFlag.AlignTop)
-            if content is None:
-                content = QWidget()
-                content.setProperty("vernier", "plain")
-                texts = QVBoxLayout(content)
-                texts.setContentsMargins(0, 0, 0, 0)
-                texts.setSpacing(1)
-                self.corner_value = widgets.label("", "body", wrap=True)
-                self.corner_detail = widgets.label("", "small", wrap=True)
-                texts.addWidget(self.corner_value)
-                texts.addWidget(self.corner_detail)
-            box.addWidget(content, 1, Qt.AlignmentFlag.AlignTop)
+        machine.addStretch()
+        self.edge_chips = EdgeChips(peer, owner)
+        edges = QVBoxLayout(self.edge)
+        edges.setContentsMargins(0, 0, 0, 0)
+        edges.setSpacing(2)
+        edges.addWidget(self.edge_chips, 0, Qt.AlignmentFlag.AlignTop)
+        self.edge_note = widgets.label("Place it on the map", "small", wrap=True)
+        edges.addWidget(self.edge_note, 0, Qt.AlignmentFlag.AlignTop)
+        edges.addStretch()
+        self.corner_grid = CornerGrid(peer, owner)
+        corners = QVBoxLayout(self.corner_cell)
+        corners.setContentsMargins(0, 0, 0, 0)
+        corners.addWidget(self.corner_grid, 0, Qt.AlignmentFlag.AlignTop)
+        corners.addStretch()
         keys = QVBoxLayout(self.keys)
         keys.setContentsMargins(0, 0, 0, 0)
         keys.setSpacing(4)
@@ -344,20 +697,24 @@ class LedgerRow(QFrame):
             self.grid.setColumnStretch(col, 0)
         if narrow:
             self.grid.addWidget(self.machine, 0, 0, 1, 2)
-            self.grid.addWidget(self.edge, 1, 0)
-            self.grid.addWidget(self.corner_cell, 1, 1)
-            self.grid.addWidget(self.keys, 2, 0, 1, 2)
-            self.grid.setColumnStretch(0, 1)
+            self.grid.addWidget(self.edge, 1, 0, 1, 2)
+            self.grid.addWidget(self.corner_cell, 2, 0)
+            self.grid.addWidget(self.keys, 2, 1)
+            self.grid.setColumnMinimumWidth(0, COLUMNS[2][1])
             self.grid.setColumnStretch(1, 1)
         else:
-            for index, (cell, minimum, stretch) in enumerate(zip(self.cells, (132, 124, 104, 128), (13, 10, 9, 10))):
+            for index, (cell, (_title, minimum, stretch)) in enumerate(zip(self.cells, COLUMNS)):
                 self.grid.addWidget(cell, 0, index)
                 self.grid.setColumnMinimumWidth(index, minimum)
                 self.grid.setColumnStretch(index, stretch)
 
-    def reflect(self, settings, entry, name, side, linked, selected, trigger, labels, legacy=""):
-        self._reflection = (settings, entry, name, side, linked, selected, trigger, labels, legacy)
-        for button in (self.rename, self.leave, self.edge_text, self.clear):
+    def reflect(self, settings, entry, name, side, linked, selected, trigger, labels, legacy="", reach=None):
+        seen = (theme.is_dark(), id(settings), repr(entry), name, side, linked, selected, trigger, repr(labels), legacy, repr(reach))
+        if seen == getattr(self, "_reflection_seen", None):
+            return
+        self._reflection_seen = seen
+        self._reflection = (settings, entry, name, side, linked, selected, trigger, labels, legacy, reach)
+        for button in (self.rename, self.leave, self.clear):
             _quiet_style(button)
         self.entry, self.left_out, self.selected = entry, bool(entry.get("left_out")), selected
         self.setAccessibleName(name)
@@ -374,21 +731,16 @@ class LedgerRow(QFrame):
         self.leave.setToolTip("Left out machines stay paired and linked. The shortcut, menu and clipboard still reach them." if self.left_out else "Leave this machine out of crossings")
         held = ways.ways(settings, self.peer)
         picked = ways.picked_thirds(held["methods"], held["parts"])
-        on = bool(picked) and bool(side)
-        self.edge_glyph.reflect(side, picked if on else (), left_out=self.left_out)
-        self.edge_value.setText(ways.edge_form_detail(side, held["methods"], held["parts"], here="This PC") if on else "Off")
-        self.edge_value.setStyleSheet(f"color: {theme.colour('ink' if on else 'ink_3')}")
-        self.edge_detail.setText(f"{side} edge{' off' if not on else ''}" if side else "place it on the map")
-        self.edge_text.setEnabled(bool(side) and not self.left_out)
-        self.edge_text.setToolTip("Left out: Put back to change its ways" if self.left_out else "Edge: click to turn it off" if on else f"Edge: click for the whole {side} edge")
-        self.edge_text.setAccessibleName(f"Edge, {'whole ' + side + ' edge' if len(picked) == 3 and side else self.edge_value.text().lower()}")
-        corner = held["corner"] if "corner" in held["methods"] else ""
-        holders = {c: labels.get(holder, "Another machine") for c in ways.CORNERS
-                   if (holder := ways.corner_holder(settings, c, exclude=self.peer))}
-        self.corner_glyph.reflect(corner=corner, holders=holders, left_out=self.left_out)
-        self.corner_value.setText(corner.replace("_", " ").capitalize() if corner else "None")
-        self.corner_value.setStyleSheet(f"color: {theme.colour('ink' if corner else 'ink_3')}")
-        self.corner_detail.setText("diagonal push" if corner else "click a dot")
+        edge_on = bool(picked)
+        reach = reach or {}
+        # A left-out row's reach is answered as if put back; `self.left_out` makes it inert below.
+        sides, corners = reach.get("sides", {}), reach.get("corners", {})
+        corners ={corner: ({"state": "on"} if corner in held["corners"] and value.get("state") == "unavailable" else value)
+                   for corner, value in corners.items()}
+        contact = next((edge for edge, value in sides.items() if value.get("state") == "contact"), "")
+        self.edge_chips.reflect(sides, name, labels, edge_on, picked if edge_on else (), contact, self.left_out)
+        self.edge_note.setVisible(not self.edge_chips.any_shown())
+        self.corner_grid.reflect(corners, name, labels, "PC", self.left_out)
         self.cycle.blockSignals(True)
         self.cycle.setText(trigger)
         self.cycle.setChecked(entry.get("shortcut_cycle", True))
@@ -458,7 +810,7 @@ class CrossingLedger(QWidget):
         head = QGridLayout(self.header)
         head.setContentsMargins(12, 0, 0, 8)
         head.setHorizontalSpacing(16)
-        for index, (title, minimum, stretch) in enumerate(zip(("Machine", "Edge", "Corner", "Keys"), (132, 124, 104, 128), (13, 10, 9, 10))):
+        for index, (title, minimum, stretch) in enumerate(COLUMNS):
             label = widgets.Eyebrow(title)
             label.setProperty("ledger_role", "columnheader")
             label.setAccessibleName(title)
@@ -475,7 +827,7 @@ class CrossingLedger(QWidget):
     def refresh_colours(self):
         self.header.setStyleSheet(f"border-bottom: 1px solid {theme.colour('rule')};")
 
-    def reflect(self, settings, layout, labels, chosen, live, trigger, legacy=None):
+    def reflect(self, settings, layout, labels, chosen, live, trigger, legacy=None, reach=None):
         self.header.setStyleSheet(f"border-bottom: 1px solid {theme.colour('rule')};")
         entries = {p["id"]: p for p in settings.get("peers", [])}
         order = sorted(entries, key=lambda p: (0, layout[p]["x"], layout[p]["y"]) if p in layout else (1, 0, 0))
@@ -483,6 +835,8 @@ class CrossingLedger(QWidget):
             row = self.rows.pop(peer)
             row.jump.cancel()
             self.column.removeWidget(row)
+            row.hide()
+            row.setParent(None)
             row.deleteLater()
         for index, peer in enumerate(order):
             row = self.rows.get(peer)
@@ -496,7 +850,7 @@ class CrossingLedger(QWidget):
             tile = layout.get(peer)
             contact = ways._rect_contact(own, tile) if own and tile else None
             side = contact[0] if contact and contact[0] != "corner" else ""
-            row.reflect(settings, entries[peer], labels.get(peer, "Other machine"), side, live(peer), chosen == peer, trigger, labels, (legacy or {}).get(peer, ""))
+            row.reflect(settings, entries[peer], labels.get(peer, "Other machine"), side, live(peer), chosen == peer, trigger, labels, (legacy or {}).get(peer, ""), (reach or {}).get(peer))
         self.setVisible(bool(entries))
 
     def resizeEvent(self, event):

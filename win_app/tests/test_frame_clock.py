@@ -27,6 +27,14 @@ class FrameClockTests(unittest.TestCase):
                     return_value=[] if rate == 0.0 else [SimpleNamespace(refreshRate=lambda: screen_rate)]):
                 self.assertEqual(frame_clock.frame_interval_ms(), expected)
 
+    def test_interval_applies_the_selected_divisor(self):
+        self.addCleanup(frame_clock.set_divisor, 1)
+        with mock.patch.object(frame_clock, "refresh_rate", return_value=120.0):
+            for divisor, expected in ((1, 8), (2, 16), (4, 33)):
+                with self.subTest(divisor=divisor):
+                    frame_clock.set_divisor(divisor)
+                    self.assertEqual(frame_clock.frame_interval_ms(), expected)
+
     def test_with_no_widget_the_fastest_screen_paces_the_clock(self):
         screens = [SimpleNamespace(refreshRate=lambda: 60.0), SimpleNamespace(refreshRate=lambda: 120.0)]
         with mock.patch.object(frame_clock.QGuiApplication, "screens", return_value=screens):

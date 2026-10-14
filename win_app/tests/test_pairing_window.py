@@ -7,16 +7,18 @@ import socket
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core import pairing, peerlist, protocol, ways
+from core import feature_flags, pairing, peerlist, protocol, ways
 from core.tests import responder_harness as harness
 
 try:
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QCoreApplication, QEvent, Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
 
@@ -50,8 +52,11 @@ class MachinesWindowTest(unittest.TestCase):
 
     def tearDown(self):
         if self.window is not None:
+            self.window.hide()
             self.window.server.stop()
             self.window.deleteLater()
+            self.app.processEvents()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def open(self, *entries, **top):
         settings = app_config.load_settings(self.path)
@@ -181,6 +186,7 @@ class MachinesWindowTest(unittest.TestCase):
         again = kvm_bridge_win.WindowsApplication(self.path)
         self.stub(again)
         self.assertEqual((again._config.appearance, again._config.pointer_speed), ("dark", 1.5))
+        again.server.stop()
         again.deleteLater()
 
     def test_a_switch_writes_that_machines_entry_only(self):
@@ -384,7 +390,8 @@ class MachinesWindowTest(unittest.TestCase):
 
         saved = self.settings()["peers"][0]
         self.assertEqual(saved["token"], TOKEN_B)
-        self.assertEqual(saved["ways"], intent)
+        # A 1.5.2 intent is read losslessly: its one corner becomes the corners list.
+        self.assertEqual(saved["ways"], {**intent, "edges": [], "corners": ["top_right"]})
         self.assertFalse(saved["shortcut_cycle"])
         self.assertEqual(saved["jump_key"], "ctrl+shift+2")
 
@@ -411,10 +418,11 @@ class MachinesWindowTest(unittest.TestCase):
         new_id = protocol.id_text(b"\x0c" * 16)
         from display_map_fixture import display_fields
         self.assertEqual(after["zones"], [{"peer": new_id, "kind": "edge", "side": "top",
+                                          "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0],
                                           **display_fields(window)}])
         self.assertEqual(after["peers"][0]["ways"],
-                         {"edge": True, "thirds": list(ways.PARTS), "corner": False,
-                          "corner_at": "top_left", "notch": False})
+                         {"edge": True, "thirds": list(ways.PARTS), "edges": [], "corner": False,
+                          "corner_at": "top_left", "corners": [], "notch": False})
         self.assertEqual((after["peers"][0]["side"], after["peers"][0]["side_set_at"]), ("top", 1_790_000_000))
         self.assertFalse(after["peers"][0]["shortcut_cycle"])
         self.assertEqual(after["peers"][0]["jump_key"], "ctrl+shift+2")
@@ -431,6 +439,7 @@ class MachinesWindowTest(unittest.TestCase):
         side = ways._rect_contact(after["layout"][after["machine_id"]], after["layout"][new_id])[0]
         from display_map_fixture import display_fields
         self.assertEqual(after["zones"], [{"peer": new_id, "kind": "edge", "side": side,
+                                          "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0],
                                           **display_fields(window)}])
         self.assertEqual(after["peers"][0]["side"], side)
         self.assertNotEqual(side, "top")
@@ -443,6 +452,9 @@ class MachinesWindowTest(unittest.TestCase):
 @unittest.skipIf(kvm_bridge_win is None, "needs PySide6")
 class PairingSheetWindowTest(unittest.TestCase):
     def setUp(self):
+        self.phone_pairing_flag = mock.patch.object(feature_flags, "PAIRING_QR_VISIBLE", True)
+        self.phone_pairing_flag.start()
+        self.addCleanup(self.phone_pairing_flag.stop)
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         self.app = QApplication.instance() or QApplication([])
         theme.init_fonts()
@@ -460,9 +472,12 @@ class PairingSheetWindowTest(unittest.TestCase):
         self.window._toggle_pairing_sheet()
 
     def tearDown(self):
-        self.service.cancel_pairing()
+        self.service.stop()
+        self.window.hide()
         self.window.server.stop()
         self.window.deleteLater()
+        self.app.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def show_code(self):
         self.window._show_code()
@@ -474,6 +489,26 @@ class PairingSheetWindowTest(unittest.TestCase):
         self.assertTrue(self.window.sheet.code_showing)
         self.assertTrue(self.window.sheet.count_label.text().startswith("Expires in "))
 
+    def test_pair_phone_button_opens_the_sheet_and_generates_a_qr_in_one_click(self):
+        self.window._toggle_pairing_sheet()
+        self.window._pairing_address = lambda: "192.0.2.20"
+        self.window.machines.pair_phone_button.click()
+
+        self.assertTrue(self.window._pairing_open)
+        self.assertTrue(self.window.sheet.code_showing)
+        self.assertIsNotNone(self.service.code)
+        self.assertFalse(self.window.sheet.qr.isHidden())
+        self.assertIn("192.0.2.20", self.window.sheet.address_note.text())
+
+    def test_hiding_the_window_cancels_an_active_nearby_window(self):
+        from PySide6.QtGui import QHideEvent
+
+        self.service.begin_nearby()
+        self.assertEqual(self.service.nearby_status["state"], "searching")
+        self.window.hideEvent(QHideEvent())
+        self.assertEqual(self.service.nearby_status["state"], "inactive")
+
+    @mock.patch.object(feature_flags, "PAIRING_QR_VISIBLE", False)
     def test_pairing_dialog_hides_the_qr_and_caption(self):
         from PySide6.QtGui import QImage
 

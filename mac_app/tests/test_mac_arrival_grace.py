@@ -39,6 +39,26 @@ class ArrivalGrace(unittest.TestCase):
             self.assertGreaterEqual(x, return_edge.LANDING_CLEAR_PX, offset)
             self.assertLessEqual(x, BOUNDS[2] - 1 - return_edge.LANDING_CLEAR_PX, offset)
 
+    def test_coming_home_through_the_notch_lands_mid_notch_just_below_it(self):
+        # 1.5.3: an option to always come home through the same spot.
+        self.assertEqual(CrossingEngine.notch_arrival_point((790, 938), 32, BOUNDS, displays=[BOUNDS]), (864, 34))
+
+    def test_the_bridge_lands_at_the_notch_only_for_the_machine_returning_through_it(self):
+        from types import SimpleNamespace
+        import bridge
+        warped = []
+        fake = SimpleNamespace(
+            notch_range=(790, 938), notch_depth=32, logger=None,
+            book=SimpleNamespace(zones=lambda: [dict(peer="rig", kind="notch", return_here=True)]),
+            _current_desktop_bounds=lambda: BOUNDS, _current_displays=lambda: [BOUNDS],
+            _warp_cursor_to=warped.append, _notify_crossing=lambda *_: None)
+        bridge.KVMController._arrive(fake, "right", 0.5, peer="rig")
+        bridge.KVMController._arrive(fake, "right", 0.5, peer="acg")
+        fake.notch_range = None
+        bridge.KVMController._arrive(fake, "right", 0.5, peer="rig")
+        self.assertEqual(warped[0], (864, 34))
+        self.assertEqual([point[0] for point in warped[1:]], [BOUNDS[2] - 1 - 2.0] * 2)
+
     def test_the_push_that_brought_input_home_does_not_go_on_to_another_machine(self):
         machine = three_ways()
         machine.start_grace(10.0)

@@ -584,7 +584,9 @@ LOCATOR = Effect("locator", "Ring", "quiet", "A ring in the chosen colours close
 # deepening with the push and flashing through at breakthrough, or a thin line with a comet running
 # along it that runs off the end; in a corner, the band along both walls, brightest where they meet.
 CLASSIC_ARM = 200.0
-CLASSIC_FLASH_S = 0.35
+# The flash the real glow plays as the push goes through: the Mac's EdgeGlow.FLASH_SECONDS (the PC's
+# is 0.14). The tiles had 0.35, so Glow lit on for twice as long as it does at the edge.
+CLASSIC_FLASH_S = 0.18
 CLASSIC_FINISH_S = 0.6
 _CLASSIC_COMET = 0.3
 _CLASSIC_STOPS = 24
@@ -642,7 +644,7 @@ def _classic_depart(beam):
         if strength <= 0.0:
             return
         w, h = s.screen.w, s.screen.h
-        full_depth = edge_depth(w, h, getattr(s, "effect_size", "medium"))
+        full_depth = edge_depth(w, h, getattr(s, "effect_size", "medium"), getattr(s, "effect_size_fraction", None))
         depth = full_depth if beam else full_depth * (0.35 + 0.65 * max(pressure, flash))
         # The comet sweeps as the push builds, then runs off the far end after breakthrough.
         centre = -0.15 + 1.1 * pressure if since is None else 0.95 + (1.0 + _CLASSIC_COMET) * (1.0 - finish)
@@ -735,9 +737,10 @@ def pack(pack_id):
     return _load()[1].get(pack_id)
 
 
-def draw(effect_obj, kind, s, origin=(0.0, 0.0)):
+def draw(effect_obj, kind, s, origin=(0.0, 0.0), scale=1.0):
     """One frame of `kind` ("depart" or "arrive") into a new Pen, or None when it draws nothing.
-    `origin` shifts everything drawn, for a scene holding more than one screen. A failing effect
+    `origin` shifts everything drawn, for a scene holding more than one screen, and `scale` shrinks
+    it, strokes and gradients included, for a preview of a full-size screen. A failing effect
     raises; the caller logs it once and turns the effects off for the run."""
     limit = effect_obj.depart_seconds if kind == "depart" else effect_obj.arrive_seconds
     since = getattr(s, "since", None)
@@ -748,6 +751,8 @@ def draw(effect_obj, kind, s, origin=(0.0, 0.0)):
     pen = Pen()
     if origin != (0.0, 0.0):
         pen.translate(*origin)
+    if scale != 1.0:
+        pen.scale(scale, scale)
     (effect_obj.depart if kind == "depart" else effect_obj.arrive)(pen, s)
     if kind == "depart" and since is None and s.pressure < PUSH_FADE:
         # Several designs' reduced-motion pushes draw at a floor opacity however light the push, so
@@ -767,9 +772,21 @@ PREVIEW_NOTCH = {"x": 307.5, "y": 0.0, "w": 185.0, "h": 32.0, "r": 10.0}
 PREVIEW_POINTER = ((0.0, 0.0), (0.0, 1.0), (0.26, 0.76), (0.44, 1.12),
                    (0.56, 1.06), (0.39, 0.7), (0.72, 0.7))
 PREVIEW_LOOP_S = 4.4
+# The previews' screens stand for screens this many times their size: the effects are drawn on a
+# 1600 by 900 desktop, as large as they draw on a real one against its edge, and shrunk whole, so
+# a tile shows the real thing scaled down rather than an effect drawn for a screen half the size.
+PREVIEW_REAL = 2.0
 _P_GLIDE, _P_PUSH, _P_CROSS, _P_REST = 0.4, 0.6, 2.2, 3.4
-# Where still_time looks for a tile's fullest frame, in preview_still_scene's points: the crossing
-# with the screens joined at their seam, and the pointer a switch plays round.
+# Each tile's resting frame, in seconds from the crossing at pace 1 (before it, the push), picked from
+# the effect's real crossing timeline as its most recognisable moment; the renders are in Kalkman-Code's
+# docs/beamer-design-previews-10-10.
+STILL_AT = {"glow": -0.05, "beam": 0.05, "aperture": 0.0, "skin": 0.10, "film": 0.18,
+            "rupture": 0.20, "flint": 0.05, "filings": 0.10, "discharge": 0.10, "rule": 0.0,
+            "gauge": 0.20, "rangefinder": 0.08, "crease": 0.03, "pleat": 0.03,
+            "concertina": 0.03, "thread": 0.10, "weave": 0.10, "jacquard": 0.10}
+# A switch plays only the arrival, round a still pointer: never before 0.1s, and Rupture's rings read
+# best before they spread.
+SWITCH_AT = {"rupture": 0.15}
 PREVIEW_TILE_CROPS = {
     "edge": (680.0, 142.0, 240.0, 120.0),
     "corner": (680.0, -20.0, 240.0, 120.0),
@@ -784,20 +801,22 @@ PREVIEW_TILE_GROUND = "#0e0f0d"
 PREVIEW_TILE_VIEW = {"edge": (150.0, 340.0), "corner": (150.0, 340.0), "notch": (150.0, 540.0),
                      "switch": (150.0, 540.0)}
 PREVIEW_TILE_ROOM = 2.5
-# A still's marks against the live loop's: a still is read at a glance at thumbnail size, a frame
-# of the loop is gone in 16 ms.
-PREVIEW_STILL_ALPHA = 2.2
+# Below and right of the pointer's tip, in scene points, the arrow's body: kept in every crossing's camera.
+PREVIEW_POINTER_ROOM = 24.0
 PREVIEW_LIGHT_CASING = 0.3
 # The most relative luminance a mark keeps on the Light card (#f1f0ea, 0.86): 3.4:1 against it.
 PREVIEW_LIGHT_MARK = 0.22
-PREVIEW_STILL_WIDTH = 1.3
+# A tile is about this many points across, and no stroke in it is drawn thinner than
+# PREVIEW_HAIRLINE points: shrunk whole, an effect's 1pt rules would fall to a third of a pixel and
+# vanish, where on screen they read as the hairlines they are. Every mark is lifted by the same
+# PREVIEW_MARK_ALPHA and PREVIEW_MARK_WIDTH, the least that keeps every tile at 3:1 on its card, still
+# and hovering alike; the 5.9x strokes they replace merged Rupture's rings into one disc and hid its
+# torn membrane.
+PREVIEW_TILE_POINTS = 200.0
+PREVIEW_HAIRLINE = 1.25
+PREVIEW_MARK_ALPHA = 2.8
+PREVIEW_MARK_WIDTH = 1.6
 
-# Fixed cameras leave room for both legs of the pointer journey, including the arrow's body.
-PREVIEW_CROSSING_VIEWS = {
-    "edge": (500.0, 52.5, 600.0, 300.0),
-    "corner": (500.0, -20.0, 600.0, 300.0),
-    "notch": (-40.0, 300.0, 880.0, 440.0),
-}
 
 
 def preview_time(still_at, elapsed=None, reduced=False, switch=False):
@@ -817,7 +836,7 @@ def preview_size(method):
 
 
 def preview_scene(fx, t, method, palette, reduced=False, dark=True, pace=1.0, effect_size="medium",
-                  effect_size_fraction=None, notch_geometry=None, pointer_t=None):
+                  effect_size_fraction=None, notch_geometry=None):
     """The Design pages' loop, identical on both apps: the pointer glides to the Mac's boundary,
     pushes through with three ticks, lands on the PC, and rests. Returns dict(screens=[(x, y, w,
     h, os)], notch=(x, y, w, h, r) or None, pointer=(x, y, os) or None, pens=[Pen]) for time `t`
@@ -826,21 +845,23 @@ def preview_scene(fx, t, method, palette, reduced=False, dark=True, pace=1.0, ef
     w, h = PREVIEW_SCREEN
     if method == "notch":
         pc_origin, mac_origin = (0.0, 0.0), (0.0, h + PREVIEW_GAP)
-        notch = dict(PREVIEW_NOTCH)
+        # PREVIEW_NOTCH and `notch_geometry` are a real notch's points; the scene's screens stand for
+        # screens PREVIEW_REAL times their size, so the notch shrinks with the effects drawn round it.
+        notch = {key: value / PREVIEW_REAL for key, value in PREVIEW_NOTCH.items()}
         if notch_geometry is not None:
-            notch["w"], notch["h"] = notch_geometry
-            notch["x"] = (w - notch["w"]) / 2.0
+            notch["w"], notch["h"] = (value / PREVIEW_REAL for value in notch_geometry)
+        notch["x"] = (w - notch["w"]) / 2.0
         region = {"kind": "notch", "edge": "top", "x": notch["x"], "y": 0.0, "w": notch["w"], "h": 1.0}
-        at, start = (w / 2.0, 0.0), (w / 2.0 - 90.0, 220.0)
-        land, land_edge, inside = (w / 2.0 + 10.0, h - 2.0), "bottom", (w / 2.0 + 40.0, h - 140.0)
+        at, start = (w / 2.0, 0.0), (w / 2.0 - 50.0, 80.0)
+        land, land_edge, inside = (w / 2.0 + 10.0, h - 2.0), "bottom", (w / 2.0 + 30.0, h - 70.0)
     else:
         mac_origin, pc_origin = (0.0, 0.0), (w + PREVIEW_GAP, 0.0)
         if method == "corner":
             region = {"kind": "corner", "edge": "right", "corner": "top_right", "x": w - 8.0, "y": 0.0, "w": 8.0, "h": 8.0}
-            at, start, land, inside = (w - 1.0, 0.0), (w - 220.0, 160.0), (2.0, 4.0), (200.0, 140.0)
+            at, start, land, inside = (w - 1.0, 0.0), (w - 120.0, 90.0), (2.0, 4.0), (100.0, 80.0)
         else:
             region = {"kind": "edge", "edge": "right", "x": w - 1.0, "y": 0.0, "w": 1.0, "h": h}
-            at, start, land, inside = (w - 1.0, h * 0.45), (w - 260.0, h * 0.55), (2.0, h * 0.45), (240.0, h * 0.5)
+            at, start, land, inside = (w - 1.0, h * 0.45), (w - 110.0, h * 0.52), (2.0, h * 0.45), (100.0, h * 0.48)
         land_edge, notch = "left", None
     scene = {
         "screens": [mac_origin + (w, h, "mac"), pc_origin + (w, h, "windows")],
@@ -850,7 +871,11 @@ def preview_scene(fx, t, method, palette, reduced=False, dark=True, pace=1.0, ef
     }
     common = dict(reduced=reduced, dark=dark)
     palette = legible(palette, dark, fx)
-    mac_notch = notch if method == "notch" else None
+    k = PREVIEW_REAL
+    rw, rh = w * k, h * k
+    real_region = SimpleNamespace(**{key: value * k if key in ("x", "y", "w", "h") else value
+                                     for key, value in region.items()})
+    mac_notch = ({key: value * k for key, value in notch.items()} if method == "notch" else None)
     # At the notch the hardware covers a pointer pinned at y=0. Show the approach just below
     # that cutout and the arrival just inside B; effect states still use the real boundary points.
     pointer_at = (at[0], notch["h"] + 8.0) if method == "notch" else at
@@ -870,28 +895,27 @@ def preview_scene(fx, t, method, palette, reduced=False, dark=True, pace=1.0, ef
             if index:
                 crossed_at = _P_PUSH + (_P_CROSS - _P_PUSH) * math.acos(1.0 - 2.0 * index / 4.0) / math.pi
                 tick = SimpleNamespace(index=index, age=t - crossed_at)
-            s = state(w, h, "mac", method, palette, notch=mac_notch, region=SimpleNamespace(**region),
-                      point=point(*at), along=at[1] / h if region["edge"] == "right" else at[0] / w,
+            s = state(rw, rh, "mac", method, palette, notch=mac_notch, region=real_region,
+                      point=point(at[0] * k, at[1] * k), along=at[1] / h if region["edge"] == "right" else at[0] / w,
                       pressure=pressure, tick=tick, since=None, pace=pace, effect_size=effect_size,
                       effect_size_fraction=effect_size_fraction, **common)
-            pen = draw(fx, "depart", s, mac_origin)
+            pen = draw(fx, "depart", s, mac_origin, 1.0 / k)
             if pen is not None:
                 scene["pens"].append(pen)
         return scene
     since = (t - _P_CROSS) / pace
-    s = state(w, h, "mac", method, palette, notch=mac_notch, region=SimpleNamespace(**region), point=point(*at),
+    s = state(rw, rh, "mac", method, palette, notch=mac_notch, region=real_region, point=point(at[0] * k, at[1] * k),
               along=0.5, pressure=0.0, tick=None, since=since, pace=pace, effect_size=effect_size,
               effect_size_fraction=effect_size_fraction, **common)
-    pen = draw(fx, "depart", s, mac_origin)
+    pen = draw(fx, "depart", s, mac_origin, 1.0 / k)
     if pen is not None:
         scene["pens"].append(pen)
-    s = state(w, h, "windows", method, palette, point=point(*land), edge=land_edge, since=since, pace=pace,
+    s = state(rw, rh, "windows", method, palette, point=point(land[0] * k, land[1] * k), edge=land_edge, since=since, pace=pace,
               effect_size=effect_size, effect_size_fraction=effect_size_fraction, **common)
-    pen = draw(fx, "arrive", s, pc_origin)
+    pen = draw(fx, "arrive", s, pc_origin, 1.0 / k)
     if pen is not None:
         scene["pens"].append(pen)
-    # `pointer_t` places the landed pointer at another moment than the effect, as a still does.
-    u = ease_in_out(clamp(((t if pointer_t is None else pointer_t) - _P_CROSS - 0.1) / (_P_REST - _P_CROSS - 0.1)))
+    u = ease_in_out(clamp((t - _P_CROSS - 0.1) / (_P_REST - _P_CROSS - 0.1)))
     p = (lerp(pointer_land[0], inside[0], u), lerp(pointer_land[1], inside[1], u))
     scene["pointer"] = (pc_origin[0] + p[0], pc_origin[1] + p[1], "windows")
     return scene
@@ -916,10 +940,11 @@ def preview_switch_scene(fx, t, palette, os_name="mac", reduced=False, dark=True
     scene = {"screens": [(0.0, 0.0, w, h, os_name)], "notch": None, "pointer": (at[0], at[1], os_name), "pens": []}
     since = (t - _S_START) / pace
     if since >= 0.0:
-        s = state(w, h, os_name, "switch", legible(palette, dark, fx), reduced=reduced, dark=dark,
-                  effect_size=effect_size, effect_size_fraction=effect_size_fraction, point=point(*at),
+        k = PREVIEW_REAL
+        s = state(w * k, h * k, os_name, "switch", legible(palette, dark, fx), reduced=reduced, dark=dark,
+                  effect_size=effect_size, effect_size_fraction=effect_size_fraction, point=point(at[0] * k, at[1] * k),
                   edge=nearest_edge(at[0], at[1], w, h), since=since, pace=pace)
-        pen = draw(fx, "arrive", s)
+        pen = draw(fx, "arrive", s, scale=1.0 / k)
         if pen is not None:
             scene["pens"].append(pen)
     return scene
@@ -972,8 +997,9 @@ def _deepened(rgb):
     return tuple(c * low for c in rgb)
 
 
-def _stronger(pen, alpha, width, casing_alpha=1.0, deepen=False):
-    """`pen` with every stroke `width` times as wide and every coloured op `alpha` times as opaque,
+def _stronger(pen, alpha, floor, casing_alpha=1.0, deepen=False, width=1.0):
+    """`pen` with every stroke `width` times as wide but none thinner than `floor`, every coloured
+    op `alpha` times as opaque,
     gradient stops included, and with `deepen` its colours _deepened. The dark casing most effects
     stroke under a mark is not strengthened but taken to `casing_alpha` of its own opacity: drawn
     for a desktop, at a tile's zoom on a light card it outlines every mark in black."""
@@ -1000,7 +1026,7 @@ def _stronger(pen, alpha, width, casing_alpha=1.0, deepen=False):
         else:
             op = op[:2] + (stronger_paint(paint), min(1.0, op[3] * alpha)) + op[4:]
         if op[0] == "stroke":
-            op = op[:5] + (op[5] * width,) + op[6:]
+            op = op[:5] + (max(op[5] * width, floor),) + op[6:]
         ops.append(op)
     pen.ops = ops
     return pen
@@ -1019,17 +1045,20 @@ def preview_still_scene(fx, t, place, palette, reduced=False, dark=True, pace=1.
     if place != "switch" and reduced:
         t = still_time(fx, place, effect_size, pace, effect_size_fraction)
         live, reduced = False, False
+    if not live and pace != 1.0:
+        # A still is the frame its effect shows at Normal, whatever the Length: still_time stretches
+        # the moment with the pace, and drawn at that pace the Instrument detents, which keep their
+        # holds at any pace, and the landed pointer, which follows the hand, would not match it.
+        start = _S_START if place == "switch" else _P_CROSS
+        # Rounded: Rupture rests on a phase boundary, which float error from the pace would tip.
+        t, pace = (start + round((t - start) / pace, 9) if t > start else t), 1.0
     if place == "switch":
         scene = preview_switch_scene(fx, t, palette, reduced=reduced, dark=dark, pace=pace, effect_size=effect_size,
                                      effect_size_fraction=effect_size_fraction)
         scene["seam"] = None
     else:
-        # A still is the same frame at every Length (still_time stretches it), the pointer included:
-        # the hand does not slow with the pace, so it stands where it does at Normal.
-        pointer_t = _P_CROSS + (t - _P_CROSS) / pace if not live and t > _P_CROSS else None
         scene = preview_scene(fx, t, place, palette, reduced=reduced, dark=dark, pace=pace, effect_size=effect_size,
-                              effect_size_fraction=effect_size_fraction, notch_geometry=notch_geometry,
-                              pointer_t=pointer_t)
+                              effect_size_fraction=effect_size_fraction, notch_geometry=notch_geometry)
         # The PC's half moves across the gap onto the Mac's edge. A pen is the PC's when its middle
         # is past the middle of the gap: an arrival may reach back over the edge it lands at.
         if place == "notch":
@@ -1054,15 +1083,9 @@ def preview_still_scene(fx, t, place, palette, reduced=False, dark=True, pace=1.
                             (pc[0] + shift[0], pc[1] + shift[1], pc[2], pc[3], "windows")]
     if place == "switch":
         scene["screens"] = []
-    reference = PREVIEW_TILE_CROPS[place][2]
-    width = PREVIEW_STILL_WIDTH * (view_width or reference) / reference
-    if place != "switch":
-        # The complete journey has a wider camera than the old specimen. Keep the quiet styles'
-        # thin marks legible at tile size on both native rasterisers.
-        width *= 1.8
+    floor = PREVIEW_HAIRLINE * (view_width or PREVIEW_TILE_CROPS[place][2]) / PREVIEW_TILE_POINTS
     for pen in scene["pens"]:
-        alpha = PREVIEW_STILL_ALPHA * (1.4 if place != "switch" else 1.0)
-        _stronger(pen, 1.0 if live else alpha, width, 1.0 if dark else PREVIEW_LIGHT_CASING, not dark)
+        _stronger(pen, PREVIEW_MARK_ALPHA, floor, 1.0 if dark else PREVIEW_LIGHT_CASING, not dark, PREVIEW_MARK_WIDTH)
     if not live and place == "switch":
         scene["pointer"] = None
     return scene
@@ -1089,18 +1112,28 @@ def _op_boxes(scene):
 
 @functools.lru_cache(maxsize=256)
 def _still_view(effect, place, effect_size, pace, effect_size_fraction):
-    if place in PREVIEW_CROSSING_VIEWS:
-        return PREVIEW_CROSSING_VIEWS[place]
     fx = effect if isinstance(effect, Effect) else preview_effect(effect)
     scene = preview_still_scene(fx, still_time(effect, place, effect_size, pace, effect_size_fraction), place,
                                 ("#ffffff",), pace=pace, effect_size=effect_size, live=True,
                                 effect_size_fraction=effect_size_fraction)
-    return _fit(scene, place) or PREVIEW_TILE_CROPS[place]
+    return _fit(scene, place, _journey(place)) or PREVIEW_TILE_CROPS[place]
 
 
-def _fit(scene, place):
-    """The 2:1 view still_view describes for `scene`, or None when it draws nothing."""
-    boxes = [box for box, _alpha in _op_boxes(scene)]
+@functools.lru_cache(maxsize=8)
+def _journey(place):
+    """The box round every place a crossing's pointer goes, arrow included, which every effect's camera
+    keeps in view; None for a switch, whose pointer stands still."""
+    if place == "switch":
+        return None
+    points = [preview_still_scene(CLASSIC["glow"], t * PREVIEW_LOOP_S / 40, place, ("#ffffff",), live=True)["pointer"]
+              for t in range(40)]
+    xs, ys = [p[0] for p in points if p], [p[1] for p in points if p]
+    return (min(xs), min(ys), max(xs) + PREVIEW_POINTER_ROOM, max(ys) + PREVIEW_POINTER_ROOM)
+
+
+def _fit(scene, place, keep=None):
+    """The 2:1 view still_view describes for `scene`, holding `keep` too, or None when it draws nothing."""
+    boxes = [box for box, _alpha in _op_boxes(scene)] + ([keep] if keep is not None else [])
     if not boxes:
         return None
     left, top = min(b[0] for b in boxes), min(b[1] for b in boxes)
@@ -1130,85 +1163,25 @@ def _fit(scene, place):
 
 def still_view(effect, place, effect_size="medium", pace=1.0, effect_size_fraction=None):
     """The part of preview_still_scene a Design tile shows for `effect` at `place`, (x, y, w, h) in
-    scene points, 2:1: fixed round a crossing's complete pointer journey, or fitted round a switch's
-    marks. Idle, reduced motion and the hover loop share the camera."""
+    scene points, 2:1, fitted round the marks of its resting frame: an effect shown at its real size
+    against the whole pointer journey filled a hundredth of its tile. The pointer glides in from
+    outside it. Idle, reduced motion and the hover loop share the camera. It is fitted at Normal, as
+    the still is drawn, so a Length step neither moves it nor builds a scene."""
     still_time(effect, place, effect_size, pace, effect_size_fraction)
-    return _still_view(_still_key(effect), place, effect_size, pace, effect_size_fraction)
-
-
-def _cells(low, high, origin, size, n):
-    """How many of n cell centres across `size` from `origin` fall within [low, high]."""
-    first = max(0, math.ceil((low - origin) * n / size - 0.5))
-    last = min(n - 1, math.floor((high - origin) * n / size - 0.5))
-    return max(0, last - first + 1)
-
-
-# Every Length and Size step used to search 60 frames per tile again, so the Design page froze for
-# a second at each slider step. The search is for Normal and Medium only, and Length only stretches
-# when the found frame comes.
-STILL_SEARCH_STEPS = 30
-
-
-# _search_still's answers for every effect at Edge, Corner, Notch and a switch, worked out once so the
-# page opens without building 2,000 scenes; test_style_previews holds them equal to the search.
-STILL_SEARCHED = {
-    "glow": (2.2103448275862068, 2.2103448275862068, 1.9000000000000001, 0.0),
-    "beam": (2.2103448275862068, 2.2103448275862068, 1.9000000000000001, 0.0),
-    "aperture": (2.3551724137931034, 2.2103448275862068, 2.396551724137931, 0.4),
-    "skin": (2.3551724137931034, 2.2103448275862068, 2.2517241379310344, 0.6),
-    "film": (2.2103448275862068, 2.2103448275862068, 2.2103448275862068, 0.6),
-    "rupture": (2.4586206896551723, 2.2103448275862068, 2.2517241379310344, 0.6666666666666666),
-    "flint": (2.2724137931034485, 2.2724137931034485, 2.2724137931034485, 0.4),
-    "filings": (2.293103448275862, 2.293103448275862, 2.293103448275862, 0.4666666666666667),
-    "discharge": (2.293103448275862, 2.293103448275862, 2.293103448275862, 0.4666666666666667),
-    "rule": (2.2103448275862068, 2.2103448275862068, 2.2103448275862068, 0.4),
-    "gauge": (2.2103448275862068, 2.2103448275862068, 2.2103448275862068, 0.4),
-    "rangefinder": (2.2103448275862068, 2.2103448275862068, 2.2103448275862068, 0.4),
-    "crease": (2.2724137931034485, 2.4586206896551723, 2.2517241379310344, 0.4),
-    "pleat": (2.2103448275862068, 2.4793103448275864, 2.2724137931034485, 0.4),
-    "concertina": (2.2103448275862068, 2.5, 2.2724137931034485, 0.4),
-    "thread": (2.2724137931034485, 2.2103448275862068, 2.231034482758621, 0.4),
-    "weave": (2.231034482758621, 2.2724137931034485, 2.2103448275862068, 0.4),
-    "jacquard": (2.2103448275862068, 2.231034482758621, 2.293103448275862, 0.4),
-}
-_PLACE_INDEX = {"edge": 0, "corner": 1, "notch": 2, "switch": 3}
-
-
-def _still_at(effect_id, place):
-    found = STILL_SEARCHED.get(effect_id) if isinstance(effect_id, str) else None
-    return found[_PLACE_INDEX[place]] if found is not None else _search_still(effect_id, place)
-
-
-@functools.lru_cache(maxsize=256)
-def _search_still(effect_id, place):
-    fx = effect_id if isinstance(effect_id, Effect) else preview_effect(effect_id)
-    crop = PREVIEW_CROSSING_VIEWS.get(place, PREVIEW_TILE_CROPS[place])
-    best_time, best_coverage = 0.0, -1
-    for step in range(STILL_SEARCH_STEPS):
-        if place == "switch":
-            at = SWITCH_LOOP_S * step / STILL_SEARCH_STEPS
-        else:
-            end = _P_CROSS + min(0.3, max(fx.depart_seconds, fx.arrive_seconds))
-            at = _P_CROSS - 0.3 + (end - _P_CROSS + 0.3) * step / (STILL_SEARCH_STEPS - 1)
-        scene = preview_still_scene(fx, at, place, ("#ffffff",), live=True)
-        coverage = 0.0
-        for (x0, y0, x1, y1), alpha in _op_boxes(scene):
-            coverage += (_cells(y0, y1, crop[1], crop[3], 24) * _cells(x0, x1, crop[0], crop[2], 48)) * alpha
-        if coverage > best_coverage:
-            best_time, best_coverage = at, coverage
-    return best_time
+    return _still_view(_still_key(effect), place, effect_size, 1.0, effect_size_fraction)
 
 
 def still_time(effect, place, effect_size="medium", pace=1.0, effect_size_fraction=None):
-    """The fullest real seam frame for a crossing, or arrival specimen for a switch."""
+    """An authored frame on the effect's timeline for the chosen crossing or arrival."""
     if not isinstance(effect, Effect) and effect not in CLASSIC and effect not in EFFECT_IDS:
         raise ValueError(f"unknown preview effect: {effect}")
     if place not in PREVIEW_TILE_CROPS:
         raise ValueError(f"unknown preview place: {place}")
-    at = _still_at(_still_key(effect), place)
-    start = _S_START if place == "switch" else _P_CROSS
-    # The push follows the hand, so only what comes after the crossing or the arrival stretches.
-    return at if at < start else start + (at - start) * pace
+    effect_id = effect.id if isinstance(effect, Effect) else effect
+    at = STILL_AT.get(effect_id, 0.1)
+    if place == "switch":
+        return _S_START + SWITCH_AT.get(effect_id, max(at, 0.1)) * pace
+    return _P_CROSS + at if at < 0 else _P_CROSS + at * pace
 
 
 def _still_key(effect):
@@ -1225,6 +1198,9 @@ PACES = {"short": 0.5, "normal": 1.0, "long": 2.0}
 _SIZE_FRACTIONS = {"small": 0.03, "medium": 0.045, "large": 0.06}
 DESIGN_READOUT_WIDTH = 58
 _PACE_STEPS = (0.5, 1.0, 2.0)
+# The Design pages' Frame rate: each machine plays every effect at its own display's refresh, or a
+# half or a quarter of it.
+FRAME_RATES = (("display", "Match display", 1), ("half", "Half", 2), ("quarter", "Quarter", 4))
 _PACE_PRESETS = ("short", "normal", "long")
 _SIZE_STOPS = (0.03, 0.045, 0.06)
 _SIZE_PRESETS = ("small", "medium", "large")
@@ -1239,6 +1215,10 @@ _EFFECT_REFERENCE_DEPTH = 36.0
 
 def _number(value, low, high):
     return not isinstance(value, bool) and isinstance(value, (int, float)) and low <= value <= high
+
+
+def frame_divisor(frame_rate):
+    return next((divisor for value, _name, divisor in FRAME_RATES if value == frame_rate), 1)
 
 
 def valid_effect_pace(value):

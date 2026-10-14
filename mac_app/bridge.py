@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 import objc
 import Quartz
+from PyObjCTools import AppHelper
 
 import clipboard_mac
 import config as config_module
@@ -22,8 +23,11 @@ import crossing
 import desktop_mac
 from input_injector_mac import INJECTED_MARK
 import gestures
+from core import idle_pointer
 from core import ignored
 from core import crossing_state
+from core import effects
+import frame_clock
 import keyboard_layout
 import media_keys
 from core import keytable
@@ -159,7 +163,7 @@ class QuartzEventTranslator:
         if event_type == quartz.kCGEventFlagsChanged:
             if keycode not in MODIFIER_KEY_CODES:
                 return KeyResult(is_trigger, False, False, [])
-            if keycode == 0x39:
+            if keycode == CAPS_LOCK_KEY_CODE:
                 messages = [] if is_trigger else self._caps_lock_messages(key_map)
                 return KeyResult(is_trigger, True, False, messages)
             is_down = self._modifier_transition(keycode, event)
@@ -400,6 +404,28 @@ def _default_gesture_event_converter(cg_event):
     return _GestureEventView(ns_event)
 
 
+def _on_main_thread(callback):
+    if threading.current_thread() is threading.main_thread():
+        return callback()
+    completed = threading.Event()
+    result = []
+
+    def run():
+        try:
+            result.append((True, callback()))
+        except BaseException as exc:
+            result.append((False, exc))
+        finally:
+            completed.set()
+
+    AppHelper.callAfter(run)
+    completed.wait()
+    succeeded, value = result[0]
+    if not succeeded:
+        raise value
+    return value
+
+
 def _default_system_event_converter(cg_event):
     """Read (subtype, data1) off a system-defined CGEvent. Returns None if
     AppKit is unavailable or the event does not carry those fields, which
@@ -503,6 +529,7 @@ class KVMController:
         hardware=None,
     ):
         self.cfg = cfg
+        frame_clock.set_divisor(effects.frame_divisor(cfg.crossing.get("frame_rate")))
         self.logger = logger or logging.getLogger("Beamer")
         self.quartz = quartz
         self.clock = clock
@@ -527,6 +554,12 @@ class KVMController:
         # Hidden for as long as input is on the other machine. Made before `redirecting`, whose
         # setter shows it: input being local is the one condition under which it is never hidden.
         self.pointer = PointerHider(quartz, logger=self.logger)
+        # Hidden once a driver lets go of this Mac, until it moves; a hide of its own, since the
+        # window server counts hides and the one above is shown whenever input comes home.
+        idle_hider = PointerHider(quartz, logger=self.logger)
+        self.idle_pointer = idle_pointer.IdlePointer(
+            hide=idle_hider.hide, show=idle_hider.show, position=self._pointer_location, logger=self.logger,
+        )
         self._cursor_assoc_status_logged = False
         self._cursor_warp_error_logged = False
         self._redirecting = False
@@ -595,6 +628,7 @@ class KVMController:
         self.crossing = crossing.CrossingEngine.from_config(cfg.crossing)
         self.desktop_bounds = desktop_bounds or self._default_desktop_bounds
         self.notch_range = None
+        self.notch_depth = 0.0
         self.on_crossing = None
         self._crossing_failed = False
         self._crossing_failed_at = 0.0
@@ -1052,6 +1086,7 @@ class KVMController:
             self._force_local(self.input_error)
 
     def stop(self):
+        self.idle_pointer.cancel()
         self._return_local()
         # The let-go and what is ahead of it may be waiting behind a clipboard read: sent first.
         deadline = time.monotonic() + 1.0
@@ -1076,6 +1111,7 @@ class KVMController:
         self._return_local()
         with self._cfg_lock:
             self.cfg = cfg
+        frame_clock.set_divisor(effects.frame_divisor(cfg.crossing.get("frame_rate")))
         self.trigger_code = KEY_NAME_TO_CODE[cfg.trigger_key]
         self.last_trigger_down = 0.0
         self.trigger_suppressed = False
@@ -1105,6 +1141,7 @@ class KVMController:
         which has to reconnect."""
         with self._cfg_lock:
             self.cfg = cfg
+        frame_clock.set_divisor(effects.frame_divisor(cfg.crossing.get("frame_rate")))
         # No machine's side goes from here: the flat settings only mirror the first machine's, and a
         # new first machine's would be the default. Sides go from the window, one machine at a time
         # (`send_arrangement`), and with every link that comes up.
@@ -1265,6 +1302,14 @@ class KVMController:
             self.set_redirecting(False, came_home=False)
         self.receiving = value
         self.crossing.reset()
+        if value:
+            self.idle_pointer.cancel()
+        elif not self.stop_event.is_set() and self.cfg.hide_idle_pointer:
+            self.idle_pointer.driver_left()
+
+    def _pointer_location(self):
+        x, y = self.quartz.CGEventGetLocation(self.quartz.CGEventCreate(None))
+        return round(x), round(y)
 
     def _enqueue_control(self, message):
         """Queue a message the event tap made itself, which must never block. Best-effort: a
@@ -1811,7 +1856,7 @@ class KVMController:
         if not self.redirecting:
             return event
         try:
-            decoded = self.system_event_converter(event)
+            decoded = _on_main_thread(lambda: self.system_event_converter(event))
         except Exception:
             self.logger.debug("failed to convert a system-defined event", exc_info=True)
             return event
@@ -1907,7 +1952,7 @@ class KVMController:
 
     def _convert_gesture_event(self, event):
         try:
-            return self.gesture_event_converter(event)
+            return _on_main_thread(lambda: self.gesture_event_converter(event))
         except Exception:
             self.logger.debug("failed to convert a gesture event", exc_info=True)
             return None
@@ -2179,6 +2224,8 @@ class KVMController:
                 if read is not None:
                     data = {"route": read["route"], "next": protocol.id_text(read["next"]),
                             "edge": read["edge"], "offset": read["offset"]}
+                    if "taken_over_by" in read:
+                        data["taken_over_by"] = read["taken_over_by"]
                     self._step(lambda owner: owner.switch(peer, data))
             elif kind == protocol.MSG_ACCEPT:
                 read = protocol.read_accept(message)
@@ -2497,25 +2544,37 @@ class KVMController:
             other = peerlist.label_for(self.book.peers(), peer_id=protocol.id_text(moved.other))
         name = self._name_of(moved.left)
         text = peerlist.refusal_text(moved.why, name, other)
+        if moved.why == "taken_over":
+            text = f"{other or 'Another machine'} took over {name}"
         if text is None and moved.why in WHY_TEXT:
             text = WHY_TEXT[moved.why].format(name=name)
         if text is not None:
             self.logger.warning("%s; input returned to this Mac", text)
             self._alert("Beamer", text)
         if moved.why == "switch":
-            self._arrive(moved.edge, moved.offset, moved.display, moved.side)
+            self._arrive(moved.edge, moved.offset, moved.display, moved.side, moved.left)
 
-    def _arrive(self, edge, offset, display=None, side=None):
+    def _arrive(self, edge, offset, display=None, side=None, peer=None):
         """The other machine sent input back: land the pointer where it left, `edge` being the edge
-        of this Mac to arrive at and `offset` the fraction along it. Without an edge the pointer
-        stays where it was and the arrival says so."""
+        of this Mac to arrive at and `offset` the fraction along it, or below the notch when `peer`
+        holds the notch with Return through the notch on. Without an edge the pointer stays where
+        it was and the arrival says so."""
         crossed = edge in crossing.EDGES and isinstance(offset, (int, float)) and not isinstance(offset, bool)
         point = None
         if crossed:
             try:
-                point = crossing.CrossingEngine.arrival_point(
-                    edge, offset, self._current_desktop_bounds(), displays=self._current_displays(),
-                    display=display, side=side)
+                peer = protocol.id_text(peer) if isinstance(peer, bytes) else peer
+                notch = self.notch_range
+                if notch is not None and peer and any(
+                        zone.get("kind") == "notch" and zone.get("peer") == peer and zone.get("return_here") is True
+                        for zone in self.book.zones()):
+                    edge = "top"
+                    point = crossing.CrossingEngine.notch_arrival_point(
+                        notch, self.notch_depth, self._current_desktop_bounds(), displays=self._current_displays())
+                else:
+                    point = crossing.CrossingEngine.arrival_point(
+                        edge, offset, self._current_desktop_bounds(), displays=self._current_displays(),
+                        display=display, side=side)
             except Exception:
                 self.logger.exception("failed to place the pointer on arrival")
             else:
@@ -2572,11 +2631,14 @@ class KVMController:
         link = self._peers_up.get(peer)
         if link is None:
             return
-        if text and len(text.encode("utf-8")) > protocol.CLIPBOARD_MAX_BYTES:
-            self.logger.warning("local clipboard text is too large; skipping the text")
+        caps = getattr(link, "caps", ()) or ()
+        if text and ("clipboard" not in caps or len(text.encode("utf-8")) > protocol.CLIPBOARD_MAX_BYTES):
+            if "clipboard" in caps:
+                self.logger.warning("local clipboard text is too large; skipping the text")
             text = None
-        if image is not None and not protocol.png_fits(image):
-            self.logger.warning("local clipboard image (%d bytes) is past what a clipboard may carry; skipping the image", len(image))
+        if image is not None and ("clipboard_image" not in caps or not protocol.png_fits(image)):
+            if "clipboard_image" in caps:
+                self.logger.warning("local clipboard image (%d bytes) is past what a clipboard may carry; skipping the image", len(image))
             image = None
         if not text and image is None:
             self.logger.debug("local clipboard is empty; not sending it")

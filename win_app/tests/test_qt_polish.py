@@ -114,8 +114,8 @@ class QtPolishTests(unittest.TestCase):
         self.page_scroll("crossing")
         self.assertFalse(self.window.crossing_ledger.isHidden())
         for row in self.window.crossing_ledger.rows.values():
-            self.assertEqual(len(row.edge_glyph.buttons), 3)
-            self.assertEqual(len(row.corner_glyph.buttons), 4)
+            self.assertEqual(len(row.edge_chips.chips), 4)
+            self.assertEqual(len(row.corner_grid.buttons), 4)
         self.assertFalse(hasattr(self.window, "way_boxes"))
 
     def test_08_every_legend_way_has_a_description(self):
@@ -126,7 +126,7 @@ class QtPolishTests(unittest.TestCase):
         self.assertFalse(hasattr(self.window, "selected_machine_header"))
         for row in self.window.crossing_ledger.rows.values():
             self.assertTrue(row.status.wordWrap())
-            self.assertTrue(row.edge_detail.wordWrap())
+            self.assertTrue(row.edge_note.wordWrap())
         strip = self.window.resistance_strip
         strip.resize(400, 72)
         strip.set_other_name("Other machine")

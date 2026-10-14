@@ -16,6 +16,7 @@ import clipboard_portal
 import desktop_portal
 import inject_portal
 import portal
+from core.return_edge import Rect
 from inject_x11 import MAP, NO_REPEAT, PRESS, RELEASE, REPEAT
 from portal_fakes import FakeBus, FakeDevice, FakeEi, vardict, wait_for
 
@@ -33,7 +34,8 @@ class FakeKeymap:
         pair = self.KEYS.get(keycode)
         if pair is None:
             return 0
-        return ord(pair[1] if mods & 1 else pair[0])
+        upper = bool(mods & 1) != bool(mods & 2 and pair[0].isalpha())  # Caps Lock turns letters only
+        return ord(pair[1] if upper else pair[0])
 
     def text(self, keysym):
         return chr(keysym) if keysym else None
@@ -54,8 +56,8 @@ class StepsTest(unittest.TestCase):
         carry = [0.0, 0.0]
         self.assertEqual(inject_portal.scroll_steps(1, 0, "line", carry), ("discrete", 0, -120))
         self.assertEqual(inject_portal.scroll_steps(0.004, 0, "line", carry), ("discrete", 0, 0))
-        self.assertEqual(inject_portal.scroll_steps(0.005, -1, "line", carry), ("discrete", -120, -1))
-        self.assertEqual(inject_portal.scroll_steps(-3.5, 2, "pixel", carry), ("pixels", 2.0, 3.5))
+        self.assertEqual(inject_portal.scroll_steps(0.005, 1, "line", carry), ("discrete", -120, -1))
+        self.assertEqual(inject_portal.scroll_steps(-3.5, -2, "pixel", carry), ("pixels", 2.0, 3.5))
 
     def test_a_layout_with_no_key_for_a_character_has_no_spare_to_map(self):
         layout = inject_portal.WaylandLayout(FakeKeymap())
@@ -121,6 +123,27 @@ class RemoteTest(unittest.TestCase):
         self.assertEqual(self.tokens.token, "new")
         self.assertEqual(desktop_portal.monitors()[0].width, 1920)
 
+    def test_second_session_uses_updated_restore_token(self):
+        self.up()
+        self.assertEqual(self.tokens.token, "new")
+        self.remote.stop()
+        bus2 = FakeBus(versions={inject_portal.INTERFACE: 2, inject_portal.CLIPBOARD: 1})
+        bus2.answers["CreateSession"] = (0, {"session_handle": SESSION})
+        bus2.answers["Start"] = (0, {"devices": 3, "clipboard_enabled": True, "restore_token": "token_run_2"})
+        bus2.returns["ConnectToEIS"] = (99,)
+        remote2 = inject_portal.Remote(connect=lambda: bus2, ei=lambda fd: self.ei, tokens=self.tokens,
+                                       keymap=lambda text: FakeKeymap())
+        try:
+            remote2.start()
+            wait_for(remote2.ready.is_set, what="second session")
+            select_calls = bus2.made("SelectDevices")
+            self.assertEqual(len(select_calls), 1)
+            options2 = select_calls[0][1]
+            self.assertEqual((options2["restore_token"], options2["persist_mode"]), (("s", "new"), ("u", 2)))
+            self.assertEqual(self.tokens.token, "token_run_2")
+        finally:
+            remote2.stop()
+
     def test_clipboard_version_zero_still_requests_clipboard_before_start(self):
         self.bus.versions[inject_portal.CLIPBOARD] = 0
         self.up()
@@ -141,6 +164,44 @@ class RemoteTest(unittest.TestCase):
         wait_for(lambda: len(self.ei.sends("absolute")) == 3, what="three moves")
         self.assertEqual([item[2:] for item in self.ei.sends("absolute")], [(100.0, 100.0), (110.0, 95.0), (1919.0, 95.0)])
         self.assertEqual(desktop_portal.cursor_position(), (1919, 95))
+
+    def test_leftward_arrival_at_the_right_edge_continues_inward(self):
+        from core.return_edge import Rect, arrival_position
+
+        self.up()
+        point = arrival_position([Rect(0, 0, 1920, 1080)], "right", 0.3)
+        desktop_portal.set_cursor_position(*point)
+        inject_portal.inject_mouse_move(-40, 0)
+        wait_for(lambda: len(self.ei.sends("absolute")) == 2, what="arrival and inward move")
+        self.assertEqual([item[2:] for item in self.ei.sends("absolute")],
+                         [(1919.0, 324.0), (1879.0, 324.0)])
+        self.assertEqual(desktop_portal.cursor_position(), (1879, 324))
+
+    def test_a_nominated_display_landing_is_translated_to_libei_region_coordinates(self):
+        self.up()
+        desktop_portal._screens = [Rect(0, 0, 1920, 1080), Rect(1920, 0, 1280, 720)]
+        desktop_portal.set_zones([Rect(0, 0, 1920, 1080), Rect(1920, 0, 1280, 720)])
+        desktop_portal.set_regions([Rect(0, 0, 960, 540), Rect(960, 0, 2560, 1440)])
+        self.addCleanup(desktop_portal.set_zones, [])
+        self.addCleanup(desktop_portal.set_regions, [])
+        self.addCleanup(setattr, desktop_portal, "_screens", [])
+
+        self.remote.place(2560, 360)
+
+        self.assertEqual(self.ei.sends("absolute")[-1][2:], (2241.0, 721.0))
+
+    def test_ambiguous_display_mapping_does_not_send_an_absolute_pointer_move(self):
+        self.up()
+        desktop_portal._screens = [Rect(x, 0, 1920, 1080) for x in (0, 1920, 3840, 5760)]
+        desktop_portal.set_zones([Rect(0, 0, 3840, 2160), Rect(3840, 0, 960, 540),
+                                  Rect(4800, 0, 960, 540), Rect(5760, 0, 960, 540)])
+        self.addCleanup(desktop_portal.set_zones, [])
+        self.addCleanup(setattr, desktop_portal, "_screens", [])
+        before = len(self.ei.sends("absolute"))
+
+        self.remote.place(100, 100)
+
+        self.assertEqual(len(self.ei.sends("absolute")), before)
 
     def test_nothing_is_moved_for_real_while_the_capture_holds_the_pointer(self):
         self.up()
@@ -164,6 +225,52 @@ class RemoteTest(unittest.TestCase):
         self.assertEqual(keys, [(42, True), (30, True), (30, False), (42, False), (29, True), (30, True),
                                 (29, False), (30, False)])
         self.assertEqual([item[2:] for item in self.ei.sends("button")], [(0x110, True), (0x110, False)])
+
+    def answer_locks(self, press, release):
+        """The desktop's word on the locks after Beamer's Caps Lock, a moment later, as KWin and
+        mutter send it: one for the press, with Lock still down, and one for the release."""
+        sent = self.ei.key
+
+        def key(device, code, down):
+            sent(device, code, down)
+            if code == 58:
+                mods, delay = (press, 0.03) if down else (release, 0.06)
+                threading.Timer(delay, lambda: self.ei.feed(("modifiers", device) + mods)).start()
+
+        self.ei.key = key
+
+    def test_a_letter_right_after_caps_lock_waits_for_the_desktop_to_say_it_is_on(self):
+        # KWin 6.7.5, measured 14-10-2026: "A" typed as Shift+a under the new Caps Lock came out "a".
+        self.up()
+        self.answer_locks(press=(2, 0, 2, 0), release=(0, 0, 2, 0))
+        for down in (True, False):
+            inject_portal.inject_key("caps_lock", down)
+        inject_portal.inject_key("A", True, "a")
+        inject_portal.inject_key("A", False, "a")
+        wait_for(lambda: len(self.ei.sends("key")) >= 4, what="the letter")
+        self.assertEqual([item[2:] for item in self.ei.sends("key")], [(58, True), (58, False), (30, True), (30, False)])
+
+    def test_the_desktops_word_on_the_press_is_not_taken_for_the_release(self):
+        self.up()
+        self.ei.feed(("modifiers", self.keyboard, 0, 0, 2, 0))
+        wait_for(lambda: self.remote.locks == 2, what="Caps Lock on")
+        self.answer_locks(press=(2, 0, 2, 0), release=(0, 0, 0, 0))
+        for down in (True, False):
+            inject_portal.inject_key("caps_lock", down)
+        inject_portal.inject_key("a", True, "a")
+        inject_portal.inject_key("a", False, "a")
+        wait_for(lambda: len(self.ei.sends("key")) >= 4, what="the letter")
+        self.assertEqual([item[2:] for item in self.ei.sends("key")], [(58, True), (58, False), (30, True), (30, False)])
+
+    def test_a_desktop_that_never_says_still_gets_the_letter(self):
+        self.up()
+        began = time.monotonic()
+        for down in (True, False):
+            inject_portal.inject_key("caps_lock", down)
+        inject_portal.inject_key("s", True, "s")
+        wait_for(lambda: len(self.ei.sends("key")) >= 3, what="the letter")
+        self.assertLess(time.monotonic() - began, 1.0)
+        self.assertEqual([item[2:] for item in self.ei.sends("key")], [(58, True), (58, False), (31, True)])
 
     def test_text_is_typed_with_the_peers_modifiers_let_go_around_it(self):
         self.up()

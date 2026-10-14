@@ -39,10 +39,33 @@ PC = ("edge", "part", "corner")
 
 
 class ReadingOnePeer(unittest.TestCase):
+    def test_new_edges_and_corners_require_the_legacy_corner_keys_to_agree(self):
+        held = settings(peer(A, "Ay", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": ["bottom", "left"],
+            "corner": True, "corner_at": "top_left", "corners": ["top_left", "bottom_right"],
+            "notch": False,
+        }))
+        self.assertEqual(ways.ways(held, A)["edges"], ["left", "bottom"])
+        self.assertEqual(ways.ways(held, A)["corners"], ["top_left", "bottom_right"])
+
+        held["peers"][0]["ways"]["corner_at"] = "top_right"
+        found = ways.ways(held, A)
+        self.assertEqual(found["corners"], ["top_right"])
+
+    def test_152_zones_migrate_as_one_corner_without_new_keys(self):
+        held = settings(peer(A, "Ay", ways={
+            "edge": True, "thirds": list(ways.PARTS), "corner": True,
+            "corner_at": "bottom_left", "notch": False,
+        }))
+        found = ways.ways(held, A)
+        self.assertEqual(found["corners"], ["bottom_left"])
+        self.assertEqual(found["edges"], [])
+
     def test_a_peer_with_no_zones_reads_as_nothing_in_use_and_the_defaults(self):
         found = ways.ways(settings(peer(A, "Ay", side="left")), A)
         self.assertEqual(found, {"side": "left", "methods": ["edge"],
-                                 "parts": ["start", "middle", "end"], "corner": "top_left"})
+                                 "parts": ["start", "middle", "end"], "corner": "top_left",
+                                 "edges": [], "corners": []})
 
     def test_only_that_peers_zones_in_use_count(self):
         held = settings(peer(A, "Ay", side="left"), peer(B, "Bee", side="right"), zones=[
@@ -51,9 +74,10 @@ class ReadingOnePeer(unittest.TestCase):
             {"peer": B, "kind": "part", "parts": ["start", "end"]},
             {"peer": B, "kind": "corner", "corner": "top_right", "edge": "right"},
         ])
-        self.assertEqual(ways.ways(held, A), {"side": "left", "methods": ["edge"], "parts": ["start", "middle", "end"], "corner": "bottom_left"})
+        self.assertEqual(ways.ways(held, A), {"side": "left", "methods": ["edge"], "parts": ["start", "middle", "end"],
+                                              "corner": "bottom_left", "edges": [], "corners": []})
         self.assertEqual(ways.ways(held, B), {"side": "right", "methods": ["part", "corner"], "parts": ["start", "end"],
-                                              "corner": "top_right"})
+                                              "corner": "top_right", "edges": [], "corners": ["top_right"]})
 
     def test_an_unknown_peer_reads_as_nothing(self):
         self.assertEqual(ways.ways(settings(), A)["methods"], [])
@@ -81,6 +105,8 @@ class PageOffZones(unittest.TestCase):
 
         self.assertEqual(ways.ways(held, A)["methods"], [])
         self.assertEqual(held["zones"], [])
+
+
         self.assertFalse(ways.has_way(held, A))
         self.assertFalse(ways.crosses_on_map(held, A))
 
@@ -230,6 +256,221 @@ class PageOffZones(unittest.TestCase):
         self.assertIn("notch", ways.ways(compiled, A)["methods"])
 
 
+class WrapAroundWays(unittest.TestCase):
+    def test_wrap_edge_uses_free_thirds_and_records_the_map_entry(self):
+        held = settings(peer(A, "Ay", side="right", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": ["left"],
+            "corner": False, "corner_at": "top_left", "corners": [], "notch": False,
+        }))
+        layout = {HERE: {"x": 0, "y": 0, "w": 160, "h": 100},
+                  A: {"x": 160, "y": 0, "w": 160, "h": 100}}
+
+        out = ways.compile_layout(held, layout, capable={HERE, A}, now=100)
+
+        zone = next(z for z in out["settings"]["zones"] if z["side"] == "left")
+        self.assertEqual((zone["kind"], zone.get("parts"), zone.get("target_side")),
+                         ("edge", None, None))
+        self.assertEqual(out["tiles"][A]["wraps"], [
+            {"display": None, "side": "left", "parts": list(ways.PARTS)}])
+
+    def test_wrap_target_uses_the_outermost_peer_display_and_overlap_tie_break(self):
+        for displays, expected in (
+                ({"main": {"x": 0, "y": 0, "w": 160, "h": 100}}, "main"),
+                ({"a": {"x": 0, "y": 0, "w": 160, "h": 50},
+                  "b": {"x": 0, "y": 50, "w": 160, "h": 50}}, "a"),
+                ({"a": {"x": 0, "y": 0, "w": 80, "h": 100},
+                  "b": {"x": 80, "y": 0, "w": 80, "h": 100}}, "b")):
+            with self.subTest(expected=expected):
+                held = settings(peer(A, "Ay", side="right", ways={
+                    "edge": True, "thirds": list(ways.PARTS), "edges": ["left"],
+                    "corner": False, "corner_at": "top_left", "corners": [], "notch": False,
+                }))
+                held["layout"] = {
+                    HERE: {"x": 0, "y": 0, "w": 160, "h": 100,
+                           "displays": {"own": {"x": 0, "y": 0, "w": 160, "h": 100}}},
+                    A: {"x": 160, "y": 0, "w": 160, "h": 100, "displays": displays},
+                }
+                out = ways.compile_layout(held, held["layout"], capable={HERE, A}, now=100)
+                zone = next(z for z in out["settings"]["zones"] if z.get("side") == "left")
+                self.assertEqual((zone["target_display"], zone["target_side"]), (expected, "right"))
+
+    def test_wrap_edge_does_not_use_an_internal_display_edge(self):
+        held = settings(peer(A, "Ay", side="right", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": ["left"],
+            "corner": False, "corner_at": "top_left", "corners": [], "notch": False,
+        }))
+        held["layout"] = {
+            HERE: {"x": 0, "y": 0, "w": 160, "h": 100,
+                   "displays": {"left": {"x": 0, "y": 0, "w": 80, "h": 100},
+                                "right": {"x": 80, "y": 0, "w": 80, "h": 100}}},
+            A: {"x": 160, "y": 0, "w": 160, "h": 100},
+        }
+        out = ways.compile_layout(held, held["layout"], capable={HERE, A}, now=100)
+        self.assertEqual(out["tiles"][A]["wraps"], [
+            {"display": "left", "side": "left", "parts": list(ways.PARTS)}])
+
+    def test_reach_reports_contact_holders_and_old_or_missing_tiles(self):
+        held = settings(peer(A, "Ay", side="right", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": ["left"],
+            "corner": False, "corner_at": "top_left", "corners": [], "notch": False,
+        }), peer(B, "Bee", side="left"))
+        held["layout"] = {HERE: {"x": 0, "y": 0, "w": 160, "h": 100},
+                          A: {"x": 160, "y": 0, "w": 160, "h": 100},
+                          B: {"x": -160, "y": 0, "w": 160, "h": 100}}
+        held["peers"][0]["ways"]["edges"] = []
+        reach = ways.reach(held, A, platform="pc", capable={HERE, A, B})
+        self.assertEqual(reach["sides"]["left"], {"state": "held", "by": B})
+        self.assertEqual(reach["sides"]["right"], {"state": "contact", "by": A})
+        held["peers"][0]["caps"] = []
+        self.assertEqual(ways.reach(held, A, platform="pc", capable={HERE, B})["sides"]["left"],
+                         {"state": "unavailable", "by": None})
+        self.assertEqual(ways.reach(held, A, platform="pc", capable={HERE, A, B})["sides"]["right"],
+                         {"state": "contact", "by": A}, "an old peer keeps its contact chip, to turn Edge off")
+        held["layout"].pop(A)
+        self.assertEqual(ways.reach(held, A, platform="pc", capable={HERE, A, B})["sides"]["right"],
+                         {"state": "contact", "by": A}, "no tile yet: placed by its side, as the compile does")
+        held["peers"][0].pop("caps")
+        held["layout"][A] = {"x": 40, "y": 0, "w": 160, "h": 100}
+        self.assertTrue(all(item == {"state": "unavailable", "by": None}
+                            for item in ways.reach(held, A, platform="pc", capable={HERE, A, B})["sides"].values()))
+
+    def test_reach_uses_the_compiled_contact_and_wrap_assignment(self):
+        held = settings(peer(A, "Ay", side="right", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": ["left"],
+            "corner": True, "corner_at": "top_left", "corners": ["top_left"], "notch": False,
+        }))
+        held["layout"] = {HERE: {"x": 0, "y": 0, "w": 160, "h": 100},
+                          A: {"x": 160, "y": 0, "w": 160, "h": 100}}
+        reach = ways.reach(held, A, platform="mac", capable={HERE, A})
+        self.assertEqual(set(reach), {"sides", "corners"})
+        self.assertTrue(all(set(item) == {"state", "by"}
+                            for section in reach.values() for item in section.values()))
+        self.assertEqual(reach["sides"]["right"], {"state": "contact", "by": A})
+        self.assertEqual(reach["sides"]["left"], {"state": "on", "by": None})
+        self.assertEqual(reach["sides"]["top"], {"state": "free", "by": None})
+        self.assertEqual(reach["sides"]["bottom"], {"state": "free", "by": None})
+        self.assertEqual(reach["corners"]["top_left"], {"state": "on", "by": None})
+        self.assertEqual(reach["corners"]["top_right"], {"state": "free", "by": None})
+
+        held["peers"][0]["ways"]["edge"] = False
+        reach = ways.reach(held, A, platform="mac", capable={HERE, A},
+                           live=lambda _peer: True, gone=lambda _peer: False)
+        self.assertEqual(reach["sides"]["left"], {"state": "kept", "by": None})
+
+    def test_a_contact_holds_its_side_against_wraps_even_with_its_edge_off(self):
+        held = settings(peer(A, "Ay", side="right", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": ["left"],
+            "corner": False, "corner_at": "top_left", "corners": [], "notch": False,
+        }), peer(B, "Bee", side="left", ways={
+            "edge": False, "thirds": list(ways.PARTS), "edges": [],
+            "corner": False, "corner_at": "top_left", "corners": [], "notch": False,
+        }))
+        held["layout"] = {HERE: {"x": 0, "y": 0, "w": 160, "h": 100},
+                          A: {"x": 160, "y": 0, "w": 160, "h": 100},
+                          B: {"x": -160, "y": 0, "w": 160, "h": 100}}
+        out = ways.compile_layout(held, held["layout"], capable={HERE, A, B}, now=100)
+        self.assertEqual(out["tiles"][A]["wraps"], [])
+        self.assertEqual(ways.reach(held, A, platform="pc", capable={HERE, A, B})["sides"]["left"],
+                         {"state": "kept", "by": None})
+        held["peers"][0]["ways"]["edges"] = []
+        self.assertEqual(ways.reach(held, A, platform="pc", capable={HERE, A, B})["sides"]["left"],
+                         {"state": "held", "by": B})
+
+    def test_reach_places_a_sideless_tileless_peer_and_answers_a_not_in_use_row_as_put_back(self):
+        held = settings(peer(A, "Ay", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": ["left"],
+            "corner": False, "corner_at": "top_left", "corners": [], "notch": False,
+        }))
+        held["layout"] = {HERE: {"x": 0, "y": 0, "w": 160, "h": 100}}
+        reach = ways.reach(held, A, platform="pc", capable={HERE, A})
+        self.assertIn("contact", {item["state"] for item in reach["sides"].values()})
+        held["layout"][A] = {"x": 160, "y": 0, "w": 160, "h": 100}
+        held["peers"][0]["in_use"] = False
+        reach = ways.reach(held, A, platform="pc", capable={HERE, A})
+        self.assertEqual(reach["sides"]["right"], {"state": "contact", "by": A})
+        self.assertEqual(reach["sides"]["left"], {"state": "on", "by": None})
+
+    def test_an_overlapping_peer_gets_no_wrap_zones(self):
+        held = settings(peer(A, "Ay", side="right", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": ["left"],
+            "corner": False, "corner_at": "top_left", "corners": [], "notch": False,
+        }))
+        held["layout"] = {HERE: {"x": 0, "y": 0, "w": 160, "h": 100},
+                          A: {"x": 100, "y": 0, "w": 160, "h": 100}}
+        out = ways.compile_layout(held, held["layout"], capable={HERE, A}, now=100)
+        self.assertEqual([zone for zone in out["settings"]["zones"] if zone["peer"] == A], [])
+
+    def test_a_wrap_lands_on_the_display_at_the_same_height_as_a_fraction_of_each_machine(self):
+        frames = [{"display": "a", "x": 0, "y": 100, "w": 100, "h": 50},
+                  {"display": "z", "x": 0, "y": 150, "w": 100, "h": 50}]
+        leaving = {"display": "0", "x": 300, "y": 50, "w": 100, "h": 50}
+        own_tile = {"x": 300, "y": 0, "w": 100, "h": 100}
+        self.assertEqual(ways._wrap_target(frames, "right", leaving, own_tile)["display"], "z")
+
+    def test_the_one_corner_form_refuses_a_held_corner_without_a_write(self):
+        held = settings(peer(A, "Ay", side="right", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": [],
+            "corner": True, "corner_at": "top_right", "corners": ["top_right"], "notch": False,
+        }), peer(B, "Bee", side="left", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": [],
+            "corner": True, "corner_at": "bottom_left", "corners": ["bottom_left"], "notch": False,
+        }))
+        held["layout"] = {HERE: {"x": 0, "y": 0, "w": 160, "h": 100},
+                          A: {"x": 160, "y": 0, "w": 160, "h": 100},
+                          B: {"x": -160, "y": 0, "w": 160, "h": 100}}
+        out = crossing_state.edit_ways(held, A, platform="pc", corner=True, corner_at="bottom_left",
+                                       live=None, gone=None, now=100, capable={HERE, A, B})
+        self.assertFalse(out["changed"])
+        self.assertEqual(ways.ways(out["settings"], A)["corners"], ["top_right"])
+
+    def test_reach_shows_a_left_out_rows_kept_ways_and_a_corner_held_only_by_intent(self):
+        held = settings(peer(A, "Ay", side="right", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": ["left"],
+            "corner": True, "corner_at": "top_left", "corners": ["top_left"], "notch": False,
+        }), peer(B, "Bee", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": [],
+            "corner": True, "corner_at": "bottom_right", "corners": ["bottom_right"], "notch": False,
+        }))
+        held["layout"] = {HERE: {"x": 0, "y": 0, "w": 160, "h": 100},
+                          A: {"x": 160, "y": 0, "w": 160, "h": 100},
+                          B: {"x": 0, "y": 300, "w": 160, "h": 100}}
+        held["peers"][0]["left_out"] = True
+        reach = ways.reach(held, A, platform="pc", capable={HERE, A, B})
+        self.assertEqual(reach["sides"]["right"], {"state": "contact", "by": A})
+        self.assertEqual(reach["sides"]["left"], {"state": "on", "by": None})
+        self.assertEqual(reach["corners"]["top_left"], {"state": "on", "by": None})
+        self.assertEqual(reach["corners"]["bottom_right"], {"state": "held", "by": B})
+        self.assertEqual(reach["sides"]["right"], {"state": "contact", "by": A})
+        unavailable = ways.reach(held, A, platform="mac", capable={HERE, A}, gone=lambda _peer: True)
+        self.assertTrue(all(item == {"state": "unavailable", "by": None}
+                            for section in unavailable.values() for item in section.values()))
+
+    def test_corner_screen_measures_left_and_top_from_the_tile_vertex(self):
+        screens = [
+            {"display": "far", "x": 500, "y": 500, "w": 100, "h": 100},
+            {"display": "near", "x": 1000, "y": 1000, "w": 100, "h": 100},
+        ]
+        tile = {"x": 1000, "y": 1000, "w": 200, "h": 200}
+
+        self.assertEqual(ways._corner_screen(screens, "top_left", tile)["display"], "near")
+
+    def test_reach_marks_corners_unavailable_without_a_side_contact(self):
+        held = settings(peer(A, "Ay", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": [],
+            "corner": False, "corner_at": "top_left", "corners": [], "notch": False,
+        }), peer(B, "Bee", side="right", ways={
+            "edge": True, "thirds": list(ways.PARTS), "edges": [],
+            "corner": True, "corner_at": "top_left", "corners": ["top_left"], "notch": False,
+        }))
+        held["layout"] = {HERE: {"x": 0, "y": 0, "w": 160, "h": 100},
+                          A: {"x": 400, "y": 0, "w": 160, "h": 100},
+                          B: {"x": 160, "y": 0, "w": 160, "h": 100}}
+
+        reach = ways.reach(held, A, platform="pc", capable={HERE, A, B})
+
+        self.assertEqual(reach["corners"]["top_left"], {"state": "unavailable", "by": None})
+
+
 class LeavingOut(unittest.TestCase):
     def test_leave_out_turns_every_zone_off_and_put_back_restores_only_the_recorded_kinds(self):
         held = settings(peer(A, "Ay", side="right"), zones=[
@@ -245,7 +486,8 @@ class LeavingOut(unittest.TestCase):
         self.assertTrue(held["peers"][0]["left_out"])
         self.assertNotIn("left_out_ways", held["peers"][0])
         self.assertEqual(held["peers"][0]["ways"], {"edge": True, "thirds": list(ways.PARTS),
-                                                      "corner": False, "corner_at": "bottom_left", "notch": False})
+                                                      "edges": [], "corner": False, "corner_at": "bottom_left",
+                                                      "corners": [], "notch": False})
         self.assertEqual(held["zones"], [])
         self.assertFalse(ways.has_way(held, A))
 
@@ -285,7 +527,8 @@ class LeavingOut(unittest.TestCase):
 
         self.assertEqual(held["peers"][0]["ways"]["edge"], True)
         self.assertTrue(ways.has_way(held, A))
-        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "right"}])
+        self.assertEqual(held["zones"], [{"peer": A, "kind": "edge", "side": "right",
+                                          "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0]}])
 
 
 class InactiveZones(unittest.TestCase):
@@ -1202,6 +1445,13 @@ class PartOfTheEdgeIsOneChoiceWithTheEdge(unittest.TestCase):
         self.assertIsNone(ways.corner_holder(held, "top_right", exclude=B))
         held["peers"][0]["left_out"] = True
         self.assertIsNone(ways.corner_holder(held, "top_left", exclude=B))
+
+    def test_a_diagonal_corner_contact_holds_the_corner_too(self):
+        held = settings(peer(A, "Ay"), peer(B, "Bee"))
+        held["layout"] = {HERE: {"x": 0, "y": 0, "w": 160, "h": 100},
+                          A: {"x": -160, "y": -100, "w": 160, "h": 100},
+                          B: {"x": 160, "y": 100, "w": 160, "h": 100}}
+        self.assertEqual(ways.corner_holder(held, "top_left", exclude=B), A)
 
     def test_every_combination_round_trips_through_the_settings(self):
         for thirds in THIRDS_COMBINATIONS:

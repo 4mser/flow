@@ -93,6 +93,7 @@ class Config:
     effect_size: str = "medium"
     effect_pace: float = 1.0
     effect_size_fraction: float = 0.045
+    frame_rate: str = "display"
     # The Mac's name from the last pairing, for the window to say who this PC is paired with.
     paired_with: str = ""
     # Whether each machine may take the other's input. Two plain switches: the
@@ -139,6 +140,12 @@ class Config:
     block_while_dragging: bool = True
     # A full-screen app in front holds this PC's edges. This PC's own choice, never shared.
     hold_full_screen: bool = False
+    # The tray icon, one key on all three apps (the Mac's is the menu bar item). This machine's own
+    # choice, never shared.
+    show_in_tray: bool = True
+    # Only the machine in use shows a pointer: this PC's while it drives another, and after a driver
+    # lets go of it until it moves (core/idle_pointer). This machine's own choice, never shared.
+    hide_idle_pointer: bool = True
     # The Mac's address is learned, never typed: it is the peer address the
     # Mac's own link arrives from.
     mac_host: str = ""
@@ -233,6 +240,10 @@ def validate_config(config: Config) -> None:
         raise ConfigError("block_while_dragging must be true or false")
     if not isinstance(config.hold_full_screen, bool):
         raise ConfigError("hold_full_screen must be true or false")
+    if not isinstance(config.show_in_tray, bool):
+        raise ConfigError("show_in_tray must be true or false")
+    if not isinstance(config.hide_idle_pointer, bool):
+        raise ConfigError("hide_idle_pointer must be true or false")
     if not isinstance(config.mac_hardware_address, str):
         raise ConfigError("mac_hardware_address must be text")
     if not isinstance(config.crossing_methods, list) or any(
@@ -297,6 +308,8 @@ def validate_config(config: Config) -> None:
         raise ConfigError("effect_pace must be a number from 0.25 to 2.5")
     if not effects.valid_effect_size_fraction(config.effect_size_fraction):
         raise ConfigError("effect_size_fraction must be a number from 0.02 to 0.08")
+    if config.frame_rate not in tuple(value for value, _name, _divisor in effects.FRAME_RATES):
+        raise ConfigError("frame_rate must be one of: display, half, quarter")
     if not isinstance(config.paired_with, str):
         raise ConfigError("paired_with must be text")
     if not isinstance(config.send_to_mac, bool):
@@ -347,6 +360,7 @@ def config_from_dict(raw: dict) -> Config:
             effect_size=raw.get("effect_size", "medium"),
             effect_pace=raw.get("effect_pace"),
             effect_size_fraction=raw.get("effect_size_fraction"),
+            frame_rate=raw.get("frame_rate", "display"),
             paired_with=raw.get("paired_with", "") or "",
             allow_mac_to_drive=raw.get("allow_mac_to_drive", True),
             check_updates=raw.get("check_updates", True),
@@ -375,6 +389,8 @@ def config_from_dict(raw: dict) -> Config:
             modifier_style=raw.get("modifier_style", "semantic"),
             block_while_dragging=raw.get("block_while_dragging", True),
             hold_full_screen=raw.get("hold_full_screen", False),
+            show_in_tray=raw.get("show_in_tray", True),
+            hide_idle_pointer=raw.get("hide_idle_pointer", True),
             mac_hardware_address=raw.get("mac_hardware_address", "") or "",
             mac_host=raw.get("mac_host", "") or "",
             mac_return_edge=raw.get("mac_return_edge", "") or "",
@@ -428,6 +444,7 @@ def config_to_dict(config: Config) -> dict:
         "effect_size": config.effect_size,
         "effect_pace": config.effect_pace,
         "effect_size_fraction": config.effect_size_fraction,
+        "frame_rate": config.frame_rate,
         "paired_with": config.paired_with,
         "allow_mac_to_drive": config.allow_mac_to_drive,
         "check_updates": config.check_updates,
@@ -455,6 +472,8 @@ def config_to_dict(config: Config) -> dict:
         "modifier_style": config.modifier_style,
         "block_while_dragging": config.block_while_dragging,
         "hold_full_screen": config.hold_full_screen,
+        "show_in_tray": config.show_in_tray,
+        "hide_idle_pointer": config.hide_idle_pointer,
         "mac_hardware_address": config.mac_hardware_address,
         "mac_host": config.mac_host,
         "mac_return_edge": config.mac_return_edge,
@@ -876,6 +895,12 @@ class ReadFallbackPeerBook(receiver.PeerBook):
     def zones(self) -> list:
         with self.lock:
             return copy.deepcopy(list((self._tolerant() or {}).get("zones") or []))
+
+    def snapshot(self) -> tuple[list, list]:
+        with self.lock:
+            settings = self._tolerant() or {}
+            return (copy.deepcopy(list(settings.get("peers") or [])),
+                    copy.deepcopy(list(settings.get("zones") or [])))
 
 
 def save_config(path: Path, config: Config) -> None:

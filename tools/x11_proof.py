@@ -147,7 +147,9 @@ def proof_injection_and_capture():
         check("a warp moves the pointer", desktop_x11.cursor_position() == (123, 45), desktop_x11.cursor_position())
         check("a warp makes no motion", motions == [], motions)
         monitors = desktop_x11.monitors()
-        check("RandR reports the screen", len(monitors) == 1 and (monitors[0].width, monitors[0].height) == (1920, 1080), monitors)
+        check("RandR reports the X server root geometry",
+              any((m.width, m.height) == (1920, 1080) for m in monitors) or (
+                  sum(m.width for m in monitors) == 1920 and all(m.height == 1080 for m in monitors)), monitors)
 
         expected = {"shift": "shift", "shift_r": "shift_r", "ctrl": "cmd", "ctrl_r": "cmd_r",
                     "alt": "alt", "alt_r": "alt_r", "cmd": "ctrl", "cmd_r": "ctrl_r"}
@@ -163,7 +165,7 @@ def proof_injection_and_capture():
         check("a letter reads back with its code and US place", keys == [("q", True, 16, "q"), ("q", False, 16, "q")], keys)
 
         for message_dy, message_dx, expect in ((1, 0, ("wheel", 1.0, 0.0)), (-1, 0, ("wheel", -1.0, 0.0)),
-                                              (0, 1, ("wheel", 0.0, 1.0)), (0, -1, ("wheel", 0.0, -1.0))):
+                                              (0, 1, ("wheel", 0.0, -1.0)), (0, -1, ("wheel", 0.0, 1.0))):
             inject_x11.inject_scroll(message_dy, message_dx, "line")
             _, mice, _ = seen.take(0.15)
             events = [capture_x11.mouse_event(message, data) for message, data in mice]
@@ -216,6 +218,85 @@ def proof_injection_and_capture():
         inject_x11.release_all()
     finally:
         hooks.stop()
+
+
+def proof_seams():
+    """Exercise directional XFixes seam barriers with real XTest pointer motion.
+
+    Xvfb exposes one RandR output, so the seam controller receives the two logical monitor
+    rectangles explicitly. This still exercises the same XFixes barriers and pointer path as a
+    two-monitor X11 desktop; the result record distinguishes the geometry fixture from hardware.
+    """
+    import desktop_x11
+    import inject_x11
+    import x11_seams
+    from core.return_edge import PartEdge, Rect, ReturnEdge
+    from Xlib import display
+
+    monitors = [Rect(0, 0, 960, 1080), Rect(960, 0, 960, 1080)]
+    display_map = {"A": monitors[0], "B": monitors[1]}
+    connection = display.Display()
+    controller = x11_seams.Controller(x11_seams.XlibBackend(connection, connection.screen().root))
+
+    randr_monitors = desktop_x11.monitors()
+    expected = {(monitor.x, monitor.y, monitor.width, monitor.height) for monitor in monitors}
+    observed = {(monitor.x, monitor.y, monitor.width, monitor.height) for monitor in randr_monitors}
+    check("RandR reports two virtual monitors", observed == expected, randr_monitors)
+
+    xfixes = connection.xfixes_query_version()
+    if (xfixes.major_version, xfixes.minor_version) < (5, 0):
+        detail = f"XFixes {xfixes.major_version}.{xfixes.minor_version}; pointer barriers require 5.0"
+        check("XFixes provides pointer barriers for seam proofs", False, detail)
+        check("an armed selected seam third holds XTest motion", False, detail)
+        check("an unarmed seam third lets XTest motion pass", False, detail)
+        check("paused seam capture lets XTest motion pass", False, detail)
+        check("unready display mapping lets XTest motion pass", False, detail)
+        check("the rearranged stacked seam holds at the new boundary", False, detail)
+        controller.close()
+        connection.close()
+        return
+
+    def move_from(point, dx, dy):
+        desktop_x11.set_cursor_position(*point)
+        time.sleep(0.1)
+        inject_x11.inject_mouse_move(dx, dy)
+        time.sleep(0.2)
+        return desktop_x11.cursor_position()
+
+    try:
+        controller.configure(monitors, 30, display_map=display_map,
+                             models=[PartEdge("right", {"start"}, display="A")])
+        connection.sync()
+        check("the selected seam barrier is installed", controller.active, controller._barriers)
+        start = move_from((950, 180), 30, 0)
+        check("an armed selected seam third holds XTest motion", start[0] <= 960, start)
+
+        unselected = move_from((950, 900), 30, 0)
+        check("an unarmed seam third lets XTest motion pass", unselected[0] > 960, unselected)
+
+        controller.configure(monitors, 30, enabled=False, display_map=display_map,
+                             models=[ReturnEdge("right", display="A")])
+        paused = move_from((950, 500), 30, 0)
+        check("paused seam capture lets XTest motion pass", paused[0] > 960, paused)
+
+        controller.configure(monitors, 30, display_map={}, models=[ReturnEdge("right", display="missing")])
+        unready = move_from((950, 500), 30, 0)
+        check("unready display mapping lets XTest motion pass", unready[0] > 960, unready)
+
+        stacked = [Rect(0, 0, 960, 540), Rect(0, 540, 960, 540)]
+        controller.configure(stacked, 30, display_map={"A": stacked[0], "B": stacked[1]},
+                             models=[ReturnEdge("bottom", display="A")])
+        connection.sync()
+        rearranged = move_from((480, 530), 0, 30)
+        check("the rearranged stacked seam holds at the new boundary", rearranged[1] <= 540, rearranged)
+        check("RandR root remains available for the two-monitor geometry fixture",
+              any((m.width, m.height) == (1920, 1080) for m in randr_monitors) or (
+                  sum(m.width for m in randr_monitors) == 1920 and all(m.height == 1080 for m in randr_monitors)), randr_monitors)
+    except Exception as exc:
+        check("XFixes seam proof completed", False, repr(exc))
+    finally:
+        controller.close()
+        connection.close()
 
 
 def fake(keycode, down=None):
@@ -442,6 +523,7 @@ if __name__ == "__main__":
         clipboard_other(sys.argv[2])
     else:
         proof_injection_and_capture()
+        proof_seams()
         proof_killed_process_lets_go()
         proof_clipboard()
         print(f"{len(failures)} failed" if failures else "all passed", flush=True)

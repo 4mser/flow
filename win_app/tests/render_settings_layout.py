@@ -332,7 +332,8 @@ def run_crossing_state(state, destination):
                                - window.atlas_canvas.mapTo(window.ways_module, QPoint(0, window.atlas_canvas.height())).y()),
                   "horizontal_scroll": scroll.horizontalScrollBar().maximum(),
                   "rows": [{"name": row.name.full_text, "status": row.status.text(),
-                             "edge": row.edge_value.text(), "corner": row.corner_value.text(),
+                             "edges": {side: chip.kind for side, chip in row.edge_chips.chips.items() if not chip.isHidden()},
+                             "corners": [corner for corner, button in row.corner_grid.buttons.items() if button.isChecked()],
                              "jump": row.jump.value} for row in window.crossing_ledger.rows.values()]}
         (scratch / f"ledger-render-{state}.json").write_text(json.dumps(record, indent=2) + "\n")
         print(json.dumps(record))

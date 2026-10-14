@@ -365,12 +365,22 @@ class SendItemsTest(unittest.TestCase):
 
     def test_each_machine_this_mac_sends_to_has_its_own_and_the_one_input_is_on_brings_it_back(self):
         peers = [self.entry("A", "Bee"), self.entry("B", "Sea"), self.entry("C", "Oak", send=False)]
-        self.assertEqual(pages.send_items(peers, None, False), [("A", "Send input to Bee"), ("B", "Send input to Sea")])
-        self.assertEqual(pages.send_items(peers, "B", False), [("A", "Send input to Bee"), ("B", "Bring input back")])
+        self.assertEqual(pages.send_items(peers, None, False), [("A", "Send input to Bee", True), ("B", "Send input to Sea", True)])
+        self.assertEqual(pages.send_items(peers, "B", False), [("A", "Send input to Bee", True), ("B", "Bring input back", True)])
 
     def test_a_machine_not_in_use_has_no_send_item(self):
         peers = [self.entry("A", "Bee"), self.entry("B", "Sea"), self.entry("C", "Oak", in_use=False)]
-        self.assertEqual(pages.send_items(peers, None, False), [("A", "Send input to Bee"), ("B", "Send input to Sea")])
+        self.assertEqual(pages.send_items(peers, None, False), [("A", "Send input to Bee", True), ("B", "Send input to Sea", True)])
+
+    def test_a_machine_whose_link_is_down_is_listed_dimmed_as_unavailable(self):
+        peers = [self.entry("A", "Bee"), self.entry("B", "Sea")]
+        live = lambda entry: entry["id"] == "A"
+        self.assertEqual(pages.send_items(peers, None, False, live=live),
+                         [("A", "Send input to Bee", True), ("B", "Sea is unavailable", False)])
+
+    def test_the_machine_input_is_on_can_always_bring_it_back(self):
+        peers = [self.entry("A", "Bee"), self.entry("B", "Sea")]
+        self.assertEqual(pages.send_items(peers, "B", False, live=lambda entry: False)[1], ("B", "Bring input back", True))
 
     def test_a_nameless_machines_address_is_hidden_when_asked(self):
         peers = [self.entry("A", ""), self.entry("B", "Sea")]

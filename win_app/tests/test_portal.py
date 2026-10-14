@@ -1,6 +1,7 @@
 """The portal client over a fake bus: a request waits for its own Response however the signals
 interleave, a refusal and a failure are told apart, other signals are kept, a stop ends a wait
-for the user, and a restore token is kept for this user only."""
+for the user, a restore token is kept for this user only, and a message goes out through the
+Notification portal."""
 
 import os
 import stat
@@ -74,6 +75,26 @@ class RequestTest(unittest.TestCase):
         client = portal.Portal(bus)
         self.assertEqual(client.version("org.freedesktop.portal.InputCapture"), 2)
         self.assertEqual(client.version("org.freedesktop.portal.RemoteDesktop"), 0)
+
+
+class NotifyTest(unittest.TestCase):
+    def test_a_message_goes_to_the_notification_portal_in_place_of_the_last_and_the_bus_is_closed(self):
+        bus = FakeBus()
+        portal.notify("Beamer", "Cannot switch", connect=lambda: bus).join(2)
+        self.assertEqual(bus.calls, [(portal.NOTIFICATION, "AddNotification",
+                                      ("alert", {"title": ("s", "Beamer"), "body": ("s", "Cannot switch")}))])
+        self.assertTrue(bus.closed)
+
+    def test_a_portal_that_fails_or_a_bus_out_of_reach_costs_only_the_message(self):
+        bus = FakeBus()
+        bus.failures["AddNotification"] = portal.PortalError("No such interface")
+        portal.notify("Beamer", "x", connect=lambda: bus).join(2)
+        self.assertTrue(bus.closed)
+
+        def unreachable():
+            raise portal.PortalError("Could not reach the session bus")
+
+        portal.notify("Beamer", "x", connect=unreachable).join(2)
 
 
 class TokenStoreTest(unittest.TestCase):

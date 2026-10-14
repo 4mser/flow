@@ -86,6 +86,18 @@ class FakeQuartz:
     def CGEventGetLocation(cls, event):
         return event.get("location", cls.cursor_pin_location)
 
+    @staticmethod
+    def CGMainDisplayID():
+        return 1
+
+    @staticmethod
+    def CGDisplayHideCursor(display):
+        return 0
+
+    @staticmethod
+    def CGDisplayShowCursor(display):
+        return 0
+
     @classmethod
     def CGAssociateMouseAndMouseCursorPosition(cls, follows):
         cls.associate_calls.append(follows)

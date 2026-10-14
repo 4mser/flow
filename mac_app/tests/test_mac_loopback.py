@@ -63,6 +63,16 @@ class MacDrivesPcTests(unittest.TestCase):
         keys = [("key", "ctrl", True), ("key", "a", True), ("key", "a", False), ("key", "ctrl", False)]
         self.assertTrue(wait_for(lambda: [call for call in self.pc.injected() if call[0] == "key"] == keys), self.pc.injected())
 
+    def test_caps_lock_from_the_redirecting_mac_reaches_the_windows_responder(self):
+        self.cross()
+        event = {
+            FakeQuartz.kCGKeyboardEventKeycode: 0x39,
+            "flags": 0,
+        }
+        self.assertIsNone(self.tap((FakeQuartz.kCGEventFlagsChanged, event)))
+        caps = [("key", "caps_lock", True), ("key", "caps_lock", False)]
+        self.assertTrue(wait_for(lambda: [call for call in self.pc.injected() if call[0] == "key"] == caps), self.pc.injected())
+
     def test_a_key_held_when_the_input_comes_home_is_released_on_the_pc_first(self):
         self.cross()
         self.tap(key_event(True, A_KEYCODE, "a"))
@@ -111,6 +121,25 @@ class PcDrivesMacTests(unittest.TestCase):
         pc.acked(pc.key(protocol.MSG_KEYUP, "a"))
         calls = [call for call in self.duo.mac_injector.seen() if call[0] in ("key", "move")]
         self.assertEqual(calls, [("key", "a", True), ("move", -4, 5), ("key", "a", False)])
+
+    def test_caps_lock_from_the_windows_peer_reaches_the_mac_injector(self):
+        pc = self.duo.pc
+        for kind in (protocol.MSG_KEYDOWN, protocol.MSG_KEYUP):
+            self.assertIsNotNone(pc.acked(pc.key(kind, "caps_lock")))
+        caps = [("key", "caps_lock", True), ("key", "caps_lock", False)]
+        self.assertTrue(wait_for(lambda: [call for call in self.duo.mac_injector.seen() if call[0] == "key"] == caps))
+
+    def test_caps_lock_shortcut_hands_the_pcs_input_home_while_the_mac_is_driven(self):
+        self.duo.link_mac_to_pc()
+        self.duo.mac.cfg.trigger_key = "caps_lock"
+        self.duo.mac.trigger_code = 0x39
+        self.duo.mac.cfg.crossing["methods"] = ("edge", "shortcut")
+        event = {FakeQuartz.kCGKeyboardEventKeycode: 0x39, "flags": 0}
+        tap = self.duo.mac._event_tap_callback
+
+        self.assertIs(tap(None, FakeQuartz.kCGEventFlagsChanged, event, None), event)
+        self.assertIsNone(tap(None, FakeQuartz.kCGEventFlagsChanged, event, None))
+        self.assertTrue(wait_for(lambda: not self.duo.mac.receiving), "the PC kept driving after the Caps Lock shortcut")
 
     def test_the_macs_own_events_pass_through_untouched_while_the_pc_drives(self):
         event = {"location": (400.0, 300.0), FakeQuartz.kCGMouseEventDeltaX: 5, FakeQuartz.kCGMouseEventDeltaY: 0}

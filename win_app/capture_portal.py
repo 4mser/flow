@@ -171,6 +171,10 @@ def _clip(stretches, low: int, high: int) -> List[Tuple[int, int]]:
     return [(max(a, low), min(b, high)) for a, b in stretches if min(b, high) > max(a, low)]
 
 
+def _geometry(rect: crossing.Rect) -> tuple:
+    return rect.x, rect.y, rect.width, rect.height
+
+
 def _thirds(monitor: crossing.Rect, edge: str) -> List[Tuple[int, int]]:
     """Each third of `monitor` along `edge`, as [start, end), split where return_edge.part_of
     splits a fraction of the display."""
@@ -179,7 +183,8 @@ def _thirds(monitor: crossing.Rect, edge: str) -> List[Tuple[int, int]]:
     return [(cuts[i], cuts[i + 1]) for i in range(3)]
 
 
-def barriers(models: list, monitors: List[crossing.Rect], whole_edges=False) -> List[Tuple[str, Tuple[int, int, int, int]]]:
+def barriers(models: list, monitors: List[crossing.Rect], whole_edges=False, display_map=None,
+             warn_unmatched: Optional[Callable[[str], None]] = None) -> List[Tuple[str, Tuple[int, int, int, int]]]:
     """(wall, position) for every barrier the sender's zone models need on these displays, in the
     portal's coordinates, each once: a whole edge, the chosen thirds of it, or a corner's two walls
     of CORNER_PX + 1 pixels. A notch stretch (SpanEdge) is the Mac's and has none here."""
@@ -190,9 +195,20 @@ def barriers(models: list, monitors: List[crossing.Rect], whole_edges=False) -> 
             found.append((wall, position))
 
     for model in models:
+        selected = monitors
+        if model.display is not None:
+            display = display_map.get(model.display) if isinstance(display_map, dict) else None
+            matches = [monitor for monitor in monitors if display is not None and
+                       _geometry(monitor) == _geometry(display)]
+            if len(matches) == 1:
+                selected = matches
+            else:
+                if warn_unmatched is not None:
+                    warn_unmatched(model.display)
+                continue
         if isinstance(model, crossing.SpanEdge):
             continue
-        for monitor in monitors:
+        for monitor in selected:
             if whole_edges:
                 walls = (model.vertical, model.horizontal) if isinstance(model, crossing.CornerPush) else (model.edge,)
                 for wall in walls:
@@ -224,7 +240,8 @@ def barriers(models: list, monitors: List[crossing.Rect], whole_edges=False) -> 
 
 def model_key(models: list) -> tuple:
     """What about the models places barriers, so they are set again only when it changes."""
-    return tuple((type(m).__name__, m.edge, tuple(sorted(getattr(m, "parts", ()))), getattr(m, "corner", None))
+    return tuple((type(m).__name__, m.edge, tuple(sorted(getattr(m, "parts", ()))), getattr(m, "corner", None),
+                  getattr(m, "display", None))
                  for m in models)
 
 
@@ -395,6 +412,7 @@ class Hooks:
         self._tokens = tokens or portal.TokenStore("input-capture")
         self._clock = clock
         self._whole_edges = linux_desktop.desktop() == "kde"
+        self._unmatched_displays_logged = set()
         self._thread: Optional[threading.Thread] = None
         self._ready = threading.Event()
         self._stopping = threading.Event()
@@ -422,6 +440,9 @@ class Hooks:
         self._reject_unannounced = False
         self._sequences: Dict[object, int] = {}  # libei device: the sequence it emulates under
         self._disabled_at: Optional[float] = None
+        self._expect_disabled = False  # Beamer's own SetPointerBarriers on an enabled session, whose Disabled is to come
+        self._devices = set()  # ids of the captured devices the desktop has added and not removed
+        self._leaving = set()  # of those, the ones a disable Beamer knows of is about to remove
         self._sent_home_at: Optional[float] = None
         self._key = None
         self._zones: List[crossing.Rect] = []
@@ -605,8 +626,14 @@ class Hooks:
                 desktop_portal.note_position(*point)
             if member == "Disabled":
                 self._session.enabled = False
-                self._key = None  # set the barriers and enable again, after DISABLED_SECONDS
                 self._disabled_at = self._clock()
+                if self._expect_disabled:
+                    # KWin sends this for its own disable inside every SetPointerBarriers, after the
+                    # Enable that follows; it keeps the barriers, so setting them again would loop.
+                    self._expect_disabled = False
+                else:
+                    self._key = None  # set the barriers and enable again, after DISABLED_SECONDS
+                    self._leaving = set(self._devices)
             # Asked of the sender too: a tray switch may have sent input away a moment ago.
             if was_away or self._away_wanted():
                 LOGGER.info("The desktop ended the capture while input was away; bringing it home")
@@ -614,6 +641,7 @@ class Hooks:
         elif member == "ZonesChanged":
             # Mutter and KWin disable the session on a monitor change; mutter says only this.
             self._session.enabled = False
+            self._leaving = set(self._devices)
             self._set_zones(self._session.zones())
 
     def _activated(self, options: dict) -> None:
@@ -774,18 +802,31 @@ class Hooks:
         except Exception:
             LOGGER.exception("Could not read the zones; no barriers until the next change")
             models = []
-        key = (model_key(models), tuple(self._zones))
+        display_map = desktop_portal.display_map()
+        key = (model_key(models), tuple(self._zones),
+               tuple(sorted((name, _geometry(rect)) for name, rect in display_map.items())))
         if key == self._key:
             if models and not session.enabled:
                 session.enable()
             return
         self._key = key
-        self._selected = barriers(models, self._zones)
-        placed = self._placed = barriers(models, self._zones, whole_edges=self._whole_edges)
+        self._expect_disabled = session.enabled
+        if session.enabled:
+            self._leaving = set(self._devices)
+        self._selected = barriers(models, self._zones, display_map=display_map,
+                                  warn_unmatched=self._warn_unmatched_display)
+        placed = self._placed = barriers(models, self._zones, whole_edges=self._whole_edges, display_map=display_map,
+                                         warn_unmatched=self._warn_unmatched_display)
         failed = session.set_barriers([position for _wall, position in placed])
         self._walls = {index + 1: wall for index, (wall, _position) in enumerate(placed) if index + 1 not in failed}
         if failed:
             LOGGER.warning("The desktop refused %d of %d edge barriers", len(failed), len(placed))
+
+    def _warn_unmatched_display(self, display: str) -> None:
+        if display in self._unmatched_displays_logged:
+            return
+        self._unmatched_displays_logged.add(display)
+        LOGGER.warning("Could not match display %r to one portal zone by geometry; skipping its barriers", display)
 
     # -- ei events -------------------------------------------------------------
 
@@ -793,11 +834,25 @@ class Hooks:
         kind = event[0]
         if kind == "device_added":
             device = event[1]
+            self._devices.add(id(device))
+            self._leaving.discard(id(device))
             if hasattr(device, "keymap") and 4 in getattr(device, "caps", ()):  # libei.CAP_KEYBOARD
                 self._read_keymap(device)
             return
         if kind == "disconnect":
             raise CaptureUnavailable(ENDED.format(detail="its input connection closed"))
+        if kind == "device_removed":
+            self._devices.discard(id(event[1]))
+            if id(event[1]) in self._leaving:
+                self._leaving.discard(id(event[1]))
+            elif self._session is not None and self._session.enabled:
+                # Mutter's cancel shortcut leaves the session disabled and says nothing but this:
+                # a release only stops the devices, a disable removes them. Its barriers stand, so
+                # Enable alone brings the edges back.
+                LOGGER.info("The desktop removed the capture's input devices; enabling the session again")
+                self._session.enabled = False
+                self._disabled_at = self._clock()
+            return
         if kind == "device_paused":
             device = event[1]
             for device_id, code in tuple(self._names_down):

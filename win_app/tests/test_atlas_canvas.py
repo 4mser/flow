@@ -14,6 +14,44 @@ class AtlasCanvasTests(unittest.TestCase):
 
         self.app = QApplication.instance() or QApplication([])
 
+    def test_per_screen_desk_canvas_keeps_a0_b0_a1_and_b1_grouped_by_machine(self):
+        from diagram import AtlasCanvas
+        from core.tests.crossing_harness import per_screen_layout
+
+        tiles = per_screen_layout("home", "peer")
+        canvas = AtlasCanvas()
+        self.addCleanup(canvas.deleteLater)
+        canvas.resize(720, 360)
+        canvas.set_tiles(tiles, {"home": "This PC", "peer": "Studio Mac"},
+                         {"home": {}, "peer": {"state": "edge", "crosses": True}},
+                         "peer", own_id="home")
+
+        a0, a1 = canvas.display_rect("home", "0"), canvas.display_rect("home", "1")
+        b0, b1 = canvas.display_rect("peer", "0"), canvas.display_rect("peer", "1")
+        self.assertLess(a0.center().x(), b0.center().x())
+        self.assertLess(b0.center().x(), a1.center().x())
+        self.assertGreater(b1.top(), b0.top())
+
+    def test_split_b1_offset_draws_past_the_nominal_group_bounds(self):
+        from diagram import AtlasCanvas
+        from core.tests.crossing_harness import per_screen_layout
+
+        canvas = AtlasCanvas()
+        self.addCleanup(canvas.deleteLater)
+        canvas.resize(720, 360)
+        labels = {"home": "This PC", "peer": "Studio Mac"}
+        statuses = {"home": {}, "peer": {"state": "edge", "crosses": True}}
+        for offset in (80, 120):
+            with self.subTest(b1_offset=offset):
+                tiles = per_screen_layout("home", "peer", b1_x=offset)
+                canvas.set_tiles(tiles, labels, statuses, "peer", own_id="home")
+                group = canvas.tile_rect("peer")
+                b1 = canvas.display_rect("peer", "1")
+                if offset < 100:
+                    self.assertLess(b1.left(), group.left())
+                else:
+                    self.assertGreater(b1.right(), group.right())
+
     def test_this_pc_tile_shows_platform_and_linked_status(self):
         import sys
 
@@ -63,6 +101,123 @@ class AtlasCanvasTests(unittest.TestCase):
             for y in range(max(0, int(rect.top()) + 6), min(image.height(), int(rect.top()) + 30))
             for x in range(max(0, int(rect.left()) + 20), min(image.width(), int(rect.right()) - 20)))
         self.assertTrue(visible_ink)
+
+    def _wrapping_canvas(self, **states):
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QImage
+
+        from diagram import AtlasCanvas
+
+        canvas = AtlasCanvas()
+        self.addCleanup(canvas.deleteLater)
+        canvas.resize(880, 260)
+        tiles = {"home": {"x": 0, "y": 0, "w": 160, "h": 100}, "a": {"x": 160, "y": 0, "w": 160, "h": 100},
+                 "b": {"x": -160, "y": 0, "w": 160, "h": 100}}
+        base = {"a": {"state": "edge", "thirds": ["start", "middle", "end"], "linked": True},
+                "b": {"state": "edge", "thirds": ["start", "middle", "end"], "linked": True}}
+        for peer, extra in states.items():
+            base[peer].update(extra)
+        canvas.set_tiles(tiles, {"home": "This PC", "a": "MacBook Pro", "b": "Studio Linux"}, base, "a", own_id="home")
+        image = QImage(canvas.size(), QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.transparent)
+        canvas.render(image)
+        return canvas, canvas.tile_rect("home")
+
+    def test_each_wrap_around_side_draws_a_seam_and_a_label(self):
+        canvas, rect = self._wrapping_canvas(a={"wraps": [{"display": None, "side": "left", "parts": ["start", "middle", "end"]},
+                                                          {"display": None, "side": "top", "parts": ["start", "middle", "end"]}]})
+        seams = {side: (one, two, alpha) for side, one, two, alpha, _width in canvas.seam_paths if side in ("left", "top")}
+        one, two, alpha = seams["left"]
+        self.assertAlmostEqual((one.x(), one.y(), two.y()), (rect.left(), rect.top() + 2, rect.bottom() - 2))
+        self.assertEqual(alpha, 1.0)
+        one, two, _alpha = seams["top"]
+        self.assertAlmostEqual((one.y(), one.x(), two.x()), (rect.top(), rect.left() + 2, rect.right() - 2))
+        self.assertEqual({(side, text) for _peer, side, text, kept, _alpha in canvas.wrap_marks if not kept},
+                         {("left", "wraps to MacBook Pro"), ("top", "wraps to MacBook Pro")})
+
+    def test_no_wrap_label_ever_lands_on_the_name_the_detail_line_or_another_label(self):
+        """rc4 on the Mac: wrap labels over the tile's name, and three of them stacked when one machine
+        wrapped Top, Right and Bottom. Every set of sides for one machine at every height, and for two."""
+        import itertools
+        from PySide6.QtCore import QRectF, Qt
+        from PySide6.QtGui import QFontMetrics, QImage
+
+        import theme
+        import tokens
+        from diagram import AtlasCanvas
+
+        sets = [list(sides) for count in range(0, 5)
+                for sides in itertools.combinations(("left", "right", "top", "bottom"), count)]
+        cases = [(height, sides, []) for height in (60, 70, 80, 90, 100, 130, 180) for sides in sets[1:]]
+        cases += [(100, sides, others) for sides in sets for others in sets[1:]]
+        canvas = AtlasCanvas()
+        self.addCleanup(canvas.deleteLater)
+        canvas.resize(880, 400)
+        image = QImage(canvas.size(), QImage.Format.Format_ARGB32)
+        for height, sides, others in cases:
+            tiles = {"home": {"x": 0, "y": 0, "w": 160, "h": height}, "a": {"x": 160, "y": 0, "w": 160, "h": height},
+                     "b": {"x": -160, "y": 0, "w": 160, "h": height}}
+            states = {"a": {"state": "edge", "thirds": ["start", "middle", "end"], "linked": True, "wraps": sides},
+                      "b": {"state": "edge", "thirds": ["start", "middle", "end"], "linked": True, "wraps": others}}
+            canvas.set_tiles(tiles, {"home": "This PC", "a": "MacBook Pro", "b": "Studio Linux"}, states, "a",
+                             own_id="home")
+            image.fill(Qt.GlobalColor.transparent)
+            canvas.render(image)
+            rect = canvas.tile_rect("home")
+            title = canvas._title_rect("home", rect)
+            name = QFontMetrics(theme.font(tokens.TYPE["body"], 650)).horizontalAdvance("This PC")
+            fixed = [QRectF(title.center().x() - name / 2, title.top(), name, title.height()),
+                     QRectF(rect.left() + 24, rect.top() + 31, rect.width() - 32, 16)]
+            boxes = [box for _side, _text, box in canvas.wrap_label_rects]
+            with self.subTest(height=height, sides=sides, others=others):
+                for index, box in enumerate(boxes):
+                    self.assertTrue(rect.contains(box), (rect, box))
+                    for other in fixed + boxes[index + 1:]:
+                        self.assertFalse(box.intersects(other), (box, other))
+                if rect.height() >= 100:
+                    self.assertEqual(len(boxes), bool(sides) + bool(others))
+
+    def test_a_wrap_around_seam_stops_thirteen_pixels_short_of_a_corner_pad(self):
+        canvas, rect = self._wrapping_canvas(a={"wraps": ["left", "bottom"], "corners": ["top_left", "bottom_right"]})
+        seams = {side: (one, two) for side, one, two, _alpha, _width in canvas.seam_paths if side in ("left", "bottom")}
+        self.assertAlmostEqual(seams["left"][0].y(), rect.top() + 13)
+        self.assertAlmostEqual(seams["left"][1].y(), rect.bottom() - 2)
+        self.assertAlmostEqual(seams["bottom"][0].x(), rect.left() + 2)
+        self.assertAlmostEqual(seams["bottom"][1].x(), rect.right() - 13)
+
+    def test_wrap_seams_follow_the_offline_and_not_selected_opacities(self):
+        canvas, _rect = self._wrapping_canvas(a={"wraps": ["left"], "linked": False}, b={"wraps": ["right"]})
+        alphas = {peer: alpha for peer, _side, _text, _kept, alpha in canvas.wrap_marks}
+        self.assertAlmostEqual(alphas["a"], .55)
+        self.assertAlmostEqual(alphas["b"], .7)
+
+    def test_a_kept_side_is_a_dashed_faint_seam_with_its_own_label(self):
+        canvas, rect = self._wrapping_canvas(a={"kept_wraps": ["bottom"], "edge_off": True})
+        (peer, side, text, kept, alpha), = canvas.wrap_marks
+        self.assertEqual((peer, side, text, kept, alpha), ("a", "bottom", "wrap kept, Edge off", True, .35))
+
+    def test_one_pad_per_corner_of_every_machine_at_full_and_quiet_opacity(self):
+        canvas, _rect = self._wrapping_canvas(a={"corners": ["top_left", "bottom_right"]}, b={"corners": ["top_right"]})
+        self.assertEqual(set(canvas.corner_marks), {("a", "top_left", 1.0), ("a", "bottom_right", 1.0), ("b", "top_right", .55)})
+
+    def test_the_tile_says_crosses_for_any_wrap_or_corner_and_edge_off_otherwise(self):
+        from PySide6.QtGui import QColor
+        from diagram import outcome_for_tile
+        import theme
+
+        def foot_is_signal(canvas, peer):
+            rect = canvas.tile_rect(peer)
+            image = canvas.grab().toImage()
+            signal = QColor(theme.colour("signal"))
+            return any(abs(image.pixelColor(x, y).red() - signal.red()) < 20 and abs(image.pixelColor(x, y).blue() - signal.blue()) < 20
+                       for y in range(int(rect.bottom()) - 24, int(rect.bottom()) - 8)
+                       for x in range(int(rect.left()) + 40, int(rect.right()) - 40))
+        wrapped, _rect = self._wrapping_canvas(b={"crosses": True, "wraps": ["right"]})
+        self.assertTrue(foot_is_signal(wrapped, "b"))
+        off, _rect = self._wrapping_canvas(b={"crosses": False, "edge_off": True})
+        self.assertFalse(foot_is_signal(off, "b"))
+        self.assertEqual(outcome_for_tile("edge", False), "Edge off")
+        self.assertEqual(outcome_for_tile("edge", True), "Crosses")
 
     def test_drag_compiles_layout_and_refuses_overlap_at_nearest_free_snap(self):
         from PySide6.QtCore import QPoint, Qt

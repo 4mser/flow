@@ -41,6 +41,28 @@ CORNER_PUSH = {"top_left": (-30, -30), "top_right": (30, -30), "bottom_left": (-
 THIRD_AT = {"start": 1 / 6, "middle": 0.5, "end": 5 / 6}
 
 
+def per_screen_layout(a_id, b_id, *, b1_x=None, a_sizes=((100, 100), (100, 100)),
+                      b_sizes=((100, 100), (100, 100))):
+    """A0–B0–A1 / B1-below; display offsets move screens beyond the nominal machine tile."""
+    a0, a1 = a_sizes
+    b0, b1 = b_sizes
+    b_x = a0[0]
+    a1_x = a0[0]
+    b1_x = b_x if b1_x is None else b1_x
+    a_tile = {"x": 0, "y": 0, "w": a0[0] + a1[0], "h": max(a0[1], a1[1]), "displays": {
+            "0": {"x": 0, "y": 0, "w": a0[0], "h": a0[1]},
+            "1": {"x": a1_x, "y": 0, "w": a1[0], "h": a1[1]},
+        }, "display_offsets": {"1": {"x": b0[0], "y": 0}}}
+    b_tile = {"x": b_x, "y": 0, "w": max(b0[0], b1[0]), "h": b0[1] + b1[1], "displays": {
+            "0": {"x": 0, "y": 0, "w": b0[0], "h": b0[1]},
+            "1": {"x": 0, "y": b0[1], "w": b1[0], "h": b1[1]},
+        }}
+    b_offset = b1_x - b_x
+    if b_offset:
+        b_tile["display_offsets"] = {"1": {"x": b_offset, "y": 0}}
+    return {a_id: a_tile, b_id: b_tile}
+
+
 def key(one, other):
     """The token one pair shares, whichever end asks."""
     low, high = sorted((one, other))
@@ -98,7 +120,8 @@ class Hand:
         self.sent = []
         self.moved = []
         self._closed = threading.Event()
-        threading.Thread(target=self._keep_alive, name="hand-pings", daemon=True).start()
+        self._keep_alive_thread = threading.Thread(target=self._keep_alive, name="hand-pings", daemon=True)
+        self._keep_alive_thread.start()
 
     def _keep_alive(self):
         # core/link.py pings every PING_SECONDS while nothing else is sent; without it the responder
@@ -133,6 +156,7 @@ class Hand:
         self._closed.set()
         for link in list(self.links.values()):
             link.close()
+        self._keep_alive_thread.join()
 
     def carry_out(self, actions):
         for action in actions:
@@ -311,6 +335,7 @@ class Net:
 
     def add(self, name, platform, displays, seed, tile=(160, 100)):
         desk = Desk(self, ident(seed), name, platform, displays, tile)
+        self.test.addCleanup(desk.hand.close)
         desk.shell = self.shells[platform](desk)
         self.test.addCleanup(desk.shell.stop)
         self.desks[name] = desk
@@ -343,7 +368,6 @@ class Net:
             for other in self.desks.values():
                 if other is not desk:
                     desk.hand.connect(other)
-            self.test.addCleanup(desk.hand.close)
         for desk in self.desks.values():
             for other in self.desks.values():
                 if other is not desk:

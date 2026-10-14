@@ -304,7 +304,7 @@ class PlanScrollUnitsLineModeTests(unittest.TestCase):
         accum = [0.0, 0.0]
         self.assertEqual(plan_scroll_units(1, 0, "line", accum), (120, 0))
         self.assertEqual(accum, [0.0, 0.0])
-        self.assertEqual(plan_scroll_units(-2, 3, "line", accum), (-240, 360))
+        self.assertEqual(plan_scroll_units(-2, 3, "line", accum), (-240, -360))
         self.assertEqual(accum, [0.0, 0.0])
 
     def test_line_mode_defaults_to_no_horizontal_movement(self):
@@ -340,7 +340,7 @@ class PlanScrollUnitsPixelModeTests(unittest.TestCase):
 
     def test_pixel_mode_tracks_horizontal_axis_independently(self):
         accum = [0.0, 0.0]
-        whole_y, whole_x = plan_scroll_units(0.0, 0.4, "pixel", accum)
+        whole_y, whole_x = plan_scroll_units(0.0, -0.4, "pixel", accum)
         self.assertEqual((whole_y, whole_x), (0, 1))
         self.assertAlmostEqual(accum[0], 0.0)
         self.assertAlmostEqual(accum[1], 0.2, places=6)
@@ -368,7 +368,7 @@ class InjectScrollDispatchTests(unittest.TestCase):
 
     def test_line_mode_sends_wheel_and_hwheel_with_expected_flags(self):
         with mock.patch.object(input_injector, "_send_input") as fake_send:
-            input_injector.inject_scroll(1, -2, "line")
+            input_injector.inject_scroll(1, 2, "line")
         calls = [call.args[0] for call in fake_send.call_args_list]
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0].union.mi.mouseData, 120)

@@ -7,7 +7,7 @@ import time
 import unittest
 from unittest import mock
 
-from core import protocol, receiver
+from core import protocol, receiver, return_edge
 from core.tests import pngs
 from core.tests.responder_harness import B, C, TOKENS, Initiator, Machine, entry, wait_for
 
@@ -166,6 +166,30 @@ class Injecting(Case):
         seq = link.move(3, 1)
         self.assertIsNotNone(link.acked(seq))
         self.assertEqual(self.machine.injected(), [("move", 6, 2)])
+
+    def test_a_driven_move_stops_at_the_return_seam_before_injection(self):
+        from core.tests.responder_harness import ident
+        a_peer = ident(130)
+
+        self.machine.desktop._monitors = [return_edge.Rect(0, 0, 100, 100), return_edge.Rect(100, 0, 100, 100)]
+        self.machine.desktop.display_map = lambda: {"0": return_edge.Rect(0, 0, 100, 100),
+                                                     "1": return_edge.Rect(100, 0, 100, 100)}
+        peer = next(item for item in self.machine.settings.data["peers"] if item["id"] == protocol.id_text(C))
+        peer["side"] = "right"
+        self.machine.settings.data["peers"].append(entry(a_peer, "Aye", side="right"))
+        self.machine.settings.data["zones"] = [{"peer": protocol.id_text(a_peer), "kind": "edge",
+                                                 "display": "0", "side": "right"}]
+        link = Initiator(self.machine, B)
+        self.addCleanup(link.close)
+        link.handshake()
+        route = link.take(reach=[a_peer], resistance_px=120)
+        self.assertEqual(link.answer(route)[0], protocol.MSG_ACCEPT)
+        self.machine.desktop.cursor = (90, 50)
+
+        seq = link.move(200, 0)
+
+        self.assertIsNotNone(link.acked(seq))
+        self.assertEqual(self.machine.injected()[-1], ("move", 9, 0))
 
 
 class LockScreen(Case):

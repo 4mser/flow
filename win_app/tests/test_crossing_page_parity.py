@@ -92,6 +92,9 @@ class CrossingPageParityTests(unittest.TestCase):
         self.window.sender.refresh = lambda: None
         self.window.server.peers_changed = lambda: None
         self.window._sync_sending = lambda: None
+        # The fixture peers are 1.5.3 desktops. Pinned, because what a live link has advertised by now
+        # depends on the machine: on the rig neither had, and both read as 1.5.1 peers with no wraps.
+        self.window._design_peer_caps = lambda: {entry["id"]: {"layout"} for entry in self.peers}
         self.window._read_crossing()
         self.window._chosen = self.peers[0]["id"]
         self.window._reflect_ways()
@@ -156,11 +159,13 @@ class CrossingPageParityTests(unittest.TestCase):
         peer = self.peers[0]["id"]
         window._ledger_edge(peer)
         row = window.crossing_ledger.rows[peer]
-        self.assertEqual(row.edge_value.text(), "Whole edge")
-        self.assertEqual(row.corner_value.text(), "None")
+        contact = next(chip for chip in row.edge_chips.chips.values() if chip.kind == "contact")
+        self.assertTrue(contact.isChecked())
+        self.assertEqual(contact.toolTip(), "Right edge: touches MacBook Pro; click to turn it off")
+        self.assertFalse(any(button.isChecked() for button in row.corner_grid.buttons.values()))
         self.assertEqual(row.cycle.text(), "Right Ctrl")
         self.assertEqual(row.jump.key.text(), "Set a key")
-        self.assertTrue(row.corner_glyph.buttons["top_left"].isEnabled())
+        self.assertTrue(row.corner_grid.buttons["top_left"].isEnabled())
         self.assertFalse(hasattr(window, "way_boxes"))
         self.assertFalse(hasattr(window, "left_out_shelf"))
         sequence = (window.ways_module, window.pointer_module, window.resistance_module, window.shortcut_module)
@@ -186,10 +191,12 @@ class CrossingPageParityTests(unittest.TestCase):
         state = window.atlas_canvas.states[peer]
         self.assertFalse(state["crosses"])
         self.assertTrue(state["edge_off"])
-        self.assertEqual(window.crossing_ledger.rows[peer].edge_value.text(), "Off")
+        contact = next(chip for chip in window.crossing_ledger.rows[peer].edge_chips.chips.values() if chip.kind == "contact")
+        self.assertFalse(contact.isChecked())
         window._ledger_edge(peer)
         self.assertTrue(window.atlas_canvas.states[peer]["crosses"])
-        self.assertEqual(window.crossing_ledger.rows[peer].edge_value.text(), "Whole edge")
+        self.assertTrue(contact.isChecked())
+        self.assertEqual([segment.isChecked() for segment in contact.segments.values()], [True, True, True])
 
     def test_shortcut_settings_and_figures_keep_their_order(self):
         window = self.window
@@ -208,7 +215,10 @@ class CrossingPageParityTests(unittest.TestCase):
             settle(self.window)
             ledger = self.window.crossing_ledger
             for row in ledger.rows.values():
-                for control in (*row.cells, row.rename, row.leave, row.jump, row.cycle):
+                chips = [chip for chip in row.edge_chips.chips.values() if not chip.isHidden()]
+                self.assertTrue(chips)
+                for control in (*row.cells, row.rename, row.leave, row.jump, row.cycle, *chips,
+                                *row.corner_grid.buttons.values()):
                     point = position(control, ledger)
                     self.assertGreaterEqual(point.x(), 0)
                     self.assertLessEqual(point.x() + control.width(), ledger.width() + 1)

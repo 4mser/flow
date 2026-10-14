@@ -2,6 +2,7 @@
 pointer is visible whenever input is local, by whichever path it came home, so a hide is never
 left behind. A fake Quartz counts the hide and show calls, which must balance."""
 
+import dataclasses
 import os
 import sys
 import threading
@@ -164,6 +165,64 @@ class ControllerPointerTests(unittest.TestCase):
             self.controller.set_redirecting(True)
             self.controller.set_redirecting(False)
         self.assertEqual((len(CountingQuartz.hide_calls), len(CountingQuartz.show_calls)), (5, 5))
+
+
+class DrivenPointerTests(unittest.TestCase):
+    """Once a driver lets go of this Mac its pointer is hidden, until it moves or a driver returns."""
+
+    def setUp(self):
+        CountingQuartz.reset_cursor_spies()
+        CountingQuartz.cursor_pin_location = (300.0, 400.0)
+        self.controller = KVMController(make_config(PAIRED_TOKEN), logger=quiet_logger(), quartz=CountingQuartz, clock=FakeClock(),
+                                        clipboard=FakeClipboard(""), link_factory=FakeLink, desktop_bounds=lambda: (0, 0, 1920, 1080))
+        self.idle = self.controller.idle_pointer
+        self.idle._poll, self.idle._settle = 0.01, 0.02
+
+    def tearDown(self):
+        self.idle.cancel()
+        CountingQuartz.cursor_pin_location = FakeQuartz.cursor_pin_location
+
+    def hidden(self):
+        return len(CountingQuartz.hide_calls) - len(CountingQuartz.show_calls)
+
+    def wait_shown(self):
+        for _ in range(200):
+            if self.hidden() == 0 and not self.idle.hidden:
+                return True
+            threading.Event().wait(0.005)
+        return False
+
+    def test_the_driver_letting_go_hides_it(self):
+        self.controller.set_receiving(True)
+        self.assertEqual(self.hidden(), 0)
+        self.controller.set_receiving(False)
+        self.assertEqual(self.hidden(), 1)
+
+    def test_a_driver_arriving_shows_it(self):
+        self.controller.set_receiving(True)
+        self.controller.set_receiving(False)
+        self.controller.set_receiving(True)
+        self.assertEqual(self.hidden(), 0)
+
+    def test_moving_the_pointer_shows_it(self):
+        self.controller.set_receiving(True)
+        self.controller.set_receiving(False)
+        threading.Event().wait(0.06)
+        self.assertEqual(self.hidden(), 1)
+        CountingQuartz.cursor_pin_location = (301.0, 400.0)
+        self.assertTrue(self.wait_shown())
+
+    def test_switched_off_the_driver_letting_go_leaves_it(self):
+        self.controller.cfg = dataclasses.replace(self.controller.cfg, hide_idle_pointer=False)
+        self.controller.set_receiving(True)
+        self.controller.set_receiving(False)
+        self.assertEqual(self.hidden(), 0)
+
+    def test_stopping_shows_it(self):
+        self.controller.set_receiving(True)
+        self.controller.set_receiving(False)
+        self.controller.stop()
+        self.assertEqual(self.hidden(), 0)
 
 
 if __name__ == "__main__":

@@ -220,7 +220,11 @@ class HostedNotchScene(effects_overlay.EffectsCanvas):
             Quartz.CGContextScaleCTM(ctx, scale, scale)
             Quartz.CGContextTranslateCTM(ctx, -crop[0], -crop[1])
             Quartz.CGContextClipToRect(ctx, ((crop[0], crop[1]), (scene_w, scene_h)))
-            Quartz.CGContextTranslateCTM(ctx, x + w / 2.0 - stage_width / 2.0, y)
+            # The renderer's layers are a real notch's size, as the scene's effects are drawn on a
+            # screen PREVIEW_REAL times its own and shrunk.
+            Quartz.CGContextTranslateCTM(ctx, x + w / 2.0, y)
+            Quartz.CGContextScaleCTM(ctx, 1.0 / effects.PREVIEW_REAL, 1.0 / effects.PREVIEW_REAL)
+            Quartz.CGContextTranslateCTM(ctx, -stage_width / 2.0, 0.0)
             self.stage.renderInContext_(ctx)
         finally:
             Quartz.CGContextRestoreGState(ctx)

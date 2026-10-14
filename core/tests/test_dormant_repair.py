@@ -86,8 +86,10 @@ class DormantPeerTests(unittest.TestCase):
 
         self.assertEqual(outcome, receiver.ADMITTED)
         self.assertEqual(self.settings["zones"], [
-            {"peer": PEER, "kind": "part", "parts": ["start"], "side": "left"},
-            {"peer": other_id, "kind": "part", "parts": ["middle", "end"], "side": "left"},
+            {"peer": PEER, "kind": "part", "parts": ["start"], "side": "left",
+             "contact_span": [0.0, 0.5], "target_span": [0.0, 1.0]},
+            {"peer": other_id, "kind": "part", "parts": ["middle", "end"], "side": "left",
+             "contact_span": [0.5, 1.0], "target_span": [0.0, 1.0]},
         ])
         self.assertEqual(ways.ways(self.settings, PEER)["methods"], ["edge"])
         self.assertTrue(all("off" not in zone for zone in self.settings["zones"]))
@@ -120,7 +122,8 @@ class DormantPeerTests(unittest.TestCase):
 
         self.assertTrue(ways.has_way(self.settings, PEER))
         self.assertEqual(ways.ways(self.settings, PEER)["methods"], ["edge"])
-        self.assertEqual(self.settings["zones"], [{"peer": PEER, "kind": "edge", "side": "left"}])
+        self.assertEqual(self.settings["zones"], [{"peer": PEER, "kind": "edge", "side": "left",
+                                                   "contact_span": [0.0, 1.0], "target_span": [0.0, 1.0]}])
 
     def test_qr_known_check_allows_a_dormant_same_id_peer(self):
         service = pairing.PairingService.__new__(pairing.PairingService)

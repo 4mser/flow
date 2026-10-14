@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 IDS = [protocol.id_text(bytes([value]) * 16) for value in (1, 2, 3)]
 SETTINGS_ROOT = tempfile.TemporaryDirectory()
 VALUES = dict(glow_style="beam", glow_colour="ocean", effect_length="long",
-              effect_size="large", shortcut_arrival=False, shortcut_arrival_style="locator")
+              effect_size="large", frame_rate="half", shortcut_arrival=False, shortcut_arrival_style="locator")
 
 
 def mac_adapter():
@@ -295,12 +295,16 @@ def status_fixture(platform, caps, cached=False, following=False, offline=()):
         class Model:
             def __init__(self, choice):
                 self.rows = []
+            def clear(self):
+                self.rows.clear()
             def appendRow(self, item):
                 self.rows.append(item)
         namespace.update(QStandardItemModel=Model, QStandardItem=Item,
                          Qt=SimpleNamespace(ItemDataRole=SimpleNamespace(UserRole=0)))
         app._peer_entries = app.peers
         app._shown = lambda text: text
+        app._hide_addresses = lambda: False
+        app._design_follow_signature = object()
         choice = SimpleNamespace(blockSignals=lambda on: None, findData=lambda *args: 0,
                                  setCurrentIndex=lambda index: None)
         choice.setModel = lambda model: setattr(choice, "model", model)

@@ -58,6 +58,19 @@ class ReturnEdgeArrivalGrace(unittest.TestCase):
         edge.reset()
         self.assertEqual(edge.feed(MONITORS, (99, 50), 20, 0).action, return_edge.CROSS)
 
+    def test_contact_span_gates_the_seam_and_maps_the_landing_into_the_target_span(self):
+        source = return_edge.Rect(0, 0, 100, 100)
+        edge = return_edge.ReturnEdge("right", 10, self.clock, display="source", target_display="target",
+                                      target_side="left", contact_span=(0.25, 1.0), target_span=(0.0, 0.75))
+        displays = {"source": source}
+
+        outside = edge.feed([source], (99, 10), 10, 0, display_map=displays)
+        self.assertEqual(outside.action, return_edge.PASS)
+        landed = edge.feed([source], (99, 50), 10, 0, display_map=displays)
+
+        self.assertEqual(landed.action, return_edge.CROSS)
+        self.assertAlmostEqual(landed.offset, 0.25)
+
     def test_start_grace_begins_a_new_grace_period(self):
         self.clock.now += 0.3
         edge = return_edge.ReturnEdge("right", resistance_px=10, clock=self.clock)

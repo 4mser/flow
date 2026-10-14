@@ -243,8 +243,10 @@ class LinuxPermissionsTest(unittest.TestCase):
         surface._set_peer_left_out = surface._rename_peer = lambda *_args: None
         surface._remove_peer = surface._toggle_pairing_sheet = lambda *_args: None
         surface._show_code = surface._cancel_code = surface._pair_clicked = surface._pick_machine = lambda *_args: None
+        surface._pair_phone = surface._start_nearby = surface._choose_nearby = lambda *_args: None
+        surface._confirm_nearby = surface._cancel_nearby = lambda *_args: None
         surface._link_module = surface._input_module = surface._same_module = surface._name_module = lambda *_args: QWidget()
-        surface._sign_in_module = surface._updates_module = lambda *_args: QWidget()
+        surface._sign_in_module = surface._tray_module = surface._updates_module = lambda *_args: QWidget()
         surface._refresh_peers = lambda: None
         return surface
 

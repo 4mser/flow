@@ -1,6 +1,6 @@
 # Build Beamer's Linux Flatpak
 
-Linux support in Beamer 1.5 is experimental. Each release from 1.5.1 carries an x86_64 Flatpak; this page is for building it yourself, or for another architecture. On one Fedora 44 GNOME desktop under Wayland, paired with a Mac and with a Windows PC, the window and tray, pairing, crossing both ways, typing and the clipboard work; there, crossings show no edge animation on the Linux machine and the selected option in settings is not filled in. X11 on real hardware has not been tested. Please tell us how it goes.
+Linux support in Beamer 1.5 is experimental. Each release from 1.5.1 carries an x86_64 Flatpak, and from 1.5.3 an aarch64 (arm64) one too; this page is for building it yourself. On one Fedora 44 GNOME desktop under Wayland, paired with a Mac and with a Windows PC, the window and tray, pairing, crossing both ways, typing and the clipboard work. X11 on real hardware has not been tested. Please tell us how it goes.
 
 The app ID is `uk.co.kalkman.beamer`, matching the existing app's bundle identifier. The manifest uses PySide BaseApp 6.11 (PySide 6.11.2) and KDE Platform/SDK 6.11. Python modules and libei 1.6.0 are pinned, downloaded with SHA-256 verification and built offline. The KDE runtime already provides libxcb and libxkbcommon, including its X11 library.
 
@@ -17,7 +17,7 @@ flatpak run --env=XDG_SESSION_TYPE=wayland --command=python3 uk.co.kalkman.beame
 flatpak run --env=XDG_SESSION_TYPE=x11 --command=python3 uk.co.kalkman.beamer /app/share/beamer/tools/flatpak_import_probe.py
 ```
 
-The script installs the SDK, runtime and BaseApp from Flathub automatically. No host Python, pip, compiler, development libraries or pip generator is needed. Omit the architecture argument to build for the current machine. The output, build repository and builder cache are gitignored. The bundle is the app, not the KDE runtime; installing it needs Flathub and downloads the runtime if absent. Rebuilding uses the checked-in `VERSION` without changing Mac or Windows build numbers.
+The script installs the SDK, runtime and BaseApp from Flathub automatically. No host Python, pip, compiler, development libraries or pip generator is needed. Pass `aarch64` instead to build for arm64, or omit the architecture argument to build for the current machine. The output, build repository and builder cache are gitignored. The bundle is the app, not the KDE runtime; installing it needs Flathub and downloads the runtime if absent. Rebuilding uses the checked-in `VERSION` without changing Mac or Windows build numbers.
 
 Flatpak **1.18.2 has a BaseApp/SELinux build regression**, [upstream issue #6818](https://github.com/flatpak/flatpak/issues/6818), fixed in [1.18.3](https://github.com/flatpak/flatpak/releases/tag/1.18.3). The script refuses 1.18.2 rather than changing SELinux. If Fedora still supplies 1.18.2, update it first. On 03-10-2026, Fedora 44's updates-testing repository supplies released Flatpak 1.18.4:
 
