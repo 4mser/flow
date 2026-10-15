@@ -19,6 +19,8 @@ import math
 import re
 from types import SimpleNamespace
 
+from core.i18n import N_
+
 TAU = math.pi * 2.0
 IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
@@ -417,13 +419,13 @@ def _light_aperture(pen, state, departing):
 # Every direction built, in the order the Design pages list them: each direction's quiet, medium
 # and showpiece effect, and its colour packs. Ids are settings values, so never rename one.
 ALL_DIRECTIONS = (
-    ("fx_membrane", "Membrane", ("skin", "film", "rupture"), ("oil_slick", "soap_bubble", "pearl", "opal", "sea_glass")),
-    ("fx_sparks", "Sparks", ("flint", "filings", "discharge"), ("ember", "forge", "sparkler_gold", "arc", "magnesium")),
-    ("fx_instrument", "Instrument", ("rule", "gauge", "rangefinder"), ("phosphor", "sodium", "contrast", "ruby", "cobalt")),
-    ("fx_folio", "Folio", ("crease", "pleat", "concertina"), ("vellum", "carbon_copy", "marbled", "moss", "plum")),
-    ("fx_selvedge", "Selvedge", ("thread", "weave", "jacquard"), ("flax", "madder", "tide", "woad", "saffron")),
-    ("fx_ink", "Ink", ("capillary", "viscous_drop", "sumi_bloom"), ("indigo_ink", "matcha", "terracotta")),
-    ("fx_warp", "Warp", ("light_slit", "hyperdrive", "wormhole"), ("neon", "vaporwave", "cyber")),
+    ("fx_membrane", N_("Membrane"), ("skin", "film", "rupture"), ("oil_slick", "soap_bubble", "pearl", "opal", "sea_glass")),
+    ("fx_sparks", N_("Sparks"), ("flint", "filings", "discharge"), ("ember", "forge", "sparkler_gold", "arc", "magnesium")),
+    ("fx_instrument", N_("Instrument"), ("rule", "gauge", "rangefinder"), ("phosphor", "sodium", "contrast", "ruby", "cobalt")),
+    ("fx_folio", N_("Folio"), ("crease", "pleat", "concertina"), ("vellum", "carbon_copy", "marbled", "moss", "plum")),
+    ("fx_selvedge", N_("Selvedge"), ("thread", "weave", "jacquard"), ("flax", "madder", "tide", "woad", "saffron")),
+    ("fx_ink", N_("Ink"), ("capillary", "viscous_drop", "sumi_bloom"), ("indigo_ink", "matcha", "terracotta")),
+    ("fx_warp", N_("Warp"), ("light_slit", "hyperdrive", "wormhole"), ("neon", "vaporwave", "cyber")),
 )
 # Directions kept in the code but offered nowhere: not on the Design pages, not as a setting. A
 # setting that chose one of their effects or packs becomes its stand-in when it is read, and a
@@ -442,18 +444,26 @@ LIGHT_AS_GIVEN = ("aperture", "crease", "pleat", "concertina", "thread", "weave"
     for effect in effects
 )
 MONO_PACKS = {
-    'mono': ('White', ['#ebebeb', '#969696', '#ebebeb']),
-    'mono_silver': ('Silver', ['#c9ced2', '#a8afb6', '#e1e5e8']),
-    'mono_graphite': ('Graphite', ['#65696f', '#4a4f55', '#868c94']),
-    'mono_ink': ('Ink', ['#25282c', '#101215', '#41464d']),
-    'mono_warm': ('Warm grey', ['#b7ada0', '#8a8074', '#d8cfc2']),
+    'mono': (N_("White"), ['#ebebeb', '#969696', '#ebebeb']),
+    'mono_silver': (N_("Silver"), ['#c9ced2', '#a8afb6', '#e1e5e8']),
+    'mono_graphite': (N_("Graphite"), ['#65696f', '#4a4f55', '#868c94']),
+    'mono_ink': (N_("Ink"), ['#25282c', '#101215', '#41464d']),
+    'mono_warm': (N_("Warm grey"), ['#b7ada0', '#8a8074', '#d8cfc2']),
 }
+GROUP_LIGHT = N_("Light")
+GROUP_MONO = N_("Mono")
+GROUP_BRIGHT = N_("Bright")
+INTENSITY_NAMES = {"quiet": N_("Quiet"), "medium": N_("Medium"), "showpiece": N_("Showpiece")}
+
+
+def intensity_name(value):
+    return INTENSITY_NAMES[value]
 BRIGHT_PACKS = {
-    'citron': ('Citron', ['#d5ff00', '#c1f000', '#e3ff38']),
-    'laser': ('Laser', ['#1affbe', '#00efa9', '#42ffd0']),
-    'electric': ('Electric', ['#1aa7ff', '#0098f0', '#36b8ff']),
-    'fuchsia': ('Fuchsia', ['#ff66b3', '#ff4da6', '#ff80bf']),
-    'ultraviolet': ('Ultraviolet', ['#bf80ff', '#b570ff', '#cd99ff']),
+    'citron': (N_("Citron"), ['#d5ff00', '#c1f000', '#e3ff38']),
+    'laser': (N_("Laser"), ['#1affbe', '#00efa9', '#42ffd0']),
+    'electric': (N_("Electric"), ['#1aa7ff', '#0098f0', '#36b8ff']),
+    'fuchsia': (N_("Fuchsia"), ['#ff66b3', '#ff4da6', '#ff80bf']),
+    'ultraviolet': (N_("Ultraviolet"), ['#bf80ff', '#b570ff', '#cd99ff']),
 }
 # Same hue and saturation, luminance capped at .20 (over 3:1 on preview wells).
 # Authored stops avoid doing colour-space searches in the animation frame loop.
@@ -487,12 +497,12 @@ PACK_IDS = tuple(pack for _module, _name, _effects, packs in DIRECTIONS for pack
 
 def colour_groups(light_choices, with_effects=True):
     """Shared colour catalogue; Mono is independent of every effect family."""
-    groups = [('Light', [(value, name) for value, name in light_choices if value != 'mono']),
-              ('Mono', [(value, name) for value, (name, _stops) in MONO_PACKS.items()])]
+    groups = [(GROUP_LIGHT, [(value, name) for value, name in light_choices if value != 'mono']),
+              (GROUP_MONO, [(value, name) for value, (name, _stops) in MONO_PACKS.items()])]
     if with_effects:
         groups.extend((title, [(value, pack(value)[0]) for value in values])
                       for _module, title, _effects, values in DIRECTIONS)
-        groups.append(('Bright', [(value, name) for value, (name, _stops) in BRIGHT_PACKS.items()]))
+        groups.append((GROUP_BRIGHT, [(value, name) for value, (name, _stops) in BRIGHT_PACKS.items()]))
     return groups
 
 _loaded = None
@@ -575,7 +585,7 @@ def _locator_arrive(pen, s):
 
 
 # What a switch plays when the chosen style is Glow or Beam, which have no arrival of their own.
-LOCATOR = Effect("locator", "Ring", "quiet", "A ring in the chosen colours closes onto the pointer.",
+LOCATOR = Effect("locator", N_("Ring"), "quiet", N_("A ring in the chosen colours closes onto the pointer."),
                  lambda pen, s: None, _locator_arrive, 0.0, 0.72)
 
 
@@ -681,13 +691,13 @@ def _classic_depart(beam):
 
 
 CLASSIC = {
-    "glow": Effect("glow", "Glow", "quiet", "A band of light that deepens the harder you push.",
+    "glow": Effect("glow", N_("Glow"), "quiet", N_("A band of light that deepens the harder you push."),
                    _classic_depart(False), lambda pen, s: None, CLASSIC_FLASH_S, 0.0),
-    "beam": Effect("beam", "Beam", "medium", "A thin line with a comet of light running along it.",
+    "beam": Effect("beam", N_("Beam"), "medium", N_("A thin line with a comet of light running along it."),
                    _classic_depart(True), lambda pen, s: None, CLASSIC_FINISH_S, 0.0),
     "aperture": Effect(
-        "aperture", "Aperture", "showpiece",
-        "A fine lens of light opens under pressure and closes softly behind the arriving pointer.",
+        "aperture", N_("Aperture"), "showpiece",
+        N_("A fine lens of light opens under pressure and closes softly behind the arriving pointer."),
         lambda pen, state: _light_aperture(pen, state, True),
         lambda pen, state: _light_aperture(pen, state, False), 0.62, 0.62,
     ),
@@ -715,10 +725,10 @@ def switch_style_groups():
     """The Design pages' choices for SWITCH_STYLES, as (group title or None, ((value, name), ...)),
     the effects grouped by direction as the style tiles are. Only the first group when the effects
     cannot load; the overlay has already said why."""
-    groups = [(None, (("match", "Same as crossing"), ("locator", "Ring")))]
+    groups = [(None, (("match", N_("Same as crossing")), ("locator", N_("Ring"))))]
     try:
         _load()
-        light = (("Light", (("aperture", CLASSIC["aperture"].name),)),)
+        light = ((N_("Light"), (("aperture", CLASSIC["aperture"].name),)),)
         found = [(title, tuple((effect_id, effect(effect_id).name) for effect_id in effect_ids))
                  for _module, title, effect_ids, _packs in DIRECTIONS]
     except Exception:
@@ -1192,15 +1202,15 @@ def _still_key(effect):
 
 # The Design pages' Length: how long an effect takes to play through once the pointer crosses, and
 # to land, as a multiple of its own timing. The push itself follows the hand, so it has no pace.
-LENGTHS = (("short", "Short"), ("normal", "Normal"), ("long", "Long"))
-SIZES = (("small", "Small"), ("medium", "Medium"), ("large", "Large"))
+LENGTHS = (("short", N_("Short")), ("normal", N_("Normal")), ("long", N_("Long")))
+SIZES = (("small", N_("Small")), ("medium", N_("Medium")), ("large", N_("Large")))
 PACES = {"short": 0.5, "normal": 1.0, "long": 2.0}
 _SIZE_FRACTIONS = {"small": 0.03, "medium": 0.045, "large": 0.06}
 DESIGN_READOUT_WIDTH = 58
 _PACE_STEPS = (0.5, 1.0, 2.0)
 # The Design pages' Frame rate: each machine plays every effect at its own display's refresh, or a
 # half or a quarter of it.
-FRAME_RATES = (("display", "Match display", 1), ("half", "Half", 2), ("quarter", "Quarter", 4))
+FRAME_RATES = (("display", N_("Match display"), 1), ("half", N_("Half"), 2), ("quarter", N_("Quarter"), 4))
 _PACE_PRESETS = ("short", "normal", "long")
 _SIZE_STOPS = (0.03, 0.045, 0.06)
 _SIZE_PRESETS = ("small", "medium", "large")

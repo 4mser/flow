@@ -10,8 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from core import peerlist, protocol
+from core.i18n import matches_translation, N_, tr
 
-PLATFORM_NAMES = {"macos": "Mac", "windows": "Windows", "linux": "Linux", "ios": "iPhone", "android": "Android"}
+PLATFORM_NAMES = {"macos": N_("Mac"), "windows": N_("Windows"), "linux": N_("Linux"),
+                  "ios": N_("iPhone"), "android": N_("Android")}
 
 REFUSED_KINDS = ("unauthenticated", "wrong_id", "different", "unreadable", "forgotten")
 VERSION_KINDS = ("older", "newer", "not_beamer")
@@ -27,14 +29,14 @@ class PeerState:
 
 
 def platform_name(entry: dict) -> str:
-    return PLATFORM_NAMES.get(entry.get("platform"), "Other")
+    return tr(PLATFORM_NAMES.get(entry.get("platform"), N_("Other")))
 
 
 def address_line(entry: dict, hide: bool) -> str:
     host, port = entry.get("host") or "", entry.get("port")
     if not host or not isinstance(port, int) or isinstance(port, bool) or port <= 0:
-        return "No address"
-    return f"{'•••' if hide else host} · port {port}"
+        return tr("No address")
+    return tr("{address} · port {port}").format(address="•••" if hide else host, port=port)
 
 
 def describe(entry: dict, label: str, *, up: bool, driving: bool, input_there: bool, kind: str, status: str,
@@ -44,32 +46,34 @@ def describe(entry: dict, label: str, *, up: bool, driving: bool, input_there: b
     last reported."""
     reason = peerlist.dormant_reason(entry)
     if reason:
-        return PeerState("amber", "Needs re-pair", reason)
+        return PeerState("amber", tr("Needs re-pair"), reason)
     if entry.get("in_use", True) is not True:
-        return PeerState("amber", "NOT IN USE", f"{label} is not in use on this PC.")
+        return PeerState("amber", tr("NOT IN USE"), tr("{name} is not in use on this PC.").format(name=label))
     if driving:
-        return PeerState("signal", "Driving this PC",
-                         f"{label}'s keyboard and pointer are on this PC. Push the pointer back through the edge it arrived by to send them home.")
+        return PeerState("signal", tr("Driving this PC"),
+                         tr("{name}'s keyboard and pointer are on this PC. Push the pointer back through the edge it arrived by to send them home.").format(name=label))
     if input_there:
-        return PeerState("signal", "Input here",
-                         f"This PC's keyboard and pointer are on {label}. Do the same again to bring them home.")
+        return PeerState("signal", tr("Input here"),
+                         tr("This PC's keyboard and pointer are on {name}. Do the same again to bring them home.").format(name=label))
     if not protocol.linkable(entry):
-        return PeerState("amber", "Pair again",
-                         f"{label} was paired on Beamer 1.4. Pair the two again to link them on 1.5.0.")
+        return PeerState("amber", tr("Pair again"),
+                         tr("{name} was paired on Beamer 1.4. Pair the two again to link them on 1.5.0.").format(name=label))
     if up:
-        return PeerState("signal", "Linked", f"Connected to {label}.")
+        return PeerState("signal", tr("Linked"), tr("Connected to {name}.").format(name=label))
     if waking:
-        return PeerState("amber", "Waiting", f"Waking {label}…")
+        return PeerState("amber", tr("Waiting"), tr("Waking {name}…").format(name=label))
     if not entry.get("send"):
-        return PeerState("amber", "Waiting", f"Waiting for {label} to connect.")
+        return PeerState("amber", tr("Waiting"), tr("Waiting for {name} to connect.").format(name=label))
     if not status or kind in QUIET_KINDS:
-        return PeerState("amber", "Waiting", f"Looking for {label}. It connects on its own once Beamer is open there.")
+        return PeerState("amber", tr("Waiting"), tr("Looking for {name}. It connects on its own once Beamer is open there.").format(name=label))
     if kind in REFUSED_KINDS:
-        return PeerState("fault", "Refused", status)
-    if kind in VERSION_KINDS or (kind == "closed" and status.startswith("Update Beamer on")):
-        return PeerState("fault", "Version", status)
+        return PeerState("fault", tr("Refused"), status)
+    if kind in VERSION_KINDS or (kind == "closed" and matches_translation(
+            status, "Update Beamer on {name} to 1.5.0; if it is up to date, pair the two again",
+            "Update Beamer on {name}: it is older than this one")):
+        return PeerState("fault", tr("Version"), status)
     if kind in UNREACHABLE_KINDS:
-        return PeerState("fault", "Unreachable", status)
+        return PeerState("fault", tr("Unreachable"), status)
     if kind == "refused":
-        return PeerState("fault", "Not listening", status)
-    return PeerState("fault", "Dropped", f"{status.rstrip('.')}. Beamer keeps trying to reconnect.")
+        return PeerState("fault", tr("Not listening"), status)
+    return PeerState("fault", tr("Dropped"), tr("{status}. Beamer keeps trying to reconnect.").format(status=status.rstrip(".")))

@@ -28,6 +28,7 @@ class FakeQuartz:
     kCGEventTapDisabledByUserInput = 0xFFFFFFFF
     kCGEventSourceUserData = 42
     kCGEventSourceStateHIDSystemState = 1
+    kCGEventSourceStateID = 45
     kCGAnyInputEventType = 0
     kCGKeyboardEventKeycode = 9
     kCGKeyboardEventAutorepeat = 8
@@ -115,6 +116,17 @@ class FakeQuartz:
     @staticmethod
     def CGEventSourceSecondsSinceLastEventType(source, event_type):
         return 3600.0
+
+    hid_keys = set()
+    hid_buttons = set()
+
+    @classmethod
+    def CGEventSourceKeyState(cls, source, keycode):
+        return keycode in cls.hid_keys
+
+    @classmethod
+    def CGEventSourceButtonState(cls, source, button):
+        return button in cls.hid_buttons
 
 
 class FakeGestureEvent:

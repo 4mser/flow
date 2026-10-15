@@ -3,6 +3,7 @@ strip in Resistance. Geometry is pages_win's, pure and tested; this file only pa
 
 from __future__ import annotations
 
+from core.i18n import N_, tr, trc
 import sys
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
@@ -16,7 +17,9 @@ import tokens
 from core import ways
 from core.resistance_strip import MAX_RESISTANCE, resistance_x
 
-OTHER = "Other machine"
+OTHER = N_("Other machine")
+DASHBOARD_NAME = N_("This PC")
+DIRECTION_NAMES = {"left": N_("left"), "right": N_("right"), "top": N_("top"), "bottom": N_("bottom")}
 ATLAS_TILE = (160, 100)
 SCREEN = (120.0, 75.0)
 GAP = 14.0
@@ -31,6 +34,8 @@ QUIET_ALPHA = 0.55
 # The clear space centred on each third boundary of the selected machine's seam and tracks.
 THIRD_GAP = 2.0
 CYCLE_BOX = 16.0
+RESIZE_GRIP = 16.0
+RESIZE_HELP = N_("Tile size can be changed by dragging a corner or pressing Alt+arrow.")
 
 
 def _colour(name: str, alpha: float = 1.0) -> QColor:
@@ -88,7 +93,7 @@ class ArrangementDiagram(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setAccessibleName("Arrangement")
+        self.setAccessibleName(tr("Arrangement"))
         policy = QSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         policy.setHeightForWidth(True)
         self.setSizePolicy(policy)
@@ -124,7 +129,7 @@ class ArrangementDiagram(QWidget):
         metrics = QFontMetrics(theme.font(tokens.TYPE["small"], 600))
         needed = max((metrics.boundingRect(QRectF(0, 0, max(1, rect[2] - 8), 10000).toRect(),
                       int(Qt.TextFlag.TextWrapAnywhere), name).height() + 4
-                      for rect, name in [(pc, "This PC"), *[(rect, self._labels.get(key, OTHER))
+                      for rect, name in [(pc, tr(DASHBOARD_NAME)), *[(rect, self._labels.get(key, tr(OTHER)))
                                           for key, rect in zip(keys, rects)]]), default=screen[1])
         if needed > min([pc[3], *(rect[3] for rect in rects)]):
             screen = (screen[0], screen[1] * needed / max(1, min([pc[3], *(rect[3] for rect in rects)])))
@@ -150,7 +155,7 @@ class ArrangementDiagram(QWidget):
         self._state = state
         self._machines = machines
         alone = len(machines) == 1
-        self._labels = {machine["key"]: machine["label"] or OTHER for machine in machines}
+        self._labels = {machine["key"]: machine["label"] or tr(OTHER) for machine in machines}
         if shortcut:
             self._cap_text = pages_win.trigger_phrase(key_name, style)
         self._unplaced = "" if alone else pages_win.unplaced_line(
@@ -208,10 +213,10 @@ class ArrangementDiagram(QWidget):
         for key, rect in rects.items():
             painter.setOpacity(self._places[key][3])
             named = self._marks.get(("named", key), 0.0)
-            self._screen(painter, QRectF(*rect), self._labels.get(key, OTHER), "panel", _blend("edge", "ink_3", named),
+            self._screen(painter, QRectF(*rect), self._labels.get(key, tr(OTHER)), "panel", _blend("edge", "ink_3", named),
                          _blend("ink_3", "ink", named), radius)
         painter.setOpacity(1.0)
-        self._screen(painter, QRectF(*pc), "This PC", "well", _colour("edge"), _colour("ink_2"), radius)
+        self._screen(painter, QRectF(*pc), tr(DASHBOARD_NAME), "well", _colour("edge"), _colour("ink_2"), radius)
         # The machines not shown first, so the chosen one's marks lie over theirs where they meet.
         for key, level in sorted(self._marks.items(), key=lambda item: self._marks.get(("lead", item[0][1]), 0.0)
                                  if len(item[0]) > 1 else 0.0):
@@ -338,7 +343,7 @@ class AtlasCanvas(QWidget):
     """One tile per paired machine, laid out around this screen with shared edge snaps."""
 
     def __init__(self, parent=None, on_drop=None, on_rename=None, on_leave_out=None, on_cycle=None,
-                 on_select=None, on_third=None):
+                 on_select=None, on_third=None, on_edit_machine=None):
         super().__init__(parent)
         self.on_drop = on_drop or (lambda *_: None)
         self.on_rename = on_rename or (lambda *_: None)
@@ -346,6 +351,12 @@ class AtlasCanvas(QWidget):
         self.on_cycle = on_cycle or (lambda *_: None)
         self.on_select = on_select or (lambda *_: None)
         self.on_third = on_third or (lambda *_: None)
+        self.on_edit_machine = on_edit_machine or (lambda *_: None)
+        self.profile_mode = False
+        self.remote = False
+        self.read_only = False
+        self._profile_press = None
+        self._profile_press_point = None
         self.on_announce = None
         self.on_hint = None
         self.on_rename_state = None
@@ -353,7 +364,7 @@ class AtlasCanvas(QWidget):
         self.setMaximumHeight(268)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
-        self.setAccessibleName("Crossing layout")
+        self.setAccessibleName(tr("Crossing layout"))
         self.setToolTip("")
         self.tiles = {}
         self.labels = {}
@@ -367,6 +378,7 @@ class AtlasCanvas(QWidget):
         self.cycle_mode = "last"
         self.capable = set()
         self._drag = None
+        self._resizing = False
         self._drag_display = None
         self._display_offset_start = None
         self._dragged_display = False
@@ -387,7 +399,7 @@ class AtlasCanvas(QWidget):
         self._scale = 1.0
         self._bounds = (0, 0, 1, 1)
         self._recentre_colours = None
-        self.recentre_button = QPushButton("Recentre", self)
+        self.recentre_button = QPushButton(tr("Recentre"), self)
         self.recentre_button.setFont(theme.font(tokens.TYPE["note"]))
         self.recentre_button.setFixedSize(76, 26)
         self.recentre_button.clicked.connect(self.recentre)
@@ -404,7 +416,8 @@ class AtlasCanvas(QWidget):
 
     def set_tiles(self, tiles, labels, states, selected, cycle_mode="last", cycle=None, capable=(), own_id=None,
                   rename_values=None):
-        seen = (tiles, labels, states, selected, cycle_mode, cycle, tuple(sorted(capable or ())), own_id, rename_values)
+        seen = (tiles, labels, states, selected, cycle_mode, cycle, tuple(sorted(capable or ())), own_id,
+                rename_values, self.profile_mode, self.remote, self.read_only)
         if seen == getattr(self, "_tiles_seen", None):
             return
         self._tiles_seen = seen
@@ -417,7 +430,12 @@ class AtlasCanvas(QWidget):
         self.cycle = dict(cycle or {})
         self.capable = set(capable)
         self.own_id = own_id
-        if own_id in self.tiles:
+        if (self.remote or self.read_only) and self._rename_peer is not None:
+            self._rename_peer = None
+            self.rename_edit.hide()
+            if self.on_rename_state:
+                self.on_rename_state(False)
+        if own_id in self.tiles and not self.remote:
             own_detail = self.states.get(own_id, {}).get("detail") or \
                 ("Linux" if sys.platform.startswith("linux") else "Windows")
             self.states.setdefault(own_id, {}).update(
@@ -427,7 +445,9 @@ class AtlasCanvas(QWidget):
         own_detail = self.states.get(own_id, {}).get("detail", "")
         if own_id in self.tiles and own_detail:
             description.append(own_detail)
-        self.setAccessibleDescription("; ".join(description))
+        if not self.read_only and any(peer not in self.shelf_ids for peer in self.tiles):
+            description.append(tr(RESIZE_HELP))
+        self.setAccessibleDescription(trc("list", "; ").join(description))
         self._geometry()
         if self._drag is None:
             self.update()
@@ -444,15 +464,19 @@ class AtlasCanvas(QWidget):
         self.update()
 
     def set_cycle(self, peer, enabled):
+        if self.remote or self.read_only:
+            return
         self.cycle[peer] = bool(enabled)
         self.on_cycle(peer, bool(enabled))
         self.update()
 
     def put_back(self, peer):
-        self.on_leave_out(peer, False)
+        if not self.remote and not self.read_only:
+            self.on_leave_out(peer, False)
 
     def leave_out(self, peer):
-        self.on_leave_out(peer, True)
+        if not self.remote and not self.read_only:
+            self.on_leave_out(peer, True)
 
     def animate_tile(self, peer, target, done=None):
         current = self.tiles[peer]
@@ -488,6 +512,37 @@ class AtlasCanvas(QWidget):
                 if self.display_rect(peer, frame["display"]).contains(point):
                     return peer, frame["display"]
         return None, None
+
+    def _can_resize(self, peer):
+        return not self.read_only and peer in self.tiles and peer not in self.shelf_ids
+
+    def _resize_grip_rect(self, peer):
+        if not self._can_resize(peer) or peer not in (self.selected, self._hover):
+            return None
+        rect = self.tile_rect(peer)
+        size = min(RESIZE_GRIP, rect.width(), rect.height())
+        grip = QRectF(rect.right()-size, rect.bottom()-size, size, size)
+        for other, tile in self.tiles.items():
+            if other == peer or other in self.shelf_ids:
+                continue
+            for display in tile.get("display_offsets", {}):
+                if display in tile.get("displays", {}) and grip.intersects(self.display_rect(other, display)):
+                    return None
+        return grip
+
+    def _resize_at(self, point):
+        # An edge third's 5 px band wins over a grip it overlaps: the selected peer's and the
+        # hovered tile's corners sit on the end third of a shared side.
+        if self._third_segment_at(point) is not None:
+            return None
+        for peer in reversed(list(self.tiles)):
+            grip = self._resize_grip_rect(peer)
+            # A tile drawn smaller than the grip has its whole grip inside the band of the side it
+            # shares; the hit area keeps the full grip size, reaching out past the corner.
+            if grip is not None and QRectF(grip.left(), grip.top(), max(grip.width(), RESIZE_GRIP),
+                                               max(grip.height(), RESIZE_GRIP)).contains(point):
+                return peer
+        return None
 
     def _geometry(self):
         self._sync_recentre()
@@ -538,6 +593,8 @@ class AtlasCanvas(QWidget):
                    + (targets[side]["y"]-tile["y"])**2)
 
     def _can_recentre(self):
+        if self.read_only:
+            return False
         side = self._recentre_side()
         if side is None:
             return False
@@ -550,7 +607,7 @@ class AtlasCanvas(QWidget):
     def _sync_recentre(self):
         button = self.recentre_button
         button.move(self.width()-button.width()-10, 10)
-        button.setAccessibleName(f"Recentre {self.labels.get(self.selected, OTHER)}")
+        button.setAccessibleName(tr("Recentre {name}").format(name=self.labels.get(self.selected, tr(OTHER))))
         colours = tuple(theme.colour(name) for name in ("panel", "ink_3", "ink", "edge", "ink_2"))
         if colours != self._recentre_colours:
             panel, ink_3, ink, edge, ink_2 = colours
@@ -563,10 +620,15 @@ class AtlasCanvas(QWidget):
         button.setVisible(self._can_recentre())
         button.raise_()
 
-    def _commit_tile(self, peer):
+    def _commit_tile(self, peer, resized=False):
+        if self.read_only:
+            return
         accepted = self.on_drop({key: dict(tile) for key, tile in self.tiles.items()}, peer) is not False
         if accepted:
-            self._announce_move(peer)
+            if resized:
+                self.announce(tr("{name} resized.").format(name=self.labels.get(peer, tr(OTHER))))
+            else:
+                self._announce_move(peer)
         self._geometry()
         self.update()
 
@@ -579,7 +641,7 @@ class AtlasCanvas(QWidget):
         self.animate_tile(peer, target, done=lambda: self._commit_tile(peer))
 
     def snap_preview(self):
-        if not self._drag or self._drag == self._own_id() or self._drag_display is not None:
+        if not self._drag or self._resizing or self._drag == self._own_id() or self._drag_display is not None:
             return None
         tile = self.tiles[self._drag]
         others = {key: value for key, value in self.tiles.items()
@@ -771,6 +833,8 @@ class AtlasCanvas(QWidget):
                 self.wrap_label_rects.append((side, text, box))
 
     def _third_segment_at(self, point):
+        if self.read_only:
+            return None
         own_id, peer = self._own_id(), self.selected
         if (own_id not in self.tiles or peer not in self.tiles or peer == own_id
                 or peer in self.shelf_ids):
@@ -815,7 +879,8 @@ class AtlasCanvas(QWidget):
         pen = QPen(_colour("ground", opacity), 1.8)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
-        point = QPointF(x - 3 * dx, y - 3 * dy)
+        # The 7 px bracket centred on the vertex, as in the 16 px pad around it.
+        point = QPointF(x - 3.5 * dx, y - 3.5 * dy)
         painter.drawLine(point, QPointF(point.x() + 7 * dx, point.y()))
         painter.drawLine(point, QPointF(point.x(), point.y() + 7 * dy))
 
@@ -831,15 +896,18 @@ class AtlasCanvas(QWidget):
         return rect.top()+7 if rect.height() >= 56 else rect.center().y()-11
 
     def _shows_cycle(self, peer):
-        return self.cycle_mode == "ticked" and peer != self._own_id() and peer not in self.shelf_ids
+        return (not self.remote and not self.read_only and self.cycle_mode == "ticked"
+                and peer != self._own_id() and peer not in self.shelf_ids)
 
     @staticmethod
     def _cycle_box(rect):
         """The shortcut-cycle tick: its own column at the right end of the name's line, or in the
-        bottom-right corner of a tile 44 to 56pt tall, under the name."""
+        bottom row of a tile 44 to 56pt tall, leaving its corner free for the resize grip."""
         if 44 <= rect.height() < 56:
-            return QRectF(rect.right() - 8 - CYCLE_BOX, rect.bottom() - 4 - CYCLE_BOX, CYCLE_BOX, CYCLE_BOX)
-        return QRectF(rect.right() - 8 - CYCLE_BOX, AtlasCanvas._title_top(rect) + 11 - CYCLE_BOX/2,
+            return QRectF(rect.right() - RESIZE_GRIP - 4 - CYCLE_BOX,
+                          rect.bottom() - 4 - CYCLE_BOX, CYCLE_BOX, CYCLE_BOX)
+        margin = RESIZE_GRIP + 4 if rect.height() < 44 else 8
+        return QRectF(rect.right() - margin - CYCLE_BOX, AtlasCanvas._title_top(rect) + 11 - CYCLE_BOX/2,
                       CYCLE_BOX, CYCLE_BOX)
 
     @staticmethod
@@ -890,10 +958,13 @@ class AtlasCanvas(QWidget):
             inactive = peer in self.shelf_ids or self.in_use.get(peer, True) is False
             fill = "well" if is_own else "panel"
             line = "edge" if is_own else "ink_2" if chosen else "amber" if state in ("gap", "between", "set-elsewhere", "overlap") else "edge"
+            if self.profile_mode:
+                line = "ink_2" if self.remote and is_own else "edge"
             if inactive:
                 fill, line = "ground", "ink_2" if chosen and not is_own else "rule"
             painter.setOpacity(0.55 if inactive else 1.0)
-            painter.setPen(QPen(_colour(line), 2.0 if chosen and not is_own else 1.0))
+            outlined = (self.remote and is_own) if self.profile_mode else (chosen and not is_own)
+            painter.setPen(QPen(_colour(line), 2.0 if outlined else 1.0))
             painter.setBrush(_colour(fill))
             painter.drawRoundedRect(rect, tokens.RADIUS["button"], tokens.RADIUS["button"])
             if tile.get("displays"):
@@ -904,6 +975,8 @@ class AtlasCanvas(QWidget):
                     painter.drawRoundedRect(screen_rect, 2, 2)
             state_data = self.states.get(peer, {})
             dot_colour = "signal" if state_data.get("linked") else "amber" if state_data.get("legacy") else "ink_3"
+            if self.profile_mode:
+                dot_colour = "signal" if state_data.get("profile_word") in (tr("Desk"), tr("Own")) else "ink_3"
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(_colour(dot_colour))
             if rect.height() >= 56:
@@ -921,7 +994,7 @@ class AtlasCanvas(QWidget):
             painter.drawText(title_room, Qt.AlignmentFlag.AlignCenter,
                              painter.fontMetrics().elidedText(title, Qt.TextElideMode.ElideRight,
                                                              max(1, round(title_room.width()))))
-            detail = state_data.get("detail", "")
+            detail = state_data.get("profile_word", "") if self.profile_mode else state_data.get("detail", "")
             if detail and rect.height() >= 56:
                 painter.setPen(_colour("ink_2"))
                 painter.setFont(theme.font(tokens.TYPE["note"]))
@@ -946,7 +1019,7 @@ class AtlasCanvas(QWidget):
                     "Drag to connect" if state == "gap" else "Overlaps" if state == "overlap" else
                     outcome_for_tile(state, state_data.get("crosses", is_own), is_own,
                                      state_data.get("other_name", "")))
-            if foot and not legacy and rect.height() >= 78:
+            if foot and (not legacy or self.profile_mode) and rect.height() >= 78:
                 painter.setPen(_colour("signal" if foot == "Crosses" else "amber" if foot in
                                        ("Drag to connect", "Overlaps") else "ink_3"))
                 painter.setFont(theme.font(tokens.TYPE["note"]))
@@ -1012,7 +1085,7 @@ class AtlasCanvas(QWidget):
                 if peer == own_id or peer not in self.tiles or peer in self.shelf_ids:
                     continue
                 alpha = (1.0 if data.get("linked", True) else .55) * (1.0 if peer == self.selected else .7)
-                name = self.labels.get(peer, OTHER)
+                name = self.labels.get(peer, tr(OTHER))
                 for side in self._wrap_sides(data):
                     self._paint_wrap(painter, own_rect, side, name, False, alpha, peer)
                 crossing = set(self._wrap_sides(data))
@@ -1040,7 +1113,7 @@ class AtlasCanvas(QWidget):
                            for peer in (one, two)):
                     continue
                 contact = ways._rect_contact(self.tiles[one], self.tiles[two])
-                if contact:
+                if contact and not self.profile_mode:
                     self._paint_contact(painter, self.tiles[one], self.tile_rect(one), contact, "amber")
         snapped = self.snap_preview()
         if snapped is not None:
@@ -1054,6 +1127,16 @@ class AtlasCanvas(QWidget):
             contact = ways._rect_contact(self.tiles[own_id], snapped)
             if contact:
                 self._paint_contact(painter, self.tiles[own_id], self.tile_rect(own_id), contact, alpha=0.5)
+        for peer in self.tiles:
+            grip = self._resize_grip_rect(peer)
+            if grip is not None:
+                pen = QPen(_colour("ink_2"), 1.5)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(pen)
+                for length in (4, 8):
+                    length = min(length, max(1, grip.width()-4))
+                    painter.drawLine(QPointF(grip.right()-3-length, grip.bottom()-3),
+                                     QPointF(grip.right()-3, grip.bottom()-3-length))
         if self.hasFocus() and self.selected in self.tiles and self._keyboard_focus:
             painter.setPen(QPen(_colour("ink_2"), 2.0))
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -1061,13 +1144,45 @@ class AtlasCanvas(QWidget):
         painter.end()
 
     def _own_id(self):
-        return self.own_id or next((peer for peer, label in self.labels.items() if label == "This PC"), None)
+        return self.own_id or next((peer for peer, label in self.labels.items() if label == tr(DASHBOARD_NAME)), None)
 
     def mousePressEvent(self, event):
         point = event.position()
+        peer = self._resize_at(point)
+        if peer is not None and event.button() == Qt.MouseButton.LeftButton:
+            motion.stop(self, f"tile:{peer}")
+            self.selected = peer
+            self._drag = peer
+            self._resizing = True
+            self._drag_start = QPointF(point)
+            self._tile_start = dict(self.tiles[peer])
+            self._profile_press = None
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+            self._keyboard_focus = False
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+            if not self.profile_mode and peer != self._own_id():
+                self.on_select(peer)
+            self.update()
+            event.accept()
+            return
         third = self._third_at(point)
         if third is not None:
             self._third_press = third
+            event.accept()
+            return
+        if self.profile_mode:
+            self._profile_press = next((peer for peer in reversed(list(self.tiles))
+                                        if self.tile_rect(peer).contains(point)), None)
+            self._profile_press_point = QPointF(point)
+            if self._profile_press is not None and (self.read_only or self._profile_press == self._own_id()
+                                                    or self._profile_press in self.shelf_ids):
+                self.selected = self._profile_press
+                self.setFocus(Qt.FocusReason.MouseFocusReason)
+                self._keyboard_focus = False
+                self.update()
+                event.accept()
+                return
+        if self.read_only:
             event.accept()
             return
         display_peer, display = self.display_at(point)
@@ -1088,7 +1203,8 @@ class AtlasCanvas(QWidget):
                 self._tile_start = dict(self.tiles[display_peer])
                 self.setFocus(Qt.FocusReason.MouseFocusReason)
                 self._keyboard_focus = False
-                self.on_select(display_peer)
+                if not self.profile_mode:
+                    self.on_select(display_peer)
                 self.update()
                 event.accept()
                 return
@@ -1101,6 +1217,7 @@ class AtlasCanvas(QWidget):
                     event.accept()
                     return
                 if self._shows_cycle(peer) and self._cycle_hit_rect(rect).contains(point):
+                    self._profile_press = None
                     self.set_cycle(peer, not self.cycle.get(peer, True))
                     event.accept()
                     return
@@ -1111,7 +1228,8 @@ class AtlasCanvas(QWidget):
                 self._tile_start = dict(self.tiles[peer])
                 self.setFocus(Qt.FocusReason.MouseFocusReason)
                 self._keyboard_focus = False
-                self.on_select(peer)
+                if not self.profile_mode:
+                    self.on_select(peer)
                 self.update()
                 event.accept()
                 return
@@ -1119,9 +1237,12 @@ class AtlasCanvas(QWidget):
 
     def mouseMoveEvent(self, event):
         if self._drag:
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor if self._resizing else Qt.CursorShape.ClosedHandCursor)
             delta = event.position() - self._drag_start
-            if self._drag_display is not None:
+            if self._resizing:
+                self.tiles[self._drag] = ways.resize_from_drag(
+                    self._tile_start, delta.x()/self._scale, delta.y()/self._scale)
+            elif self._drag_display is not None:
                 tile = self.tiles[self._drag]
                 offsets = dict(tile.get("display_offsets", {}))
                 offsets[self._drag_display] = {
@@ -1144,18 +1265,48 @@ class AtlasCanvas(QWidget):
         if hovered != self._hover:
             self._hover = hovered
             self.update()
-        if third is not None:
+        resize_peer = self._resize_at(event.position())
+        if resize_peer is not None:
+            self.setToolTip(self.labels.get(resize_peer, ""))
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        elif third is not None:
             self.setToolTip(self._third_tooltip(*third))
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
             self.setToolTip(self.labels.get(hovered, "") if hovered else "")
-            self.setCursor(Qt.CursorShape.OpenHandCursor if hovered and hovered != self._own_id()
+            self.setCursor(Qt.CursorShape.OpenHandCursor if hovered and hovered != self._own_id() and not self.read_only
+                           else Qt.CursorShape.PointingHandCursor if hovered and self.profile_mode
                            else Qt.CursorShape.ArrowCursor)
-        if hovered and self._shows_cycle(hovered) and self._cycle_hit_rect(self.tile_rect(hovered)).contains(event.position()):
-            QToolTip.showText(self.mapToGlobal(event.position().toPoint()), "In the shortcut's cycle", self)
+        if resize_peer is None and hovered and self._shows_cycle(hovered) and self._cycle_hit_rect(self.tile_rect(hovered)).contains(event.position()):
+            QToolTip.showText(self.mapToGlobal(event.position().toPoint()), tr("In the shortcut's cycle"), self)
         super().mouseMoveEvent(event)
 
+    def leaveEvent(self, event):
+        self._hover = None
+        if not self._drag:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.update()
+        super().leaveEvent(event)
+
     def mouseReleaseEvent(self, event):
+        profile_peer = self._profile_press
+        self._profile_press = None
+        if (self.profile_mode and profile_peer is not None and self._profile_press_point is not None
+                and not self._split_on_release and not self._group_on_release
+                and (event.position() - self._profile_press_point).manhattanLength() < 4):
+            if self._drag is not None:
+                self.tiles[self._drag] = dict(self._tile_start)
+                self._geometry()
+            self._drag = None
+            self._drag_display = None
+            self._display_offset_start = None
+            self._dragged_display = False
+            self._split_on_release = self._group_on_release = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.on_edit_machine(profile_peer)
+            self.update()
+            event.accept()
+            return
         if self._third_press is not None:
             pressed = self._third_press
             self._third_press = None
@@ -1165,18 +1316,24 @@ class AtlasCanvas(QWidget):
             return
         peer = self._drag
         if peer:
+            resized = self._resizing
             snapped = self.snap_preview()
             display = self._drag_display
             moved_display = self._dragged_display
             split_on_release = self._split_on_release
             group_on_release = self._group_on_release
             self._drag = None
+            self._resizing = False
             self._drag_display = None
             self._display_offset_start = None
             self._dragged_display = False
             self._split_on_release = False
             self._group_on_release = False
             self.setCursor(Qt.CursorShape.ArrowCursor)
+            if resized:
+                self._commit_tile(peer, resized=True)
+                event.accept()
+                return
             if display is not None and not moved_display and (split_on_release or group_on_release):
                 tile = dict(self.tiles[peer])
                 offsets = dict(tile.get("display_offsets", {}))
@@ -1196,7 +1353,7 @@ class AtlasCanvas(QWidget):
                 self.update()
                 event.accept()
                 return
-            if display is None and event.position().y() > self.height() - 4:
+            if display is None and not self.remote and event.position().y() > self.height() - 4:
                 self.on_leave_out(peer, True)
                 self.update()
                 event.accept()
@@ -1211,11 +1368,14 @@ class AtlasCanvas(QWidget):
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event):
+        if self.remote or self.read_only:
+            event.accept()
+            return
         peer = next((key for key in self.tiles if key not in self.shelf_ids
                      and self.tile_rect(key).contains(event.position())), None)
         if peer == self._own_id():
             if self.on_hint:
-                self.on_hint("Rename this computer on Overview.")
+                self.on_hint(tr("Rename this computer on Overview."))
             event.accept()
             return
         if peer is not None and peer != self._own_id():
@@ -1226,6 +1386,14 @@ class AtlasCanvas(QWidget):
 
     def keyPressEvent(self, event):
         self._keyboard_focus = True
+        if (self.profile_mode and self.selected in self.tiles
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space)):
+            self.on_edit_machine(self.selected)
+            event.accept()
+            return
+        if self.read_only:
+            super().keyPressEvent(event)
+            return
         if event.key() == Qt.Key.Key_C and not event.modifiers():
             self.recentre()
             event.accept()
@@ -1241,6 +1409,17 @@ class AtlasCanvas(QWidget):
             return
         moves = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0),
                  Qt.Key.Key_Up: (0, -1), Qt.Key.Key_Down: (0, 1)}
+        if event.key() in moves and event.modifiers() & Qt.KeyboardModifier.AltModifier:
+            if self._can_resize(self.selected) and self._drag is None:
+                peer = self.selected
+                motion.stop(self, f"tile:{peer}")
+                tile = self.tiles[peer]
+                long_side = max(tile["w"], tile["h"])
+                dx, dy = moves[event.key()]
+                self.tiles[peer] = ways.resize_tile(tile, long_side + (dx+dy)*long_side/8)
+                self._commit_tile(peer, resized=True)
+            event.accept()
+            return
         if event.key() in moves and self.selected in self.shelf_ids:
             event.accept()
             return
@@ -1260,7 +1439,8 @@ class AtlasCanvas(QWidget):
         super().keyPressEvent(event)
 
     def focusNextPrevChild(self, next):
-        peers = [peer for peer in self.tiles if peer != self._own_id() and peer not in self.shelf_ids]
+        peers = [peer for peer in self.tiles if self.profile_mode or
+                 (peer != self._own_id() and peer not in self.shelf_ids)]
         peers.sort(key=lambda peer: (self.tiles[peer]["y"] + self.tiles[peer]["h"] / 2,
                                      self.tiles[peer]["x"] + self.tiles[peer]["w"] / 2))
         rows = []
@@ -1278,7 +1458,8 @@ class AtlasCanvas(QWidget):
         target = index + (1 if next else -1)
         if 0 <= target < len(peers):
             self.selected = peers[target]
-            self.on_select(self.selected)
+            if not self.profile_mode:
+                self.on_select(self.selected)
             self._keyboard_focus = True
             self.update()
             return True
@@ -1297,7 +1478,7 @@ class AtlasCanvas(QWidget):
         else:
             side = "corner"
         state = self.states.get(peer, {})
-        position = f"{side} of This PC" if side != "corner" else "at a corner of This PC"
+        position = tr("{side} of This PC").format(side=tr(DIRECTION_NAMES[side])) if side != "corner" else tr("at a corner of This PC")
         part = None
         if own:
             along, start, span = ((tile["y"] + tile["h"] / 2, own["y"], own["h"])
@@ -1307,13 +1488,18 @@ class AtlasCanvas(QWidget):
         parts = state.get("thirds", [])
         chosen_part = parts[0] if parts else part
         part_name = pages_win.part_names(side).get(chosen_part, chosen_part) if chosen_part else ""
-        detail = f", {part_name.lower()} third" if part_name else ""
-        result = state.get("announcement", "Crosses.")
-        message = f"{self.labels.get(peer, OTHER)}, {position}{detail}. {result}"
+        detail = tr(", {part} third").format(part=tr(ways.PART_NAMES_LOWER[part_name.lower()])) if part_name else ""
+        result = state.get("announcement", tr("Crosses."))
+        # Translators: {name} is a machine name; {position} is relative to this PC; {detail} optionally names the third crossed.
+        message = tr("{name}, {position}{detail}. {result}").format(
+            name=self.labels.get(peer, OTHER), position=position, detail=detail, result=result)
         self.announce(message)
 
     def announce(self, message):
-        self.setAccessibleDescription(message)
+        description = message
+        if not self.read_only and any(peer not in self.shelf_ids for peer in self.tiles):
+            description += " " + tr(RESIZE_HELP)
+        self.setAccessibleDescription(description)
         QAccessible.updateAccessibility(QAccessibleAnnouncementEvent(self, message))
         if self.on_announce:
             self.on_announce(message)
@@ -1324,7 +1510,7 @@ class AtlasCanvas(QWidget):
         super().focusInEvent(event)
 
     def begin_rename(self, peer):
-        if peer not in self.tiles or peer in self.shelf_ids or peer == self._own_id():
+        if self.remote or self.read_only or peer not in self.tiles or peer in self.shelf_ids or peer == self._own_id():
             return
         rect = self.tile_rect(peer).toRect()
         self.selected = peer
@@ -1344,7 +1530,7 @@ class AtlasCanvas(QWidget):
         if self.on_rename_state:
             self.on_rename_state(False)
         self.setFocus(Qt.FocusReason.OtherFocusReason)
-        if peer:
+        if peer and not self.remote and not self.read_only:
             self.on_rename(peer, value)
 
     def eventFilter(self, watched, event):
@@ -1378,11 +1564,11 @@ class PushStrip(QSlider):
         self.setRange(0, MAX_RESISTANCE)
         self.setSingleStep(10)
         self.setPageStep(50)
-        self.setAccessibleName("Resistance")
+        self.setAccessibleName(tr("Resistance"))
         self.setMinimumHeight(self.HEIGHT)
         self.setMaximumHeight(self.HEIGHT)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._other = OTHER
+        self._other = tr(OTHER)
         self._active_edge = "right"
         self._pressure = 0.0
         self._crossing = False
@@ -1397,7 +1583,7 @@ class PushStrip(QSlider):
         return QSize(160, self.HEIGHT)
 
     def set_other_name(self, name: str) -> None:
-        name = name or OTHER
+        name = name or tr(OTHER)
         if name != self._other:
             self._other = name
             self.update()
@@ -1439,10 +1625,10 @@ class PushStrip(QSlider):
     def _update_accessibility_description(self) -> None:
         pressure = int(round(self._pressure))
         threshold = self.value()
-        description = (
-            f"Current pressure {pressure} of {threshold} pointer units at the {self._active_edge} edge."
-            if pressure > 0 else f"No push. Current pressure is 0 of {threshold} pointer units."
-        )
+        edge = tr(DIRECTION_NAMES[self._active_edge])
+        description = (tr("Current pressure {pressure} of {threshold} pointer units at the {edge} edge.").format(
+            pressure=pressure, threshold=threshold, edge=edge) if pressure > 0 else
+            tr("No push. Current pressure is 0 of {threshold} pointer units.").format(threshold=threshold))
         self.setAccessibleDescription(description)
 
     def keyPressEvent(self, event) -> None:
@@ -1520,7 +1706,7 @@ class PushStrip(QSlider):
         painter.setPen(_colour("ink_3"))
         local_rect = QRectF(8, 2, self.width() / 2 - 8, 15)
         peer_rect = QRectF(self.width() / 2, 2, self.width() / 2 - 8, 15)
-        painter.drawText(local_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "THIS PC")
+        painter.drawText(local_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, tr("THIS PC"))
         painter.drawText(peer_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                          self.peer_label_text())
 

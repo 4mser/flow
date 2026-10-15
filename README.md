@@ -109,6 +109,8 @@ In your own appearance: light if your GitHub is light, dark if it is dark.
 - **Or press a key.** Double-tap or hold a trigger key to switch without moving the pointer. Right
   Option on the Mac and Right Ctrl on the PC to start with; on either machine it can be any key
   that types nothing, recorded by pressing it.
+- **Shake to come home.** While you drive another machine, a quick shake of this machine's mouse or
+  trackpad brings input straight back. Shake sensitivity sets how much movement it takes.
 - **Either way round.** The Mac drives the PC and the PC drives the Mac. Each machine has a switch
   per direction, so you can turn one way off and keep the other. Macs can drive Macs, and Windows
   PCs can drive Windows PCs, too.
@@ -152,6 +154,10 @@ In your own appearance: light if your GitHub is light, dark if it is dark.
 - **Keep settings in step.** Same on all machines shares resistance, drag protection, Shortcut,
   effect style, colour, length, size and landing animation with compatible paired machines. Zones,
   jump keys, full-screen hold, whether effects animate, and window appearance stay local.
+- **One desk, several profiles.** Same ways on every machine shares the crossing ways between
+  1.5.5 machines, so you can set up any machine from the one in front of you and keep up to eight
+  named profiles. Machine tiles on the Crossing map resize, so different screen sizes line up.
+- **In Italian too.** Language on the Connection page picks Automatic, English or Italiano.
 - **Match design.** Follow one paired machine's style, colour, length, size and landing animation.
   Changing one of those here stops following. Animation enable and window appearance stay local.
 - **A more responsive settings window.** Mac resizing and scrolling stay smooth, the Design grid

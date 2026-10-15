@@ -182,7 +182,8 @@ def internal_seam_position(point, monitors, display_map, models):
 
 # What the Keyboard page calls a recorded key, in Windows' own words.
 VK_TITLES: Dict[int, str] = {
-    0x08: "Backspace", 0x09: "Tab", 0x0D: "Enter", 0x13: "Pause", 0x14: "Caps Lock", 0x1B: "Esc",
+    0x08: "Backspace", 0x09: "Tab", 0x0D: "Enter", 0x13: "Pause", 0x14: "Caps Lock", 0x15: "Han/Yeong",
+    0x19: "Hanja", 0x1B: "Esc",
     0x20: "Space", 0x21: "Page Up", 0x22: "Page Down", 0x23: "End", 0x24: "Home", 0x25: "Left",
     0x26: "Up", 0x27: "Right", 0x28: "Down", 0x2C: "Print Screen", 0x2D: "Insert", 0x2E: "Delete",
     0x5B: "Left Windows", 0x5C: "Right Windows", 0x5D: "Menu", 0x6A: "Num *", 0x6B: "Num +",
@@ -252,6 +253,8 @@ VK_TO_NAME: Dict[int, str] = {
     0x0D: "enter",
     0x13: "pause",
     0x14: "caps_lock",
+    0x15: "hangul",
+    0x19: "hanja",
     0x1B: "esc",
     0x20: "space",
     0x21: "page_up",
@@ -308,7 +311,7 @@ for _index in range(13, 21):
 
 # System and browser keys are never the trigger: they are what the stays-on-this-PC list is for.
 # The undifferentiated 0x10-0x12 never reach the hook.
-NOT_TRIGGER_VKS = {0x10, 0x11, 0x12} | set(range(0xA6, 0xB8))
+NOT_TRIGGER_VKS = {0x10, 0x11, 0x12, 0x15, 0x19} | set(range(0xA6, 0xB8))
 # Loaded if a config names them, never offered by the recorder, as on the Mac: Backspace, Tab,
 # Enter, Esc and Space are typing keys a double-tap or a hold would take from every app, and
 # Windows gives a window no key-down for Print Screen, so it cannot be recorded at all.

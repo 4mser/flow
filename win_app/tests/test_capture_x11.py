@@ -234,6 +234,10 @@ class NamesTest(unittest.TestCase):
         self.assertEqual(capture_x11.VK_TITLES[125], "Left Super")
         self.assertNotIn(163, set(capture_x11.VK_TO_NAME) - capture_x11.NOT_TRIGGER_VKS)  # media keys are not triggers
         self.assertIn(57, capture_x11.UNRECORDABLE_TRIGGER_VKS)
+        self.assertEqual((capture_x11.VK_TO_NAME[122], capture_x11.VK_TO_NAME[123]), ("hangul", "hanja"))
+        self.assertEqual((capture_x11.VK_TITLES[122], capture_x11.VK_TITLES[123]), ("Han/Yeong", "Hanja"))
+        self.assertTrue({122, 123} <= capture_x11.NOT_TRIGGER_VKS)
+        self.assertFalse({"hangul", "hanja"} & capture_x11.MODIFIER_NAMES)
 
     def test_hook_vk_is_the_keycode_less_eight(self):
         self.assertEqual(capture_x11.hook_vk(0xFFE4, 105), 97)

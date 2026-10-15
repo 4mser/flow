@@ -27,6 +27,35 @@ def measured_stack(vertical=True, spacing=10.0):
 
 
 class WindowResizeTests(unittest.TestCase):
+    def test_expanded_earlier_ways_gives_spare_width_to_caption_without_ambiguity(self):
+        from core import crossing_state
+
+        control = offscreen_control_window()
+        control._select_page("crossing")
+        store = control.settings_store
+        store._cache = crossing_state.set_same_ways(
+            store.current(), True, platform="mac", now=1792067000)["settings"]
+        control._show_profiles()
+        control._toggle_earlier()
+        self.assertFalse(control.earlier_host.isHidden())
+        self.assertFalse(control.own_ways_module.view.isHidden())
+        self.assertTrue(control._earlier_pairs)
+        action_widths = {}
+        for width in (640, 1000, 1600, 640):
+            control.window.setFrame_display_(((100000, 100000), (width, 800)), False)
+            settle(control.window)
+            for index, pair in enumerate(control._earlier_pairs):
+                with self.subTest(width=width, pair=index):
+                    for view in (pair.view, pair.first, pair.second):
+                        self.assertFalse(view.isHiddenOrHasHiddenAncestor())
+                        self.assertFalse(view.hasAmbiguousLayout())
+                        before = view.frame()
+                        view.exerciseAmbiguityInLayout()
+                        self.assertEqual(view.frame(), before)
+                    action_widths.setdefault(index, pair.second.frame().size.width)
+                    self.assertAlmostEqual(pair.second.frame().size.width, action_widths[index], delta=1)
+                    self.assertGreater(pair.first.frame().size.width, 0)
+
     def test_page_breakpoint_jitter_keeps_the_current_typography(self):
         control = offscreen_control_window()
         control._apply_width(700)

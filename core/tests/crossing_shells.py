@@ -6,10 +6,12 @@ The harness uses real responders, owners and wire messages beneath these shells.
 """
 
 import copy
+import json
 import threading
 import time
+import traceback
 
-from core import crossing_state, protocol, return_edge, settings_sync, ways
+from core import crossing_state, profiles, protocol, return_edge, settings_sync, ways
 
 SNAP_RADIUS = 12
 
@@ -23,6 +25,10 @@ class Shell:
         self.handled_count = 0
         self.lock = threading.RLock()
         self.refused = []
+        self.refused_desks = []
+        self.skew = 0
+        self.frames = []
+        self.errors = []
         callbacks = desk.machine.responder._callbacks
         callbacks["arrangement"] = self._arrangement_arrived
         callbacks["settings"] = self._settings_arrived
@@ -42,19 +48,68 @@ class Shell:
     def current(self):
         return copy.deepcopy(self.desk.settings)
 
+    def now(self):
+        """This machine's clock, `skew` seconds off the real one."""
+        return time.time() + self.skew
+
     def _args(self):
-        return dict(platform=self.platform, live=self.live, gone=self.gone, now=time.time())
+        return dict(platform=self.platform, live=self.live, gone=self.gone, now=self.now())
 
     def _send(self, peer, message):
         if self.desk.hand.send(peer, message):
             self.sent_count += 1
+            data = message.get("data") or {}
+            self.frames.append({"peer": peer, "type": message.get("type"), "desk": "desk" in data,
+                                "size": len(json.dumps(message, separators=(",", ":")).encode("utf-8"))})
             return True
         return False
+
+    # Desk sync, as the 1.5.5 apps do it. A desk that does not advertise `profiles` keeps
+    # the 1.5.3 behaviour: no crossing_own, nothing sent or taken.
+
+    def profile_aware(self):
+        return self.desk.profiles
+
+    def load(self, settings):
+        """The apps' load path: profiles.before_load, the app's normalisation (the PC's
+        crossing_state.migrate), profiles.after_load."""
+        saved, _ = profiles.before_load(settings, now=self.now())
+        saved = crossing_state.migrate(saved, self.platform)["settings"]
+        saved, _ = profiles.after_load(saved, platform=self.platform, now=self.now())
+        settings.clear()
+        settings.update(saved)
+
+    def profile_peers(self, exclude=None):
+        """Linked peers that advertise `profiles`, never `exclude`."""
+        return [peer for peer in self.desk.hand.links if peer != exclude
+                and "profiles" in self.desk.hand.capabilities.get(peer, ())]
+
+    def send_desk(self, peers, desk):
+        if not desk:
+            return
+        envelope = settings_sync.message_data(False, self.current().get("same_set_at", 0), {}, by=self.desk.id)
+        frames = profiles.frames(desk)
+        for peer in peers:
+            for frame in frames:
+                self._send(peer, protocol.settings_msg(settings_sync.desk_message_data(envelope, frame)))
+
+    def send_desk_outcome(self, outcome, source=None):
+        if not self.profile_aware():
+            return
+        if outcome["send_desk"]:
+            self.send_desk(self.profile_peers(), profiles.desk_message(outcome["settings"], outcome["send_desk"]))
+        if outcome["forward"]:
+            self.send_desk(self.profile_peers(exclude=source), outcome["forward"])
+        if outcome["answer"] and source is not None and source in self.profile_peers():
+            self.send_desk([source], outcome["answer"])
 
     def _arrangement_arrived(self, peer, read):
         try:
             with self.lock:
                 self.on_arrangement(protocol.id_text(peer), read)
+        except Exception:
+            self.errors.append(traceback.format_exc())
+            raise
         finally:
             self.handled_count += 1
 
@@ -62,6 +117,9 @@ class Shell:
         try:
             with self.lock:
                 self.on_settings(protocol.id_text(peer), data)
+        except Exception:
+            self.errors.append(traceback.format_exc())
+            raise
         finally:
             self.handled_count += 1
 
@@ -74,15 +132,18 @@ class Shell:
             self.send_same()
         if outcome["forward_picture"] and arrived is not None:
             self.send_same(exclude=source, data=arrived)
+        self.send_desk_outcome(outcome, source)
         if outcome["changed"]:
             self.after_change()
         return outcome
 
     def paired(self, settings):
         outcome = crossing_state.paired(settings, platform=self.platform,
-                                       own_displays=self.desk.screen.display_map(), now=time.time())
+                                       own_displays=self.desk.screen.display_map(), now=self.now())
         settings.clear()
         settings.update(outcome["settings"])
+        if self.profile_aware():
+            self.load(settings)
 
     def same_state(self):
         settings = self.current()
@@ -105,8 +166,10 @@ class Shell:
     def link_up(self, other):
         with self.lock:
             outcome = crossing_state.link_up(self.current(), other.id, platform=self.platform,
-                         own_displays=self.desk.screen.display_map(), now=time.time(), capable=self.capable())
+                         own_displays=self.desk.screen.display_map(), now=self.now(), capable=self.capable())
             self.carry_out(outcome)
+            if self.profile_aware() and other.id in self.profile_peers():
+                self.send_desk([other.id], profiles.desk_message(self.current()))
 
     def tell(self, peer):
         settings = self.current()
@@ -205,10 +268,37 @@ class Shell:
             return self.carry_out(crossing_state.put_back(self.current(), other.id,
                                                         capable=self.capable(), **self._args()))
 
+    # What a person does on the Crossing page's profile controls.
+
+    def _desk_event(self, event, *args, capable=True, **kwargs):
+        with self.lock:
+            kwargs.update(platform=self.platform, now=self.now())
+            if capable:
+                kwargs.update(capable=self.capable(), live=self.live, gone=self.gone)
+            outcome = event(self.current(), *args, **kwargs)
+            self.carry_out(outcome)
+            return outcome
+
+    def same_ways(self, on):
+        return self._desk_event(crossing_state.set_same_ways, bool(on))
+
+    def own_ways(self, use_own):
+        return self._desk_event(crossing_state.set_own_ways, bool(use_own))
+
+    def edit_other(self, machine, peer, **choices):
+        return self._desk_event(crossing_state.edit_other, getattr(machine, "id", machine),
+                                getattr(peer, "id", peer), capable=False, **choices)
+
+    def new_profile(self, name):
+        return self._desk_event(crossing_state.new_profile, name, capable=False)
+
+    def switch_profile(self, profile_id):
+        return self._desk_event(crossing_state.switch_profile, profile_id)
+
     def displays_changed(self):
         with self.lock:
             return self.carry_out(crossing_state.displays_changed(self.current(), platform=self.platform,
-                                 own_displays=self.desk.screen.display_map(), now=time.time(),
+                                 own_displays=self.desk.screen.display_map(), now=self.now(),
                                  capable=self.capable()))
 
     def on_arrangement(self, peer, read):
@@ -217,6 +307,19 @@ class Shell:
         return self.carry_out(outcome)["changed"]
 
     def on_settings(self, peer, data):
+        if "desk" in data:
+            if not self.profile_aware():
+                return False
+            state = profiles.read_desk_state(data, now=self.now())
+            if state is None:
+                return False
+            entry = ways._entry(self.current(), peer)
+            outcome = crossing_state.desk_arrived(
+                self.current(), state, source=peer, linked=bool(entry and entry.get("linked") is True),
+                capable=self.capable(), **self._args())
+            if not outcome["accepted"]:
+                self.refused_desks.append((peer, outcome["reason"]))
+            return self.carry_out(outcome, source=peer)["changed"]
         state = settings_sync.read_layout_state(data)
         if state is None:
             return False

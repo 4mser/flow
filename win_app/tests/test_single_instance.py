@@ -23,6 +23,58 @@ class SingleInstanceTests(unittest.TestCase):
             self.assertFalse(kvm_bridge_win.activate_existing_instance(hidden=True))
         activate.assert_not_called()
 
+    def test_relaunched_instance_waits_until_the_holder_releases_the_lock(self):
+        now = [0.0]
+        holder = [True]
+
+        def claim():
+            return None if holder[0] else lambda: None
+
+        def sleep(duration):
+            now[0] += duration
+            if now[0] >= 0.2:
+                holder[0] = False
+
+        release = kvm_bridge_win._claim_instance_waiting(
+            1, claim=claim, sleep=sleep, clock=lambda: now[0]
+        )
+        self.assertIsNotNone(release)
+
+    def test_relaunched_instance_gives_up_after_the_wait_window(self):
+        now = [0.0]
+        claims = []
+
+        def claim():
+            claims.append(now[0])
+            return None
+
+        def sleep(duration):
+            now[0] += duration
+
+        release = kvm_bridge_win._claim_instance_waiting(
+            0.25, claim=claim, sleep=sleep, clock=lambda: now[0]
+        )
+        self.assertIsNone(release)
+        self.assertAlmostEqual(now[0], 0.25)
+        self.assertEqual(len(claims), 4)
+
+    def test_relaunch_marks_replacement_and_quits_through_application(self):
+        class SettingsPage:
+            relaunch = kvm_bridge_win.WindowsApplication.relaunch
+
+            def __init__(self):
+                self.quit = mock.Mock()
+
+        page = SettingsPage()
+        with mock.patch.object(sys, "argv", ["beamer.exe", "--hidden", "--relaunched"]), \
+                mock.patch.object(sys, "frozen", True, create=True), \
+                mock.patch.object(kvm_bridge_win.QProcess, "startDetached", return_value=(True, 123)) as start, \
+                mock.patch.object(kvm_bridge_win.QApplication, "quit") as app_quit:
+            page.relaunch()
+        start.assert_called_once_with(sys.executable, ["--hidden", "--relaunched"])
+        page.quit.assert_called_once_with()
+        app_quit.assert_not_called()
+
     @unittest.skipUnless(sys.platform == 'win32', 'Windows receiver mutex')
     def test_two_logon_tasks_cannot_claim_two_receivers(self):
         import ctypes
@@ -61,7 +113,7 @@ class SingleInstanceTests(unittest.TestCase):
 
     def test_startup_migrates_the_legacy_task_before_single_instance_handling(self):
         order = []
-        with mock.patch.object(kvm_bridge_win, "parse_args", return_value=type("Args", (), {"hidden": True})()), \
+        with mock.patch.object(kvm_bridge_win, "parse_args", return_value=type("Args", (), {"hidden": True, "relaunched": False})()), \
              mock.patch.object(kvm_bridge_win, "prepare_windows_startup", side_effect=lambda: order.append("migrate")), \
              mock.patch.object(kvm_bridge_win, "_claim_instance", side_effect=lambda: order.append("claim") or None), \
              mock.patch.object(kvm_bridge_win, "activate_existing_instance") as activate:
@@ -70,7 +122,7 @@ class SingleInstanceTests(unittest.TestCase):
         activate.assert_called_once_with(True, mock.ANY)
 
     def test_failed_migration_still_reaches_instance_handling(self):
-        with mock.patch.object(kvm_bridge_win, "parse_args", return_value=type("Args", (), {"hidden": True})()), \
+        with mock.patch.object(kvm_bridge_win, "parse_args", return_value=type("Args", (), {"hidden": True, "relaunched": False})()), \
              mock.patch.object(kvm_bridge_win, "prepare_windows_startup", side_effect=OSError("Access is denied")), \
              mock.patch.object(kvm_bridge_win, "_claim_instance", return_value=None) as claim, \
              mock.patch.object(kvm_bridge_win, "activate_existing_instance"), \

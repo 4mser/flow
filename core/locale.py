@@ -68,8 +68,10 @@ def is_us_region() -> bool:
 
 
 def americanise(text: str) -> str:
-    """Convert British spellings in text intended for display on a US system."""
-    if not is_us_region() or not isinstance(text, str):
+    """Convert British spellings in text intended for display on a US system, when Beamer is in English."""
+    from core import i18n
+
+    if not isinstance(text, str) or not i18n.is_source() or not is_us_region():
         return text
 
     def replace(match: re.Match) -> str:

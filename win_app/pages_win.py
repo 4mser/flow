@@ -7,41 +7,67 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 
 from core import effects
 from core import peerlist
-from core.ways import part_names, parts_phrase, toggle_part
+from core.i18n import N_, joined, tr, trc
+from core.ways import CORNER_NAMES_LOWER, EDGE_NAMES, part_names, parts_phrase, toggle_part
 
 # (key, name, what the page is for), in sidebar order, which is setup order; Ctrl+1 is the first.
 PAGES = (
-    ("overview", "Overview",
-     "The machines paired with this PC, where input is right now, and the controls you reach for "
-     "every day. Pair a machine here first."),
-    ("crossing", "Crossing",
-     "Choose how the pointer or a key moves input to each machine, and how hard the edge "
-     "pushes back first."),
-    ("keyboard", "Keyboard",
-     "How this PC's Ctrl and Windows keys arrive on another machine, the keys and buttons that stay "
-     "here, and how fast another machine's pointer moves here."),
-    ("design", "Design",
-     "How crossing looks on this PC: the light as you push toward another machine, and where the "
-     "pointer lands."),
-    ("connection", "Connection",
-     "This PC's network access, address and listening port; hide addresses in this window and tray."),
+    ("overview", N_("Overview"),
+     N_("The machines paired with this PC, where input is right now, and the controls you reach for "
+     "every day. Pair a machine here first.")),
+    ("crossing", N_("Crossing"),
+     N_("Choose how the pointer or a key moves input to each machine, and how hard the edge "
+     "pushes back first.")),
+    ("keyboard", N_("Keyboard"),
+     N_("How this PC's Ctrl and Windows keys arrive on another machine, the keys and buttons that stay "
+     "here, and how fast another machine's pointer moves here.")),
+    ("design", N_("Design"),
+     N_("How crossing looks on this PC: the light as you push toward another machine, and where the "
+     "pointer lands.")),
+    ("connection", N_("Connection"),
+     N_("This PC's network access, address and listening port; hide addresses in this window and tray.")),
 )
 KEYS = tuple(page[0] for page in PAGES)
 # Under the purpose on the pages whose settings are this PC's alone, so nobody looks for another
 # machine's on the PC: each app sets only its own machine.
 SCOPE = {
-    "crossing": "Ways below lead to the selected machine. Its side is shared with that machine. Resistance, drag protection and Shortcut apply to this PC's input for every destination.",
-    "design": "Used on this screen. Shared animation settings may follow another machine; Animate and window appearance stay on this PC.",
-    "keyboard": "Modifier keys and Stays here belong to this PC's input. Pointer speed and scrolling belong to this screen when another machine drives it. Every machine keeps its own.",
+    "crossing": N_("Ways below lead to the selected machine. Its side is shared with that machine. Resistance, drag protection and Shortcut apply to this PC's input for every destination."),
+    "design": N_("Used on this screen. Shared animation settings may follow another machine; Animate and window appearance stay on this PC."),
+    "keyboard": N_("Modifier keys and Stays here belong to this PC's input. Pointer speed and scrolling belong to this screen when another machine drives it. Every machine keeps its own."),
 }
 # With Same on all machines on, under each row of the shared pages that stays this PC's own.
-OWN_ROW = "This PC only."
+OWN_ROW = N_("This PC only.")
 # The window's footer; the first sentence goes on Connection, whose changes wait for its button.
-FOOTER_APPLY = "Changes apply as you make them."
-FOOTER_TRAY = "Closing this window keeps Beamer running in the tray."
+FOOTER_APPLY = N_("Changes apply as you make them.")
+FOOTER_TRAY = N_("Closing this window keeps Beamer running in the tray.")
+FOOTER_BOTH = N_("Changes apply as you make them. Closing this window keeps Beamer running in the tray.")
+
+
+PERMISSION_STATUS_LABELS = {
+    "not_requested": N_("Not requested"), "ready": N_("Ready"),
+    "refused": N_("Refused"), "unavailable": N_("Unavailable"),
+}
+
+
+def saved_ways_label(item, settings):
+    reasons = {
+        "upgrade": N_("Before Beamer 1.5.5"), "older_version": N_("From an older Beamer"),
+        "sync_off": N_("When Same ways went off"), "seeded": N_("When Same ways went on"),
+        "edited": N_("Before you changed it"), "restored": N_("Before a restore"),
+    }
+    if item.get("why") == "replaced_by":
+        author = item.get("by")
+        name = (settings.get("name") if author == settings.get("machine_id") else
+                peerlist.label_for(settings.get("peers", []), peer_id=author)) or tr("another machine")
+        reason = tr("Before {name} changed it").format(name=name)
+    else:
+        reason = tr(reasons.get(item.get("why"), N_("Earlier ways")))  # N_ table: saved ways archive reasons
+    date = time.strftime("%d-%m-%Y", time.localtime(item.get("at", 0)))
+    return tr("{date} · {reason}").format(date=date, reason=reason)
 
 
 class LinuxPermissionState:
@@ -96,7 +122,7 @@ def linux_permissions_visible(platform: str, wayland: bool) -> bool:
 
 
 def footer(page: str) -> str:
-    return FOOTER_TRAY if page == "connection" else f"{FOOTER_APPLY} {FOOTER_TRAY}"
+    return tr(FOOTER_TRAY if page == "connection" else FOOTER_BOTH)
 
 
 def dots(config_error: bool, firewall_tone: str | None, dormant: bool = False) -> dict:
@@ -119,13 +145,14 @@ def dots(config_error: bool, firewall_tone: str | None, dormant: bool = False) -
 # The Design page's styles and colours: Light first, then each crossing effects direction in
 # effects.DIRECTIONS order. Light's Glow, Beam and Aperture draw this PC's edge or corner as the pointer
 # leaves; the effects draw the departure and the arrival, at an edge, a corner or the Mac's notch.
-CLASSIC = "Light"
+CLASSIC = N_("Light")
 TODAY_STYLES = (
-    ("glow", "Glow", "A band of light that deepens the harder you push."),
-    ("beam", "Beam", "A thin line with a comet of light running along it."),
-    ("aperture", "Aperture", "A fine lens of light opens under pressure and closes softly behind the arriving pointer."),
+    ("glow", N_("Glow"), N_("A band of light that deepens the harder you push.")),
+    ("beam", N_("Beam"), N_("A thin line with a comet of light running along it.")),
+    ("aperture", N_("Aperture"), N_("A fine lens of light opens under pressure and closes softly behind the arriving pointer.")),
 )
-TODAY_COLOURS = (("signal", "Signal"), ("colourful", "Colourful"), ("ocean", "Ocean"), ("sunset", "Sunset"), ("mono", "Mono"), ("aurora", "Aurora"))
+TODAY_COLOURS = (("signal", N_("Signal")), ("colourful", N_("Colourful")), ("ocean", N_("Ocean")),
+                 ("sunset", N_("Sunset")), ("mono", N_("Mono")), ("aurora", N_("Aurora")))
 
 
 def effects_load_error():
@@ -144,13 +171,13 @@ def style_groups() -> tuple:
     # Glow and Beam's detail is their kind, as an effect's is its intensity; what they do is said
     # under the preview.
     if effects_load_error() is not None:
-        return ((CLASSIC, tuple((value, name, effects.CLASSIC[value].intensity.capitalize())
+        return ((CLASSIC, tuple((value, name, effects.intensity_name(effects.CLASSIC[value].intensity))
                                for value, name, _blurb in TODAY_STYLES[:2])),)
-    groups = [(CLASSIC, tuple((value, name, effects.CLASSIC[value].intensity.capitalize())
+    groups = [(CLASSIC, tuple((value, name, effects.intensity_name(effects.CLASSIC[value].intensity))
                               for value, name, _blurb in TODAY_STYLES))]
     for _module, title, effect_ids, _packs in effects.DIRECTIONS:
         found = [effects.effect(effect_id) for effect_id in effect_ids]
-        groups.append((title, tuple((fx.id, fx.name, fx.intensity.capitalize()) for fx in found)))
+        groups.append((title, tuple((fx.id, fx.name, effects.intensity_name(fx.intensity)) for fx in found)))
     return tuple(groups)
 
 
@@ -181,19 +208,21 @@ def place_note(style: str, place: str, methods) -> str:
     ways = {"edge": {"edge", "part"}, "corner": {"corner"}}[place]
     if set(methods) & ways:
         return ""
-    return (f"{PLACES[place].capitalize()} is not one of this PC's ways in, so this only shows how it "
-            "would look. Turn it on under Crossing.")
+    return tr("{place} is not one of this PC's ways in, so this only shows how it would look. Turn it on under Crossing.").format(
+        place=PLACES[place].capitalize())
 
 
 
 def share_sentence(holders, side, name):
     """Name the machines already using the side the chosen machine wants."""
-    names = holders[0] if len(holders) == 1 else ", ".join(holders[:-1]) + " and " + holders[-1]
-    verb = "crosses" if len(holders) == 1 else "cross"
-    # The sentence says what picking a third means: it goes to `name`.
-    keep = f"stay with {holders[0]}" if len(holders) == 1 else "stay where they are"
-    return (f"{names} already {verb} from the {side} edge of this PC. The thirds you pick go to {name}; "
-            f"the rest {keep}.")
+    names = joined(holders)
+    if len(holders) == 1:
+        # Translators: {side} is the direction of the screen edge.
+        return tr("{names} already crosses from the {side} edge of this PC. The thirds you pick go to {name}; the rest stay with {holder}.").format(
+            names=names, side=tr(EDGE_NAMES.get(side, side)) if side in EDGE_NAMES else side, name=name, holder=holders[0])
+    # Translators: {side} is the direction of the screen edge.
+    return tr("{names} already cross from the {side} edge of this PC. The thirds you pick go to {name}; the rest stay where they are.").format(
+        names=names, side=tr(EDGE_NAMES.get(side, side)) if side in EDGE_NAMES else side, name=name)
 
 
 # The Crossing page's ways in, in the page's order. Edge and Part of the edge are two readings of
@@ -214,7 +243,7 @@ def toggle_way(methods, way, on) -> list:
 
 def not_learned_edge(name: str = "the other machine") -> str:
     """Under Where it is, while this PC holds no side for the machine named."""
-    return f"Not learned yet: choose a side here or on {name}."
+    return tr("Not learned yet: choose a side here or on {name}.").format(name=name)
 
 
 def crossing_machines(peers: list) -> list:
@@ -229,23 +258,20 @@ def crossing_state_sentence(paired, heard, sending, connected, armed, paused, fu
     """The Crossing page's line under Pause: why nothing can cross, first match wins, and only then
     whether crossing is on, held or paused. `name` is the machine it is about."""
     if not paired:
-        return "Not paired yet, so no edge or shortcut moves input until you pair a machine above."
+        return tr("Not paired yet, so no edge or shortcut moves input until you pair a machine above.")
     if not heard:
-        return f"Waiting to hear from {name}. This PC cannot push into it until it has connected once."
+        return tr("Waiting to hear from {name}. This PC cannot push into it until it has connected once.").format(name=name)
     if not sending:
-        return f"This PC does not drive {name}, so edges and the shortcut do nothing."
+        return tr("This PC does not drive {name}, so edges and the shortcut do nothing.").format(name=name)
     if not connected:
-        return (
-            f"Not connected to {name}, so edges and the shortcut do nothing yet. "
-            "Check that it is switched on and lets this PC drive it."
-        )
+        return tr("Not connected to {name}, so edges and the shortcut do nothing yet. Check that it is switched on and lets this PC drive it.").format(name=name)
     if not armed:
-        return "Only the shortcut is switched on; there is nothing to pause."
+        return tr("Only the shortcut is switched on; there is nothing to pause.")
     if paused:
-        return "Pauses pointer crossing through this screen, including another machine's pointer. Shortcuts and jump keys still work. Resets when Beamer restarts."
+        return tr("Pauses pointer crossing through this screen, including another machine's pointer. Shortcuts and jump keys still work. Resets when Beamer restarts.")
     if full_screen_app is not None:
-        return "Held: an app is full screen."
-    return "On. Pause it to lean on an edge without switching."
+        return tr("Held: an app is full screen.")
+    return tr("On. Pause it to lean on an edge without switching.")
 
 
 def crossing_state_blocked(paired, mac_heard, sending, connected) -> bool:
@@ -290,96 +316,116 @@ def switch_groups() -> tuple:
 
 
 # The Crossing page's "Where your Mac is": the value is the edge of this PC that leads to the Mac.
-SIDE_CHOICES = (("left", "Left"), ("right", "Right"), ("top", "Above"), ("bottom", "Below"))
+SIDE_CHOICES = (("left", N_("Left")), ("right", N_("Right")), ("top", N_("Above")), ("bottom", N_("Below")))
 # The ways in, as their rows read: the pointer's first, then the shortcut.
 WAY_ROWS = (
     ("edge", "Edge", "One whole side"),
     ("corner", "Corner", "Push diagonally into a corner"),
     ("shortcut", "Shortcut", "Press a key to switch input"),
 )
-CORNER_NAMES = {"top_left": "top-left", "top_right": "top-right", "bottom_left": "bottom-left", "bottom_right": "bottom-right"}
+CORNER_NAMES = {"top_left": N_("top-left"), "top_right": N_("top-right"), "bottom_left": N_("bottom-left"), "bottom_right": N_("bottom-right")}
 
 
 def trigger_phrase(key_name: str, style: str) -> str:
     """The shortcut as the arrangement diagram's key cap line reads it: "Right Ctrl, twice"."""
-    return f"{key_name}, {'held' if style == 'hold' else 'twice'}"
+    if style == "hold":
+        return tr("{key}, held").format(key=key_name)
+    return tr("{key}, twice").format(key=key_name)
 
 
-SHORTCUT_SEVERAL = "The shortcut switches home or to the last available machine; if it is unavailable, another available machine can take input."
+SHORTCUT_SEVERAL = N_("The shortcut switches home or to the last available machine; if it is unavailable, another available machine can take input.")
 
 
-def _joined(items) -> str:
-    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+def _or_join(items) -> str:
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        # Translators: Two ways to move input, offered as alternatives.
+        return trc("ways list", "{first} or {last}").format(first=items[0], last=items[1])
+    # Translators: Several ways to move input, offered as alternatives.
+    return trc("ways list", "{head} or {last}").format(head=", ".join(items[:-1]), last=items[-1])
 
 
-def ways_summary(methods, edge, parts, corner, key_name, style, name="the other machine", several=False) -> str:
+def ways_summary(methods, edge, parts, corner, key_name, style, name=None, several=False) -> str:
     """The Ways in module's first line: every way input leaves for the machine `name`, in one
     sentence. With `several` machines paired the shortcut is not this one's, so it gets a sentence of
     its own."""
+    if name is None:
+        name = tr("the other machine")
     methods = set(methods)
     if not edge:
         # A PC's edge, thirds and corner all cross the side it holds; only the shortcut needs none.
         if "shortcut" in methods and not several:
-            press = f"hold {key_name}" if style == "hold" else f"press {key_name} twice"
-            return (f"Input moves to {name} when you {press}. Its edges and corner wait until this PC knows "
-                    f"which side {name} is on.")
-        return f"Nothing moves input to {name} until this PC knows which side it is on."
+            if style == "hold":
+                return tr("Input moves to {name} when you hold {key}. Its edges and corner wait until this PC knows which side {name} is on.").format(name=name, key=key_name)
+            return tr("Input moves to {name} when you press {key} twice. Its edges and corner wait until this PC knows which side {name} is on.").format(name=name, key=key_name)
+        return tr("Nothing moves input to {name} until this PC knows which side it is on.").format(name=name)
     ways = []
     if "edge" in methods:
-        ways.append(f"push through the whole {edge} edge")
+        ways.append(tr("push through the whole {edge} edge").format(edge=tr(EDGE_NAMES[edge])))
     if "part" in methods:
-        ways.append(f"push through {parts_phrase(edge, parts)}")
+        ways.append(tr("push through {parts}").format(parts=parts_phrase(edge, parts)))
     if "corner" in methods:
-        ways.append(f"push diagonally into the {CORNER_NAMES.get(corner, corner)} corner")
+        ways.append(tr("push diagonally into the {corner} corner").format(
+            corner=tr(CORNER_NAMES[corner]) if corner in CORNER_NAMES else corner))
     shortcut = "shortcut" in methods
     if shortcut and not several:
-        ways.append(f"hold {key_name}" if style == "hold" else f"press {key_name} twice")
-    after = f" {SHORTCUT_SEVERAL}" if shortcut and several else ""
+        ways.append(tr("hold {key}").format(key=key_name) if style == "hold" else tr("press {key} twice").format(key=key_name))
     if not ways and several:
-        return f"No edge or corner leads to {name} yet: choose one below.{after}"
+        return (tr("No edge or corner leads to {name} yet: choose one below. The shortcut switches home or to the last available machine; if it is unavailable, another available machine can take input.").format(name=name) if shortcut else
+                tr("No edge or corner leads to {name} yet: choose one below.").format(name=name))
     if not ways:
-        return f"Nothing moves input to {name}: choose at least one way below."
-    joined = ways[0] if len(ways) == 1 else ", ".join(ways[:-1]) + " or " + ways[-1]
-    return f"Input moves to {name} when you {joined}.{after}"
+        return tr("Nothing moves input to {name}: choose at least one way below.").format(name=name)
+    phrase = _or_join(ways)
+    if shortcut and several:
+        return tr("Input moves to {name} when you {ways}. The shortcut switches home or to the last available machine; if it is unavailable, another available machine can take input.").format(name=name, ways=phrase)
+    return tr("Input moves to {name} when you {ways}.").format(name=name, ways=phrase)
 
 
 def ways_note(methods, edge, parts, corner, key_name, style, name, several=False) -> str:
     methods = set(methods)
-    phrases = []
-    if "shortcut" in methods:
-        phrases.append(f"{'Hold' if style == 'hold' else 'Double-tap'} {key_name}")
+    shortcut = tr("Hold {key}").format(key=key_name) if style == "hold" else tr("Double-tap {key}").format(key=key_name)
     pointer = []
     if edge:
         if "part" in methods:
             pointer.append(parts_phrase(edge, parts))
         elif "edge" in methods:
-            pointer.append(f"the {edge} edge")
+            pointer.append(tr("the {edge} edge").format(edge=tr(EDGE_NAMES[edge])))
     if "corner" in methods:
-        pointer.append(f"the {(corner or 'top_right').replace('_', ' ')} corner")
+        pointer_corner = corner or "top_right"
+        pointer_name = (tr(CORNER_NAMES_LOWER[pointer_corner]) if pointer_corner in CORNER_NAMES_LOWER
+                        else pointer_corner.replace("_", " "))
+        pointer.append(tr("the {corner} corner").format(corner=pointer_name))
     if pointer:
-        joined = pointer[0] if len(pointer) == 1 else ", ".join(pointer[:-1]) + " or " + pointer[-1]
-        phrases.append(f"push through {joined}" + (f" to reach {name}" if several else ""))
-    sentence = ", or ".join(phrases)
-    return sentence[0].upper() + sentence[1:] + "." if sentence else "This PC is always in the shortcut's cycle."
+        detail = _or_join(pointer)
+        action = tr("push through {ways}").format(ways=detail)
+        action = tr("push through {ways} to reach {name}").format(ways=detail, name=name) if several else action
+        if "shortcut" in methods:
+            return tr("{shortcut}, or {action}.").format(shortcut=shortcut, action=action)
+        sentence = tr("{action}.").format(action=action)
+        return sentence[0].upper() + sentence[1:]
+    if "shortcut" in methods:
+        return tr("{shortcut}.").format(shortcut=shortcut)
+    return tr("This PC is always in the shortcut's cycle.")
 
 
 def shortcut_destination_note(mode: str, hold: bool) -> str:
     if mode == "last":
-        note = "With Hold, input goes to the last machine."
+        note = tr("With Hold, input goes to the last machine.")
     elif hold:
-        note = "With Hold, input goes to the first ready machine in order."
+        note = tr("With Hold, input goes to the first ready machine in order.")
     else:
-        note = "The order follows the tiles from top to bottom, then left to right. This PC is always in the cycle."
+        note = tr("The order follows the tiles from top to bottom, then left to right. This PC is always in the cycle.")
     if mode == "ticked":
-        note += " Choose which machines join the cycle with the tick boxes on their tiles."
+        note += " " + tr("Choose which machines join the cycle with the tick boxes on their tiles.")
     return note
 
 
 # The arrangement diagram. Each side of this PC has an angle, and a machine's screen travels round
 # this PC's between them: through a corner position, never across it.
 SIDE_ANGLE = {"right": 0.0, "top": 90.0, "left": 180.0, "bottom": 270.0}
-SIDE_WORDS = {"right": "to the right of this PC", "left": "to the left of this PC", "top": "above this PC",
-              "bottom": "below this PC"}
+SIDE_WORDS = {"right": N_("to the right of this PC"), "left": N_("to the left of this PC"), "top": N_("above this PC"),
+              "bottom": N_("below this PC")}
 PART_ORDER = ("start", "middle", "end")
 
 
@@ -482,24 +528,31 @@ def layout_rects(width: float, top: float, placed: list, screen: tuple, gap: flo
 
 def unplaced_line(labels: list) -> str:
     """The line under the diagram naming the machines that have no side yet; "" when none."""
-    return f"Not placed yet: {_joined(labels)}" if labels else ""
+    return tr("Not placed yet: {machines}").format(machines=joined(labels)) if labels else ""
 
 
 def diagram_description(machines: list, key_name: str, style: str, shortcut: bool) -> str:
     """The diagram's accessible description: where every machine is, then the chosen one's ways in.
     Each machine is a dict with `label`, `side`, `methods`, `parts`, `corner` and `chosen`."""
-    placed = [f"{machine['label']} is {SIDE_WORDS[machine['side']]}" for machine in machines
+    placed = [tr("{name} is {position}").format(name=machine["label"], position=tr(SIDE_WORDS[machine["side"]]))
+              for machine in machines
               if machine.get("side") in SIDE_WORDS]
-    sentences = [_joined(placed) + "."] if placed else []
+    sentences = [tr("{machines}.").format(machines=joined(placed))] if placed else []
     line = unplaced_line([machine["label"] for machine in machines if machine.get("side") not in SIDE_WORDS])
     if line:
-        sentences.append(line + ".")
+        sentences.append(tr("{line}.").format(line=line))
     chosen = next((machine for machine in machines if machine.get("chosen")), machines[0] if machines else None)
     if chosen is not None:
         methods = list(chosen.get("methods") or ()) + (["shortcut"] if shortcut else [])
         sentences.append(ways_summary(methods, chosen.get("side") or "", chosen.get("parts") or (), chosen.get("corner") or "",
                                       key_name, style, chosen["label"], several=len(machines) > 1))
-    return " ".join(sentences)
+    if len(sentences) == 0:
+        return ""
+    if len(sentences) == 1:
+        return sentences[0]
+    if len(sentences) == 2:
+        return tr("{first} {second}").format(first=sentences[0], second=sentences[1])
+    return tr("{first} {second} {third}").format(first=sentences[0], second=sentences[1], third=sentences[2])
 
 
 def side_segment(rect: tuple, side: str, start: float = 0.0, end: float = 1.0, inset: float = 0.0) -> tuple:

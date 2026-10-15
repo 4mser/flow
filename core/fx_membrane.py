@@ -5,6 +5,7 @@ healing behind you.
 
 import math
 from types import SimpleNamespace
+from core.i18n import N_
 
 from . import effects
 
@@ -507,31 +508,31 @@ def _make(id_, name, intensity, blurb, depart_seconds, arrive_seconds, P):
 
 
 EFFECTS = [
-    _make("skin", "Skin", "quiet",
-          "A single iridescent hairline sits just inside the edge and dimples under the pointer as "
+    _make("skin", N_("Skin"), "quiet",
+          N_("A single iridescent hairline sits just inside the edge and dimples under the pointer as "
           "you push, thinning and shifting colour. It parts at the pointer and the two ends pull "
           "back; on the other screen the same hairline closes behind the pointer and one ripple "
-          "spreads out.",
+          "spreads out."),
           0.45, 0.6,
           {"departSeconds": 0.45, "arriveSeconds": 0.6, "g": 6, "L": 110, "lw": 2.0, "fringes": 1,
            "sp": 0, "retract": 300, "curl": 3, "sheen": False, "beads": False, "waves": False,
            "aL": 84, "gap0": 16, "bulge": 9, "rings": [58], "still": [40], "stagger": 0,
            "ringDur": 0.5, "disc": False, "aWave": False}),
-    _make("film", "Film", "medium",
-          "A band of interference fringes, one added at each quarter tick, crowds and thins into the "
+    _make("film", N_("Film"), "medium",
+          N_("A band of interference fringes, one added at each quarter tick, crowds and thins into the "
           "dent under the pointer, so the band itself is the pressure meter. At breakthrough the film "
           "tears and each fringe peels back with a curled rim; on the other side the skin bulges in "
-          "around the arriving pointer, springs back, heals, and throws two ripples.",
+          "around the arriving pointer, springs back, heals, and throws two ripples."),
           0.55, 0.7,
           {"departSeconds": 0.55, "arriveSeconds": 0.7, "g": 7, "L": 150, "lw": 2.2, "fringes": 4,
            "sp": 3.6, "retract": 330, "curl": 5, "sheen": False, "beads": False, "waves": False,
            "aL": 110, "gap0": 26, "bulge": 14, "rings": [74, 104], "still": [44, 80],
            "stagger": 0.09, "ringDur": 0.55, "disc": False, "aWave": False}),
-    _make("rupture", "Rupture", "showpiece",
-          "The whole edge becomes a visible soap film with a sheen behind its fringes; every tick "
+    _make("rupture", N_("Rupture"), "showpiece",
+          N_("The whole edge becomes a visible soap film with a sheen behind its fringes; every tick "
           "sends a shudder along it, and at breakthrough it bursts, the torn rims racing away along "
           "the edge carrying beads of film. The arrival opens a set of Newton's rings around the "
-          "entry point while the skin bulges in, heals and sends a surface wave along the edge.",
+          "entry point while the skin bulges in, heals and sends a surface wave along the edge."),
           0.7, 0.8,
           {"departSeconds": 0.7, "arriveSeconds": 0.8, "g": 8, "L": 220, "lw": 2.6, "fringes": 4,
            "sp": 4, "retract": 420, "curl": 6, "sheen": True, "beads": True, "waves": True,
@@ -540,9 +541,9 @@ EFFECTS = [
 ]
 
 PACKS = {
-    "opal": ("Opal", ["#527cda", "#ac8cd2", "#d985b0", "#7eade0"]),
-    "sea_glass": ("Sea glass", ["#48b8a0", "#8bd6b5", "#388f91", "#b4dfb0"]),
-    "oil_slick": ("Oil slick", ["#8a4dff", "#2f7dff", "#16c6b0", "#9fdc4a", "#f0c23c", "#e8477f"]),
-    "soap_bubble": ("Soap bubble", ["#ffd98e", "#ff9cc2", "#c3a6ff", "#8fcfff", "#9ef2cf"]),
-    "pearl": ("Pearl", ["#fbf4e8", "#f2c9d6", "#c6dcf2", "#d9f0dc", "#ffffff"]),
+    "opal": (N_("Opal"), ["#527cda", "#ac8cd2", "#d985b0", "#7eade0"]),
+    "sea_glass": (N_("Sea glass"), ["#48b8a0", "#8bd6b5", "#388f91", "#b4dfb0"]),
+    "oil_slick": (N_("Oil slick"), ["#8a4dff", "#2f7dff", "#16c6b0", "#9fdc4a", "#f0c23c", "#e8477f"]),
+    "soap_bubble": (N_("Soap bubble"), ["#ffd98e", "#ff9cc2", "#c3a6ff", "#8fcfff", "#9ef2cf"]),
+    "pearl": (N_("Pearl"), ["#fbf4e8", "#f2c9d6", "#c6dcf2", "#d9f0dc", "#ffffff"]),
 }

@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core import feature_flags, pairing, peerlist, protocol, ways
 from core.tests import responder_harness as harness
+import qr_code
 
 try:
     from PySide6.QtCore import QCoreApplication, QEvent, Qt
@@ -455,6 +456,10 @@ class PairingSheetWindowTest(unittest.TestCase):
         self.phone_pairing_flag = mock.patch.object(feature_flags, "PAIRING_QR_VISIBLE", True)
         self.phone_pairing_flag.start()
         self.addCleanup(self.phone_pairing_flag.stop)
+        # British spelling, whatever region the machine running the suite is set to.
+        us_region = mock.patch("core.locale.is_us_region", return_value=False)
+        us_region.start()
+        self.addCleanup(us_region.stop)
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         self.app = QApplication.instance() or QApplication([])
         theme.init_fonts()
@@ -489,6 +494,8 @@ class PairingSheetWindowTest(unittest.TestCase):
         self.assertTrue(self.window.sheet.code_showing)
         self.assertTrue(self.window.sheet.count_label.text().startswith("Expires in "))
 
+    # segno is in the Windows build only until phone pairing ships, and Linux with it (todo.md).
+    @unittest.skipIf(qr_code.segno is None, "segno is not installed")
     def test_pair_phone_button_opens_the_sheet_and_generates_a_qr_in_one_click(self):
         self.window._toggle_pairing_sheet()
         self.window._pairing_address = lambda: "192.0.2.20"
@@ -667,6 +674,8 @@ class PairingSheetWindowTest(unittest.TestCase):
         self.assertEqual(self.window.sheet.pair_note.text(),
                          peerlist.pairing_error_text(pairing.PairingError(pairing.ERROR_REFUSED), "Studio"))
 
+    # segno is in the Windows build only until phone pairing ships, and Linux with it (todo.md).
+    @unittest.skipIf(qr_code.segno is None, "segno is not installed")
     def test_the_code_shows_a_qr_unless_addresses_are_hidden(self):
         from unittest import mock
         from core import feature_flags

@@ -71,6 +71,7 @@ class WindowsInput:
             arrangement_callback=self._on_arrangement,
             settings_callback=self._on_settings,
             paired_callback=self._on_paired,
+            link_callback=self._on_link,
             announce=self._announce,
         )
         controller.responder = self.server
@@ -171,6 +172,8 @@ class WindowsInput:
         state, and who else this Mac has, unless this Mac has a link of its own open to it (that
         link carries them)."""
         if self._outbound_up(peer):
+            if "profiles" in (self.server.caps_of(peer) or ()):
+                self._controller.send_desk_to(protocol.id_text(peer))
             return []
         text = protocol.id_text(peer)
         entry = next((item for item in self._controller.book.peers() if item.get("id") == text), None)
@@ -187,10 +190,20 @@ class WindowsInput:
         if entry.get("port") != 0:
             self._controller.crossing_link_up(text)
         caps = self.server.caps_of(peer) or frozenset()
+        self._controller.profiles_capable()
+        self._controller.reset_desk_peer(text)
+        if entry.get("port") != 0 and "profiles" in caps:
+            self._controller.send_desk_to(text)
         if entry.get("port") != 0 and "settings" in caps and "layout" not in caps:
             messages += [dict(m, data=settings_sync.for_capabilities(m.get("data", {}), caps))
                          for m in self._controller.announce() if m.get("type") == protocol.MSG_SETTINGS]
         return messages
+
+    def _on_link(self, peer, up):
+        if up:
+            self._controller.profiles_capable()
+        if up or not self._outbound_up(peer):
+            self._controller.reset_desk_peer(protocol.id_text(peer))
 
     def _on_arrangement(self, peer, read) -> None:
         if self._arrangement_callback is None:

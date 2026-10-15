@@ -60,6 +60,7 @@ class PageColumnGeometryTests(unittest.TestCase):
                 scope_labels={}, _host="localhost-live.example.lan",
                 _hide_addresses=lambda: False, _set_hide_addresses=lambda *_: None,
                 _shown=lambda text: text, save=lambda: None, _firewall_action=lambda: None,
+                _set_language=lambda *_: None, relaunch=lambda *_: None,
             )
             owner._firewall_module = MethodType(kvm.WindowsApplication._firewall_module, owner)
             scroll, layout = kvm.WindowsApplication._page_shell(

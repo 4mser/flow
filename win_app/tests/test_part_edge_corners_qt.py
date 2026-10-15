@@ -126,6 +126,51 @@ class PartEdgeCornersTests(unittest.TestCase):
                 QTest.mouseClick(window.atlas_canvas, Qt.MouseButton.LeftButton, pos=band_point(window.atlas_canvas, third, side))
                 self.assertEqual(picked_row(window), list(ways.PARTS))
 
+    def test_a_grip_on_the_seam_leaves_the_end_band_to_its_third(self):
+        window, peer = self.window, self.peers[0]["id"]
+        window._ledger_edge(peer)
+        layout = copy.deepcopy(window.atlas_canvas.tiles)
+        own = window._config.machine_id
+        layout[own].update(x=0, y=0, w=160, h=120)
+        layout[peer].update(x=-160, y=0, w=160, h=120)
+        layout[self.peers[1]["id"]].update(x=500, y=300)
+        window._layout_dropped(layout, peer)
+        parity.settle(window)
+        canvas = window.atlas_canvas
+        band = band_point(canvas, "end", "left")
+        grip = canvas._resize_grip_rect(peer)
+        self.assertTrue(grip.contains(QPointF(band)))
+        self.assertIsNone(canvas._resize_at(QPointF(band)))
+        self.assertEqual(canvas._third_at(QPointF(band)), (peer, "end"))
+        inside = QPointF(grip.right() - 8, grip.bottom() - 4)
+        self.assertEqual(canvas._resize_at(inside), peer)
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=inside.toPoint())
+        self.assertTrue(canvas._resizing)
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=inside.toPoint())
+
+    def test_a_tile_inside_the_band_keeps_its_end_third_and_its_grip(self):
+        window, peer = self.window, self.peers[0]["id"]
+        window._ledger_edge(peer)
+        layout = copy.deepcopy(window.atlas_canvas.tiles)
+        own = window._config.machine_id
+        layout[own].update(x=0, y=0, w=160, h=120)
+        layout[peer].update(x=160, y=0, w=4, h=120)
+        layout[self.peers[1]["id"]].update(x=500, y=300)
+        window._layout_dropped(layout, peer)
+        parity.settle(window)
+        canvas = window.atlas_canvas
+        grip = canvas._resize_grip_rect(peer)
+        self.assertLessEqual(grip.width(), 5)
+        band = band_point(canvas, "end", "right")
+        self.assertEqual(canvas._third_at(QPointF(band)), (peer, "end"))
+        self.assertIsNone(canvas._resize_at(QPointF(band)))
+        outside = QPointF(grip.right() + 8, grip.bottom() + 4)
+        self.assertIsNone(canvas._third_at(outside))
+        self.assertEqual(canvas._resize_at(outside), peer)
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=outside.toPoint())
+        self.assertTrue(canvas._resizing)
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=outside.toPoint())
+
     def test_band_is_five_pixels_wide_and_available_when_edge_is_off(self):
         window, peer = self.window, self.peers[0]["id"]
         canvas = window.atlas_canvas

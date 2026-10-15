@@ -48,6 +48,16 @@ class FakeKeymap:
 
 
 class StepsTest(unittest.TestCase):
+    def test_input_method_names_press_and_release_evdev_122_and_123(self):
+        for name, code in (("hangul", 122), ("hanja", 123)):
+            with self.subTest(name=name):
+                state = inject_portal.KeyState()
+                layout = inject_portal.WaylandLayout(FakeKeymap())
+                down = inject_portal.plan_key(name, True, None, state, layout, 0, 0)
+                up = inject_portal.plan_key(name, False, None, state, layout, 0, 0)
+                self.assertEqual(inject_portal.wayland_steps(down), [(code, True)])
+                self.assertEqual(inject_portal.wayland_steps(up), [(code, False)])
+
     def test_a_key_with_shift_worked_around_it_is_let_go_at_once_and_repeat_and_map_mean_nothing(self):
         steps = [(NO_REPEAT, 38), (PRESS, 50), (PRESS, 38), (RELEASE, 50), (REPEAT, 38), (MAP, 200, 0x41, False)]
         self.assertEqual(inject_portal.wayland_steps(steps), [(42, True), (30, True), (30, False), (42, False)])
@@ -164,6 +174,26 @@ class RemoteTest(unittest.TestCase):
         wait_for(lambda: len(self.ei.sends("absolute")) == 3, what="three moves")
         self.assertEqual([item[2:] for item in self.ei.sends("absolute")], [(100.0, 100.0), (110.0, 95.0), (1919.0, 95.0)])
         self.assertEqual(desktop_portal.cursor_position(), (1919, 95))
+
+    def test_a_push_places_then_moves_on_the_session_thread(self):
+        self.up()
+        inject_portal.push(200, 300, [(10, 0), (0, -5)], lambda: True)
+        wait_for(lambda: len(self.ei.sends("absolute")) == 3, what="the shortcut push")
+        self.assertEqual([item[2:] for item in self.ei.sends("absolute")],
+                         [(200.0, 300.0), (210.0, 300.0), (210.0, 295.0)])
+
+    def test_a_queued_push_is_dropped_when_its_capture_deadline_passes(self):
+        checked = threading.Event()
+
+        def wanted():
+            checked.set()
+            return False
+
+        desktop_portal.set_cursor_position(100, 100)
+        inject_portal.push(200, 300, [(10, 0), (0, -5)], wanted)
+        self.up()
+        wait_for(checked.is_set, what="the queued push to be checked")
+        self.assertEqual(self.ei.sends("absolute"), [])
 
     def test_leftward_arrival_at_the_right_edge_continues_inward(self):
         from core.return_edge import Rect, arrival_position

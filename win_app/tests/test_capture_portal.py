@@ -24,6 +24,13 @@ ONE = [Rect(0, 0, 1920, 1080)]
 SESSION = "/org/freedesktop/portal/desktop/session/1_42/beamer2"
 
 
+class CapturePortalNamesTests(unittest.TestCase):
+    def test_input_method_names_share_the_evdev_mapping_and_cannot_be_triggers(self):
+        self.assertEqual((capture_portal.VK_TO_NAME[122], capture_portal.VK_TO_NAME[123]), ("hangul", "hanja"))
+        self.assertEqual((capture_portal.VK_TITLES[122], capture_portal.VK_TITLES[123]), ("Han/Yeong", "Hanja"))
+        self.assertTrue({122, 123} <= capture_portal.NOT_TRIGGER_VKS)
+
+
 class BarrierTest(unittest.TestCase):
     def test_a_scoped_wayland_zone_does_not_create_barriers_on_another_display(self):
         screens = [Rect(0, 0, 1920, 1080), Rect(1920, 0, 1920, 1080)]
@@ -323,7 +330,7 @@ class Harness:
     `push_to_cross` pushes, as the zone model does. `gnome` makes the portal GNOME's, on the zone
     the laptop reports."""
 
-    def __init__(self, version=1, models=None, push_to_cross=2, tokens=None, gnome=False, kde=False):
+    def __init__(self, version=1, models=None, push_to_cross=2, tokens=None, gnome=False, kde=False, clock=time.monotonic):
         if gnome:
             self.bus = GnomeBus(LAPTOP, versions={capture_portal.INTERFACE: version})
         else:
@@ -340,7 +347,7 @@ class Harness:
         self.push_to_cross = push_to_cross
         self.tokens = tokens or MemoryTokens()
         self.hooks = capture_portal.Hooks(self._key, self._mouse, self._motion, connect=lambda: self.bus,
-                                          ei=lambda fd: self.ei, tokens=self.tokens)
+                                          ei=lambda fd: self.ei, tokens=self.tokens, clock=clock)
         self.hooks.grab_while(lambda: self.away)
         self.hooks.barriers_from(lambda: self.models)
         self.hooks.on_home = lambda: self.homes.append(True) or setattr(self, "away", False)
@@ -484,6 +491,120 @@ class HooksTest(unittest.TestCase):
         self.assertEqual([item["position"] for item in listed], [("(iiii)", (1920, 0, 1920, 1079))])
         self.assertEqual(h.bus.made("SetPointerBarriers")[0][3], 7)
         self.assertEqual(desktop_portal.monitors(), ONE)
+
+    def test_the_session_says_once_that_it_is_ready(self):
+        with self.assertLogs(capture_portal.LOGGER, level="INFO") as said:
+            h = self.make()
+            h.start()
+            h.hooks._key = None
+            h.hooks._place_barriers(h.hooks._session)
+        ready = [line for line in said.output if "Input capture is ready" in line]
+        self.assertEqual(ready, ["INFO:capture_portal:Input capture is ready: 1 of 1 edge barriers placed"])
+
+    def test_push_through_moves_to_a_barrier_then_steps_outward_and_captures_once(self):
+        h = self.make()
+        h.start()
+        captured, failed, moves = [], [], []
+        with mock.patch.object(capture_portal, "inject_portal", create=True) as injection:
+            injection.push.side_effect = lambda x, y, deltas, wanted: (
+                moves.append(("to", (x, y))) if wanted() else None,
+                moves.extend(("by", delta) for delta in deltas) if wanted() else None,
+            )
+            self.assertTrue(h.hooks.push_through(h.models, lambda: captured.append(True), lambda: failed.append(True)))
+        self.assertEqual(moves, [("to", (1916, 539))] + [("by", (24, 0))] * 6)
+        h.activate(x=1920.0, y=539.0)
+        self.assertEqual((captured, failed), ([True], []))
+
+    def test_a_queued_push_is_discarded_after_its_capture_deadline(self):
+        clock = Clock()
+        h = self.make(clock=clock)
+        h.start()
+        queued, moves, failed = [], [], []
+        with mock.patch.object(capture_portal, "inject_portal", create=True) as injection:
+            injection.push.side_effect = lambda x, y, deltas, wanted: queued.append((x, y, deltas, wanted))
+            self.assertTrue(h.hooks.push_through(h.models, lambda: None, lambda: failed.append(True)))
+            clock.now += capture_portal.PUSH_SECONDS + 0.01
+            h.hooks._tick()
+            x, y, deltas, wanted = queued[0]
+            if wanted():
+                moves.append(("to", (x, y)))
+                moves.extend(("by", delta) for delta in deltas)
+        self.assertEqual(failed, [True])
+        self.assertEqual(moves, [])
+
+    def test_a_queued_push_run_after_its_deadline_does_nothing_before_the_tick(self):
+        clock = Clock()
+        h = self.make(clock=clock)
+        h.start()
+        queued = []
+        with mock.patch.object(capture_portal, "inject_portal", create=True) as injection:
+            injection.push.side_effect = lambda x, y, deltas, wanted: queued.append(wanted)
+            self.assertTrue(h.hooks.push_through(h.models, lambda: None, lambda: None))
+        self.assertTrue(queued[0]())
+        clock.now += capture_portal.PUSH_SECONDS + 0.01
+        self.assertFalse(queued[0]())
+
+    def test_push_through_ignores_an_activation_at_another_wall(self):
+        h = self.make()
+        h.start()
+        captured, failed = [], []
+        with mock.patch.object(capture_portal, "inject_portal", create=True):
+            self.assertTrue(h.hooks.push_through(h.models, lambda: captured.append(True), lambda: failed.append(True)))
+        h.hooks._activated({"activation_id": 9, "cursor_position": (0, 500), "barrier_id": 2})
+        self.assertEqual((captured, failed), ([], []))
+
+    def test_push_through_deadline_calls_failure_from_tick_once(self):
+        clock = Clock()
+        h = self.make(clock=clock)
+        h.start()
+        failed = []
+        with mock.patch.object(capture_portal, "inject_portal", create=True):
+            self.assertTrue(h.hooks.push_through(h.models, lambda: None, lambda: failed.append(True)))
+        clock.now += capture_portal.PUSH_SECONDS + 0.01
+        h.hooks._tick()
+        h.hooks._tick()
+        self.assertEqual(failed, [True])
+
+    def test_push_through_refuses_when_there_is_no_session_or_no_barrier(self):
+        h = self.make()
+        with mock.patch.object(capture_portal, "inject_portal", create=True) as injection:
+            self.assertFalse(h.hooks.push_through([], lambda: None, lambda: None))
+            h.start()
+            self.assertFalse(h.hooks.push_through([], lambda: None, lambda: None))
+            injection.push.assert_not_called()
+
+    def test_push_through_refuses_while_input_is_captured(self):
+        h = self.make()
+        h.start()
+        h.hooks._activation = 3
+        with mock.patch.object(capture_portal, "inject_portal", create=True) as injection:
+            self.assertFalse(h.hooks.push_through(h.models, lambda: None, lambda: None))
+            injection.push.assert_not_called()
+
+    def test_push_through_refuses_a_second_request_while_one_is_pending(self):
+        h = self.make()
+        h.start()
+        with mock.patch.object(capture_portal, "inject_portal", create=True) as injection:
+            self.assertTrue(h.hooks.push_through(h.models, lambda: None, lambda: None))
+            self.assertFalse(h.hooks.push_through(h.models, lambda: None, lambda: None))
+            injection.push.assert_called_once()
+            x, y, moves, _wanted = injection.push.call_args.args
+            self.assertEqual((x, y), (1916, 539))
+            self.assertEqual(moves, [(24, 0)] * capture_portal.PUSH_STEPS)
+
+    def test_kde_push_starts_inside_the_last_pixel_column_barrier(self):
+        with mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "KDE"}):
+            h = self.make(kde=True)
+            h.start()
+            moves = []
+            with mock.patch.object(capture_portal, "inject_portal", create=True) as injection:
+                injection.push.side_effect = lambda x, y, deltas, wanted: (
+                    moves.append(("to", (x, y))) if wanted() else None,
+                    moves.extend(("by", delta) for delta in deltas) if wanted() else None,
+                )
+                self.assertTrue(h.hooks.push_through(h.models, lambda: None, lambda: None))
+            self.assertEqual(h.hooks._selected[0], ("right", (1920, 0, 1920, 1079)))
+            self.assertEqual(moves[0], ("to", (1916, 539)))
 
     def test_a_push_crosses_input_goes_away_and_comes_home_where_the_sender_lands_it(self):
         h = self.make()

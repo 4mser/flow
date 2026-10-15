@@ -54,7 +54,7 @@ class IdleRefreshTests(unittest.TestCase):
                                windows_input=mock.Mock(), gesture_overlay=mock.Mock(),
                                measure_notch=mock.Mock(), set_menu_bar_symbol=mock.Mock(),
                                toggle_item=app._tray_item('toggle'), pause_item=app._tray_item('pause'),
-                               _machine_items=mock.Mock(), _direction_items=mock.Mock(),
+                               _machine_items=mock.Mock(), _profile_items=mock.Mock(), _direction_items=mock.Mock(),
                                _refresh_tray_state=mock.Mock())
         with mock.patch.object(self.window.window, 'isVisible', return_value=False), \
                 mock.patch.object(self.window, 'refresh') as refresh, \

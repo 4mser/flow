@@ -159,18 +159,28 @@ if [ "$RELEASE" -eq 1 ]; then TIMESTAMP="--timestamp"; else TIMESTAMP="--timesta
 # whose signature seals the lot. --identifier pins the bundle id, which must never change - the
 # privacy grants are keyed to it.
 sign_app() {
-    local identity="$1" binary
-    find "$APP/Contents" -type f ! -path "$APP/Contents/MacOS/Beamer" -print0 \
+    local identity="$1" app="${2:-$APP}" bundle_id="${3:-uk.co.kalkman.beamer}" binary
+    local entitlements="$SCRIPT_DIR/entitlements.plist"
+    # Library validation admits only code with the process's own Team ID, and ad-hoc code has none,
+    # so an ad-hoc python under the hardened runtime cannot load its own Python.framework. A local
+    # ad-hoc build turns it off; a Developer ID build, and so every release, keeps it on.
+    if [ "$identity" = - ]; then
+        entitlements="$STAGING_DIR/entitlements-adhoc.plist"
+        cp "$SCRIPT_DIR/entitlements.plist" "$entitlements"
+        /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.disable-library-validation bool true" "$entitlements"
+        echo "ad-hoc signature: library validation is off in this build, which has no Team ID"
+    fi
+    find "$app/Contents" -type f ! -path "$app/Contents/MacOS/Beamer" -print0 \
         | xargs -0 file | grep 'Mach-O' | grep -v '(for architecture' | cut -d: -f1 > "$STAGING_DIR/nested.txt"
     while IFS= read -r binary; do
         local entitle=()
-        [ "$binary" = "$APP/Contents/MacOS/python" ] && entitle=(--entitlements "$SCRIPT_DIR/entitlements.plist")
+        [ "$binary" = "$app/Contents/MacOS/python" ] && entitle=(--entitlements "$entitlements")
         codesign --force --sign "$identity" --options runtime $TIMESTAMP ${entitle[@]+"${entitle[@]}"} "$binary" || return 1
     done < "$STAGING_DIR/nested.txt"
     codesign --force --sign "$identity" --options runtime $TIMESTAMP \
-        "$APP/Contents/Frameworks/Python.framework/Versions/"[0-9]* || return 1
+        "$app/Contents/Frameworks/Python.framework/Versions/"[0-9]* || return 1
     codesign --force --sign "$identity" --options runtime $TIMESTAMP \
-        --entitlements "$SCRIPT_DIR/entitlements.plist" --identifier uk.co.kalkman.beamer "$APP" || return 1
+        --entitlements "$entitlements" --identifier "$bundle_id" "$app" || return 1
 }
 
 # A real identity is stable across rebuilds, so macOS keeps the Accessibility and Input Monitoring
@@ -184,11 +194,15 @@ if ! security find-identity -v -p codesigning 2>/dev/null | grep -F "$IDENTITY" 
     [ "$RELEASE" -eq 1 ] && { echo "$IDENTITY is not in the keychain" >&2; exit 1; }
     echo "$IDENTITY is not in the keychain - signing ad-hoc instead"
     TIMESTAMP="--timestamp=none"
+    SIGNED_WITH=-
     sign_app -
-elif ! sign_app "$IDENTITY" 2>"$STAGING_DIR/sign.log"; then
+elif sign_app "$IDENTITY" 2>"$STAGING_DIR/sign.log"; then
+    SIGNED_WITH="$IDENTITY"
+else
     [ "$RELEASE" -eq 1 ] && { cat "$STAGING_DIR/sign.log" >&2; exit 1; }
     echo "the login keychain would not release $IDENTITY - signing ad-hoc instead"
     TIMESTAMP="--timestamp=none"
+    SIGNED_WITH=-
     sign_app -
 fi
 codesign --verify --deep --strict --verbose=2 "$APP"
@@ -198,15 +212,55 @@ codesign -dvv "$APP" 2>&1 | grep -E '^(Identifier|Signature|Authority|Timestamp|
 # entitlement fails here rather than at a user's first launch. The probe lives with the project's
 # own tools, which the public source does not carry; a build from that source says so and goes on.
 PROBE="$PROJECT_DIR/tools/runtime_probe.py"
+
+# dyld aborts a python whose Python.framework library validation refuses before Python starts,
+# which leaves a crash report and its dialog on the desktop of whoever is at this Mac (two on
+# 14-10-2026). Validation passes when python carries disable-library-validation or both carry the
+# same Team ID, so the probe is only run when one of those holds.
+probe_loads() {
+    local python="$1/Contents/MacOS/python" framework team_python team_framework
+    framework=("$1/Contents/Frameworks/Python.framework/Versions/"[0-9]*)
+    if codesign -d --entitlements - --xml "$python" 2>/dev/null | grep -F disable-library-validation >/dev/null; then
+        return 0
+    fi
+    team_python="$(codesign -dv "$python" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+    team_framework="$(codesign -dv "${framework[0]}" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+    [ -n "$team_python" ] && [ "$team_python" != "not set" ] && [ "$team_python" = "$team_framework" ]
+}
+
+# run_probe <app> [launcher...]: the probe imports the app's modules and never makes an
+# NSApplication, so nothing registers with the window server.
+run_probe() {
+    local app="$1"
+    shift
+    if ! probe_loads "$app"; then
+        echo "The runtime probe was not run: library validation would refuse the Python.framework in $app" >&2
+        return 1
+    fi
+    env -i HOME="$HOME" PATH=/usr/bin:/bin PYTHONHOME="$app/Contents/Resources" \
+        "$@" "$app/Contents/MacOS/python" "$PROBE"
+}
+
 if [ ! -f "$PROBE" ]; then
     echo "No runtime probe in this source tree: the hardened-runtime probe was not run" >&2
 else
-    env -i HOME="$HOME" PATH=/usr/bin:/bin PYTHONHOME="$APP/Contents/Resources" \
-        "$APP/Contents/MacOS/python" "$PROBE"
-    # The same probe as an Intel Mac would run it, where Rosetta is here to run it.
+    run_probe "$APP"
+    # The same probe as an Intel Mac would run it, where Rosetta is here to run it. macOS records a
+    # bundle run under Rosetta as an Intel app, and on macOS 27 that put "App Update Required ...
+    # will not open in macOS 28" on this Mac's own Beamer, so the x86_64 run is a throwaway copy
+    # under its own identifier, signed as the app was.
     if /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
-        env -i HOME="$HOME" PATH=/usr/bin:/bin PYTHONHOME="$APP/Contents/Resources" \
-            /usr/bin/arch -x86_64 "$APP/Contents/MacOS/python" "$PROBE"
+        PROBE_APP="$STAGING_DIR/Beamer Rosetta Probe.app"
+        PROBE_ID=uk.co.kalkman.beamer.rosetta-probe
+        ditto "$APP" "$PROBE_APP"
+        /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $PROBE_ID" "$PROBE_APP/Contents/Info.plist"
+        TIMESTAMP="--timestamp=none" sign_app "$SIGNED_WITH" "$PROBE_APP" "$PROBE_ID"
+        PROBE_FAILED=0
+        run_probe "$PROBE_APP" /usr/bin/arch -x86_64 || PROBE_FAILED=1
+        /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+            -u "$PROBE_APP" 2>/dev/null || true
+        rm -rf "$PROBE_APP"
+        [ "$PROBE_FAILED" -eq 0 ] || exit 1
     else
         echo "Rosetta is not installed here: the x86_64 half of the bundle was not run" >&2
     fi

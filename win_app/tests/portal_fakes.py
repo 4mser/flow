@@ -23,7 +23,7 @@ class FakeBus:
     Response, or a callable taking the body and returning one; `returns[method]` is the body a
     plain call returns. Every call is recorded in `calls` as (interface, method, body)."""
 
-    REQUESTS = {"CreateSession", "SelectDevices", "Start", "GetZones", "SetPointerBarriers"}
+    REQUESTS = {"CreateSession", "SelectDevices", "Start", "GetZones", "SetPointerBarriers", "BindShortcuts"}
 
     def __init__(self, versions=None) -> None:
         self.unique_name = ":1.42"
@@ -32,6 +32,7 @@ class FakeBus:
         self.answers = {}
         self.returns = {}
         self.calls = []
+        self.signatures = []
         self.closed = False
         self.aborted = False
         self._signals = []
@@ -43,6 +44,7 @@ class FakeBus:
             raise portal.PortalError("the connection is closed")
         with self._lock:
             self.calls.append((interface, method, body))
+            self.signatures.append((method, signature))
         if method in self.failures:
             raise self.failures[method]
         if interface == portal.PROPERTIES and method == "Get":

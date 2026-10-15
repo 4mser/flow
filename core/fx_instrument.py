@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from types import SimpleNamespace
+from core.i18n import N_
 
 from .effects import Effect, clamp, lerp
 
@@ -708,37 +709,37 @@ def rangefinder_dial(ctx, s, C, c, locked, flash, alpha):
 
 EFFECTS = [
     Effect(
-        "rule", "Rule", "quiet",
-        "A fine ruler rises along the edge round the pointer and lights outward one division at a "
+        "rule", N_("Rule"), "quiet",
+        N_("A fine ruler rises along the edge round the pointer and lights outward one division at a "
         "time as the push builds, the three quarter detents marked long. At breakthrough it closes "
         "on the pointer in four clicks; on the other screen a short register mark sits where you "
-        "came in and a four-arm cross steps in three clicks onto the landing point.",
+        "came in and a four-arm cross steps in three clicks onto the landing point."),
         rule_depart, rule_arrive, 0.45, 0.6,
     ),
     Effect(
-        "gauge", "Gauge", "medium",
-        "A half dial seated on the edge at the pointer, a quarter dial in the corner and a "
+        "gauge", N_("Gauge"), "medium",
+        N_("A half dial seated on the edge at the pointer, a quarter dial in the corner and a "
         "graduated collar round the notch, whose needle clicks round sixteen detents as the push "
         "builds. At breakthrough an iris shuts over the dial in four steps; on the other screen a "
         "graduated ring contracts onto the landing point, turning one graduation per click, and "
-        "flashes as it locks.",
+        "flashes as it locks."),
         gauge_depart, gauge_arrive, 0.6, 0.7,
     ),
     Effect(
-        "rangefinder", "Rangefinder", "showpiece",
-        "A long scale runs along the edge and a pair of caliper jaws closes on the pointer in "
+        "rangefinder", N_("Rangefinder"), "showpiece",
+        N_("A long scale runs along the edge and a pair of caliper jaws closes on the pointer in "
         "detents, lighting the divisions it passes, while three tally lamps light at each quarter. "
         "At breakthrough shutter blades slide in from both ends and a bright slit at the pointer "
         "shuts; on the far screen the jaws open outward from the entry point as a graduated "
-        "reticle with corner brackets steps in, turns and locks onto the landing point.",
+        "reticle with corner brackets steps in, turns and locks onto the landing point."),
         rangefinder_depart, rangefinder_arrive, 0.8, 0.8,
     ),
 ]
 
 PACKS = {
-    "ruby": ("Ruby", ["#ef4471", "#d32859", "#ff9ab5"]),
-    "cobalt": ("Cobalt", ["#478df5", "#2a6dd3", "#a4caff"]),
-    "phosphor": ("Phosphor", ["#3dff7f", "#1f9e52", "#caffdc"]),
-    "sodium": ("Sodium", ["#ffa51f", "#c46a12", "#ffe0a3"]),
-    "contrast": ("Contrast", ["#f0e442", "#56b4e9", "#ffffff"]),
+    "ruby": (N_("Ruby"), ["#ef4471", "#d32859", "#ff9ab5"]),
+    "cobalt": (N_("Cobalt"), ["#478df5", "#2a6dd3", "#a4caff"]),
+    "phosphor": (N_("Phosphor"), ["#3dff7f", "#1f9e52", "#caffdc"]),
+    "sodium": (N_("Sodium"), ["#ffa51f", "#c46a12", "#ffe0a3"]),
+    "contrast": (N_("Contrast"), ["#f0e442", "#56b4e9", "#ffffff"]),
 }

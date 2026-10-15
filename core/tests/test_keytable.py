@@ -65,8 +65,28 @@ class TableTests(unittest.TestCase):
             self.assertEqual(keytable.wire_name(physical, "windows", "macos", "mac_layout"), expected)
 
     def test_mac_layout_leaves_non_modifier_keys_unchanged(self):
-        for name in ("shift", "shift_r", "caps_lock", "a", "enter", "f13"):
+        for name in ("shift", "shift_r", "caps_lock", "hangul", "hanja", "a", "enter", "f13"):
             self.assertEqual(keytable.wire_name(name, "windows", "macos", "mac_layout"), name)
+
+    def test_input_method_keys_keep_their_names_in_every_direction_and_style(self):
+        for name in ("hangul", "hanja"):
+            for own in ("windows", "linux", "macos"):
+                for peer in ("windows", "linux", "macos"):
+                    for style in keytable.STYLES:
+                        self.assertEqual(keytable.wire_name(name, own, peer, style), name)
+        self.assertEqual({"hangul", "hanja"} & keytable.SPEC_NAMES, {"hangul", "hanja"})
+        self.assertFalse({"hangul", "hanja"} & set(MODS))
+        self.assertEqual(keytable.EVDEV_NAMES[122], "hangul")
+        self.assertEqual(keytable.EVDEV_NAMES[123], "hanja")
+
+    def test_input_method_taps_are_down_then_up_only_on_press(self):
+        for name in ("hangul", "hanja"):
+            with self.subTest(name=name):
+                self.assertEqual(keytable.tap_messages(name, True), [
+                    {"type": "keydown", "data": {"key": name}},
+                    {"type": "keyup", "data": {"key": name}},
+                ])
+                self.assertEqual(keytable.tap_messages(name, False), [])
 
     def test_an_unknown_platform_is_a_pc_on_both_sides(self):
         self.assertEqual(keytable.wire_name("cmd", "haiku", "macos", "semantic"), "ctrl")

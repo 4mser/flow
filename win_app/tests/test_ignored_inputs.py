@@ -130,8 +130,9 @@ class CaptureTests(unittest.TestCase):
 
     def test_every_trigger_key_has_its_virtual_key(self):
         self.assertEqual(set(app_config.TRIGGER_VKS), set(app_config.TRIGGER_KEYS))
+        # Against the capture module app_config reads, the one this platform's hook names keys with.
         for name, vk in app_config.TRIGGER_VKS.items():
-            self.assertEqual(capture_win.VK_TO_NAME[vk], name)
+            self.assertEqual(app_config.capture_win.VK_TO_NAME[vk], name)
 
     def test_a_windows_modifier_is_recorded_as_the_side_the_hook_reports(self):
         self.assertEqual(capture_win.hook_vk(0x11, 0x1D), 0xA2)

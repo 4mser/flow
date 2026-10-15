@@ -11,9 +11,10 @@ from dataclasses import dataclass
 
 from core import protocol
 from core import peerlist
+from core.i18n import N_, tr
 from link_state import AMBER, FAULT, INK, SIGNAL, LinkState
 
-PLATFORMS = {"windows": "Windows", "macos": "Mac", "linux": "Linux", "ios": "iPhone", "android": "Android"}
+PLATFORMS = {"windows": N_("Windows"), "macos": N_("Mac"), "linux": N_("Linux"), "ios": N_("iPhone"), "android": N_("Android")}
 TOKEN_KINDS = ("unauthenticated", "wrong_id", "different", "unreadable", "forgotten")
 VERSION_KINDS = ("older", "newer", "not_beamer")
 
@@ -33,7 +34,7 @@ class Row:
 
 
 def platform_name(platform: str) -> str:
-    return PLATFORMS.get(platform, "Other")
+    return tr(PLATFORMS.get(platform, N_("Other")))
 
 
 def row(entry: dict, label: str, live: bool, kind: str, status: str, here: bool, driving: bool, inbound: bool,
@@ -42,7 +43,7 @@ def row(entry: dict, label: str, live: bool, kind: str, status: str, here: bool,
     the machine at all; `inbound` is whether the machine has a link up to this Mac; `here` and
     `driving` are where input is."""
     host, port = entry.get("host"), entry.get("port")
-    address = f"{host} · port {port}" if host and port else "No address"
+    address = tr("{address} · port {port}").format(address=host, port=port) if host and port else tr("No address")
     return Row(
         entry["token"], label, platform_name(entry.get("platform", "")), address,
         _state(entry, label, live, kind, status, here, driving, inbound, has_link), entry.get("in_use", True) is True,
@@ -54,39 +55,39 @@ def row(entry: dict, label: str, live: bool, kind: str, status: str, here: bool,
 def _state(entry, label, live, kind, status, here, driving, inbound, has_link) -> LinkState:
     reason = peerlist.dormant_reason(entry)
     if reason:
-        return LinkState("dormant", AMBER, "Needs re-pair", "Needs re-pair", reason, AMBER)
+        return LinkState("dormant", AMBER, N_("Needs re-pair"), N_("Needs re-pair"), reason, AMBER)
     if entry.get("in_use", True) is not True:
-        return LinkState("not_in_use", AMBER, "NOT IN USE", "NOT IN USE", f"{label} is not in use on this Mac.", AMBER)
+        return LinkState("not_in_use", AMBER, N_("NOT IN USE"), N_("NOT IN USE"), tr("{name} is not in use on this Mac.").format(name=label), AMBER)
     if not protocol.linkable(entry):
         return LinkState(
-            "pair_again", AMBER, "Pair again", "Pair again",
-            f"{label} was paired on Beamer 1.4. Pair the two again to link them on 1.5.0.", AMBER,
+            "pair_again", AMBER, N_("Pair again"), N_("Pair again"),
+            tr("{name} was paired on Beamer 1.4. Pair the two again to link them on 1.5.0.").format(name=label), AMBER,
         )
     if driving:
         return LinkState(
-            "driving", SIGNAL, "Driving this Mac", "Live",
-            f"{label}'s keyboard and pointer are on this Mac. Push the pointer back through the edge it arrived by to send them home.",
+            "driving", SIGNAL, N_("Driving this Mac"), N_("Live"),
+            tr("{name}'s keyboard and pointer are on this Mac. Push the pointer back through the edge it arrived by to send them home.").format(name=label),
             SIGNAL,
         )
     if here:
         return LinkState(
-            "here", SIGNAL, "Input here", "Live",
-            f"This Mac's keyboard and pointer are on {label}. Do the same again to bring them home.", SIGNAL,
+            "here", SIGNAL, N_("Input here"), N_("Live"),
+            tr("This Mac's keyboard and pointer are on {name}. Do the same again to bring them home.").format(name=label), SIGNAL,
         )
     if live or inbound:
-        return LinkState("linked", INK, "Linked", "Linked", f"Connected to {label}.", SIGNAL)
+        return LinkState("linked", INK, N_("Linked"), N_("Linked"), tr("Connected to {name}.").format(name=label), SIGNAL)
     if not has_link:
-        return LinkState("waiting", AMBER, "Waiting", "Waiting", f"Waiting for {label} to connect.", AMBER)
+        return LinkState("waiting", AMBER, N_("Waiting"), N_("Waiting"), tr("Waiting for {name} to connect.").format(name=label), AMBER)
     if kind in TOKEN_KINDS:
-        return LinkState("token", FAULT, "Refused", "Refused", status, FAULT)
+        return LinkState("token", FAULT, N_("Refused"), N_("Refused"), status, FAULT)
     if kind in VERSION_KINDS or (kind == "closed" and not entry.get("linked")):
-        return LinkState("version", FAULT, "Version", "Refused", status, FAULT)
+        return LinkState("version", FAULT, N_("Version"), N_("Refused"), status, FAULT)
     if kind in ("unreachable", "timeout"):
-        return LinkState("unreachable", FAULT, "Unreachable", "No reply", status, FAULT)
+        return LinkState("unreachable", FAULT, N_("Unreachable"), N_("No reply"), status, FAULT)
     if kind == "refused":
-        return LinkState("not_listening", FAULT, "Not listening", "No receiver", status, FAULT)
+        return LinkState("not_listening", FAULT, N_("Not listening"), N_("No receiver"), status, FAULT)
     if kind == "blocked":
-        return LinkState("blocked", FAULT, "Blocked", "Tunnel", status, FAULT)
+        return LinkState("blocked", FAULT, N_("Blocked"), N_("Tunnel"), status, FAULT)
     if kind in ("stopped", "closed", "failed") and status:
-        return LinkState("dropped", FAULT, "Dropped", "Dropped", f"{status.rstrip('.')}. Beamer keeps trying to reconnect.", FAULT)
-    return LinkState("waiting", AMBER, "Waiting", "Looking", f"Looking for {label}. It connects on its own once Beamer is open there.", AMBER, True)
+        return LinkState("dropped", FAULT, N_("Dropped"), N_("Dropped"), tr("{status}. Beamer keeps trying to reconnect.").format(status=status.rstrip(".")), FAULT)
+    return LinkState("waiting", AMBER, N_("Waiting"), N_("Looking"), tr("Looking for {name}. It connects on its own once Beamer is open there.").format(name=label), AMBER, True)

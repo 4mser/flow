@@ -16,6 +16,7 @@ import sys
 from typing import Iterable, Optional, Sequence
 
 from core import protocol
+from core.i18n import tr
 
 LOGGER = logging.getLogger(__name__)
 
@@ -182,40 +183,40 @@ def advise(status: FirewallStatus) -> Advice:
     port = status.port
     rule_profiles = ("Private",) + (("Domain",) if "DomainAuthenticated" in status.lan_profiles else ())
     if status.error:
-        return Advice(f"Beamer could not read the Windows Firewall: {status.error}", "Check again", "check")
+        return Advice(tr("Beamer could not read the Windows Firewall: {error}").format(error=status.error), tr("Check again"), "check")
     if status.blocked:
         advice = Advice(
-            f"Windows Firewall is blocking Beamer on port {port}. This happens when Cancel was pressed on "
+            tr("Windows Firewall is blocking Beamer on port {port}. This happens when Cancel was pressed on "
             "Windows' own \"allow this app\" prompt, and a block rule beats any allow rule, so reinstalling "
-            "does not clear it. Fixing it removes the block and adds the right rule for private networks.",
-            "Fix the firewall",
+            "does not clear it. Fixing it removes the block and adds the right rule for private networks.").format(port=port),
+            tr("Fix the firewall"),
             "repair",
             rule_profiles,
         )
     elif not status.allowed:
         advice = Advice(
-            f"Windows Firewall has no rule letting your other machines reach Beamer on port {port}, so they will "
+            tr("Windows Firewall has no rule letting your other machines reach Beamer on port {port}, so they will "
             "say this PC is unreachable. This happens when the installer was run without administrator rights. "
-            "Fixing it adds the rule for private networks.",
-            "Fix the firewall",
+            "Fixing it adds the rule for private networks.").format(port=port),
+            tr("Fix the firewall"),
             "repair",
             rule_profiles,
         )
     elif not status.covered and status.public_interfaces:
         names = ", ".join(alias for _, alias in status.public_interfaces if alias) or "this network"
         advice = Advice(
-            f"Windows treats {names} as a public network, so Beamer's firewall rule does not apply on it and "
+            tr("Windows treats {names} as a public network, so Beamer's firewall rule does not apply on it and "
             "your other machines cannot get in. Trusting it marks the network as private, which lets them in without "
-            "opening the port on every other network this PC joins.",
-            "Trust this network",
+            "opening the port on every other network this PC joins.").format(names=names),
+            tr("Trust this network"),
             "trust",
         )
     elif not status.covered:
         names = ", ".join(status.lan_profiles)
         advice = Advice(
-            f"Beamer's firewall rule does not apply on this network (Windows calls it {names}). "
-            "Fixing it rewrites the rule to cover it.",
-            "Fix the firewall",
+            tr("Beamer's firewall rule does not apply on this network (Windows calls it {names}). "
+            "Fixing it rewrites the rule to cover it.").format(names=names),
+            tr("Fix the firewall"),
             "repair",
             rule_profiles,
         )
@@ -233,26 +234,27 @@ def advise(status: FirewallStatus) -> Advice:
                 "a machine that finds this PC cannot finish pairing with it",
             ))
         advice = Advice(
-            f"Windows Firewall lets your other machines reach Beamer on port {port}, but there is no rule for "
-            f"{' or for '.join(rule for rule, _ in missing)}, so {' and '.join(effect for _, effect in missing)}. "
-            "Installs made before these rules existed are missing them. Fixing it adds what is missing "
-            "and leaves the working rules alone.",
-            "Fix the firewall",
+            tr("Windows Firewall lets your other machines reach Beamer on port {port}, but there is no rule for "
+            "{rules}, so {effects}. Installs made before these rules existed are missing them. Fixing it adds "
+            "what is missing and leaves the working rules alone.").format(
+                port=port, rules=" or for ".join(rule for rule, _ in missing),
+                effects=" and ".join(effect for _, effect in missing)),
+            tr("Fix the firewall"),
             "repair",
             rule_profiles,
         )
     else:
-        where = "this private network" if "Private" in status.lan_profiles else "this network"
+        where = tr("this private network") if "Private" in status.lan_profiles else tr("this network")
         return Advice(
-            f"Windows Firewall lets your other machines reach Beamer on port {port} on {where}, and lets a new machine "
-            "discover this PC.",
-            "Check again",
+            tr("Windows Firewall lets your other machines reach Beamer on port {port} on {where}, and lets a new machine "
+            "discover this PC.").format(port=port, where=where),
+            tr("Check again"),
             "check",
         )
     if not status.elevated:
         return Advice(
-            advice.sentence + " Beamer is not running as administrator, so it cannot make this change itself: "
-            "quit Beamer and open it again from the Start menu.",
+            tr("{sentence} Beamer is not running as administrator, so it cannot make this change itself: "
+               "quit Beamer and open it again from the Start menu.").format(sentence=advice.sentence),
             advice.button,
             None,
             advice.rule_profiles,

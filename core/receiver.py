@@ -18,6 +18,7 @@ from typing import Callable, Optional, Tuple
 from . import return_edge as crossing
 from . import peerlist
 from . import protocol
+from .i18n import tr, trc
 from .response_time import ResponseTime
 
 
@@ -601,7 +602,7 @@ class LinkResponder:
             thread = threading.Thread(target=self._server_thread, args=(port, stop_event), name="Beamer-v6-server", daemon=True)
             self._stop_event, self._thread, self._port = stop_event, thread, port
             self._requested_running = True
-        self._set_status(ServerState.WAITING, f"Starting on port {port}")
+        self._set_status(ServerState.WAITING, tr("Starting on port {port}").format(port=port))
         thread.start()
 
     def stop(self) -> None:
@@ -624,7 +625,7 @@ class LinkResponder:
         with self._lock:
             if self._thread is thread:
                 self._thread = self._stop_event = self._listener = None
-        self._set_status(ServerState.STOPPED, "Listening stopped")
+        self._set_status(ServerState.STOPPED, tr("Listening stopped"))
 
     def _server_thread(self, port: int, stop_event: threading.Event) -> None:
         try:
@@ -667,7 +668,7 @@ class LinkResponder:
         except Exception as exc:
             if not stop_event.is_set():
                 LOGGER.exception("The version 6 listener failed")
-                self._set_status(ServerState.ERROR, f"Listener failed: {exc}")
+                self._set_status(ServerState.ERROR, tr("Listener failed: {error}").format(error=exc))
         finally:
             with self._lock:
                 listener = self._listener
@@ -690,7 +691,7 @@ class LinkResponder:
                 if not reported:
                     reported = True
                     LOGGER.error("Cannot listen on port %s: %s", port, exc)
-                    self._set_status(ServerState.ERROR, f"Another program is using port {port} — change the port on the Connection page")
+                    self._set_status(ServerState.ERROR, tr("Another program is using port {port} — change the port on the Connection page").format(port=port))
                 stop_event.wait(BIND_RETRY_SECONDS)
         return None
 
@@ -796,9 +797,9 @@ class LinkResponder:
         self._answer(connection, host, protocol.legacy_version_reply() if version is None else protocol.short_reply())
         who = peerlist.label_for(self._settings_now()[0], host=host) or host
         if version is not None and version > protocol.LINK_VERSION:
-            detail = f"{who} runs a newer Beamer: update Beamer on this machine"
+            detail = tr("{name} runs a newer Beamer: update Beamer on this machine").format(name=who)
         else:
-            detail = f"Update Beamer on {who}: it is older than this one"
+            detail = tr("Update Beamer on {name}: it is older than this one").format(name=who)
         LOGGER.warning("%s speaks wire version %r; answered and closed", host, version)
         with self._lock:
             linked = bool(self._links)
@@ -1036,7 +1037,7 @@ class LinkResponder:
             return
         link.input_error_at = now
         who = peerlist.label_for(self._settings_now()[0], peer_id=protocol.id_text(link.peer_id)) or link.name
-        self._set_status(ServerState.CONNECTED, f"Input error from {who}; see log")
+        self._set_status(ServerState.CONNECTED, tr("Input error from {name}; see log").format(name=who))
 
     def _inject_timed_locked(self, link: _Link, read: dict) -> None:
         began = time.monotonic()
@@ -1196,7 +1197,12 @@ class LinkResponder:
                                       and zone.get("off") is not True
                                       and zone.get("display") == display and zone.get("side") == side
                                       for zone in zones)
-                if has_way and not arrival_covered:
+                # A driver left out here has no zone, yet its input must still have a way home: with
+                # none, every push went on to another machine and back (14-10-2026). A driver whose
+                # edge is merely off keeps no way back, as that is the user's choice for this side.
+                left_out = any(isinstance(entry, dict) and entry.get("id") == peer and entry.get("left_out") is True
+                               for entry in peers or ())
+                if (has_way or left_out) and not arrival_covered:
                     active_zones.append({"peer": peer, "kind": "edge", "display": display,
                                          "side": side, "target_side": crossing.OPPOSITE[side]})
             previous = self._armed
@@ -1616,7 +1622,27 @@ class LinkResponder:
                 display_map = getattr(desktop, "display_map", lambda: {})()
                 x, y = crossing.arrival_position(desktop.monitors(), focus["edge"], focus["offset"],
                                                  focus.get("display"), focus.get("side"), display_map)
-                desktop.set_cursor_position(x, y)
+                def placed() -> None:
+                    # Windows can defer the warp until GameInput releases the foreground.
+                    with self._lock:
+                        if self._visit == visit and self._owner is link:
+                            for _peer, model in self._armed:
+                                model.start_grace()
+
+                def place_if_current(place):
+                    with self._lock:
+                        if self._visit == visit and self._owner is link:
+                            return place()
+                    return None
+
+                place_with_callback = getattr(desktop, "set_cursor_position_with_callback", None)
+                if place_with_callback is None:
+                    def place():
+                        desktop.set_cursor_position(x, y)
+                        placed()
+                    place_if_current(place)
+                else:
+                    place_with_callback(x, y, placed, place_if_current=place_if_current)
                 LOGGER.info("%s's pointer arrived at this machine's %s edge", link.name,
                             focus.get("side") if focus.get("display") else focus["edge"])
                 self._callback("arrival", focus["edge"], x, y)
@@ -1645,7 +1671,7 @@ class LinkResponder:
             return
         self._unlocking.set()
         LOGGER.info("%s's input arrived at a locked machine; asking the provider to unlock", link.name)
-        self._set_status(ServerState.CONNECTED, "Unlocking Windows…")
+        self._set_status(ServerState.CONNECTED, tr("Unlocking Windows…"))
         threading.Thread(target=self._unlock_worker, args=(unlock, link), name="Beamer-v6-unlock", daemon=True).start()
 
     def _unlock_worker(self, unlock, link: _Link) -> None:
@@ -1661,7 +1687,7 @@ class LinkResponder:
         if unlocked or self._owner is not link:
             self._report()
         else:
-            self._set_status(ServerState.CONNECTED, "Windows is locked — unlock it at the PC")
+            self._set_status(ServerState.CONNECTED, tr("Windows is locked — unlock it at the PC"))
 
     def _home_if_locked(self, link: _Link) -> None:
         """An owner left driving a machine on its lock screen is sent home,
@@ -1749,9 +1775,9 @@ class LinkResponder:
             peers = self._settings_now()[0]
             names = sorted(peerlist.label_for(peers, peer_id=protocol.id_text(link.peer_id)) or link.name for link in links)
         if names:
-            self._set_status(ServerState.CONNECTED, "Connected to " + ", ".join(names))
+            self._set_status(ServerState.CONNECTED, tr("Connected to {names}").format(names=trc("list", ", ").join(names)))
         else:
-            self._set_status(ServerState.WAITING, f"Waiting on port {port}")
+            self._set_status(ServerState.WAITING, tr("Waiting on port {port}").format(port=port))
 
     def _set_status(self, state: ServerState, detail: str) -> None:
         try:

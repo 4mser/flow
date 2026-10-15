@@ -19,6 +19,7 @@ import objc
 import media_keys
 import motion
 import theme
+from core.i18n import N_, tr
 from core.locale import americanise
 from ignored_titles import is_modifier_release, recorded_entry
 from key_codes import KEY_NAME_TO_CODE, PRINTABLE_KEY_FALLBACKS, SPECIAL_KEY_NAMES, key_cap, key_title
@@ -61,8 +62,11 @@ class SideBySide:
             constraint.setActive_(True)
         self.stacked_widths = [child.widthAnchor().constraintEqualToAnchor_(self.view.widthAnchor())
                                for child in (first, second)]
-        for constraint in self.stacked_widths:
-            constraint.setPriority_(1000)
+        # A capped button cannot fill a wider row; its cap must not shrink the whole module.
+        self.stacked_priorities = [489 if _width_cap(child) is not None else 1000
+                                   for child in (first, second)]
+        for constraint, priority in zip(self.stacked_widths, self.stacked_priorities):
+            constraint.setPriority_(priority)
         AppKit.NSLayoutConstraint.activateConstraints_(self.stacked_widths)
         self.view.setIdentifier_("side-by-side")
         self._beside = False
@@ -88,8 +92,8 @@ class SideBySide:
         if beside == self._beside:
             return
         self._beside = beside
-        for constraint in self.stacked_widths:
-            constraint.setPriority_(1 if beside else 1000)
+        for constraint, priority in zip(self.stacked_widths, self.stacked_priorities):
+            constraint.setPriority_(1 if beside else priority)
         self.view.setOrientation_(
             AppKit.NSUserInterfaceLayoutOrientationHorizontal if beside
             else AppKit.NSUserInterfaceLayoutOrientationVertical
@@ -1289,7 +1293,7 @@ class MenuChoice:
         self.popup = _autolayout(AppKit.NSPopUpButton.alloc().initWithFrame_pullsDown_(((0, 0), (0, 0)), False))
         self.popup.setFont_(theme.font(theme.TYPE['body']))
         self.popup.setAutoenablesItems_(False)
-        self.popup.setAccessibilityLabel_('Match design with')
+        self.popup.setAccessibilityLabel_(tr('Match design with'))
         self.view.addSubview_(self.popup)
         # Native popup frames extend beyond their alignment rect by seven points.
         pin(self.popup, self.view, (0, 4, 0, 4))
@@ -1352,7 +1356,7 @@ class Selector:
         row = stack(vertical=False, spacing=0)
         row.setDistribution_(AppKit.NSStackViewDistributionFillEqually)
         self.halves = {}
-        for side, title in (("mac", "Mac"), ("windows", "Windows")):
+        for side, title in (("mac", tr("Mac")), ("windows", tr("Windows"))):
             half = box()
             words = Label(title, theme.TYPE["eyebrow"], 700, "ink_3", tracking=theme.TRACKING["selector"], upper=True,
                           align=AppKit.NSTextAlignmentCenter)
@@ -1611,9 +1615,9 @@ class Ruler:
             self.on_change(value)
 
 
-# Loaded if a config names them, never offered by the recorder, as on Windows: typing keys a
-# double-tap or a hold would take from every app.
-UNRECORDABLE_TRIGGERS = {"enter", "tab", "space", "backspace", "esc"}
+# Loaded if a config names them, never offered by the recorder: typing keys and input-method
+# toggles are unsuitable as a double-tap or hold trigger.
+UNRECORDABLE_TRIGGERS = {"enter", "tab", "space", "backspace", "esc", "hangul", "hanja"}
 
 
 class KeyRecorder:
@@ -1622,23 +1626,28 @@ class KeyRecorder:
     Recorded through a local event monitor rather than the event tap, so it works before either
     Mac permission is granted."""
 
-    RECORDING_TITLE = "Press a key…"
-    HINT = "Click, then press the key"
-    RECORDING_HINT = "Click again to cancel"
+    RECORDING_TITLE = N_("Press a key…")
+    HINT = N_("Click, then press the key")
+    RECORDING_HINT = N_("Click again to cancel")
 
-    def __init__(self, value, on_change=None):
+    def __init__(self, value, on_change=None, *, hint=HINT, recording_title=RECORDING_TITLE,
+                 recording_hint=RECORDING_HINT):
         self.value = value
         self.on_change = on_change
+        self.hint_text = hint
+        self.recording_title = recording_title
+        self.recording_hint = recording_hint
         self.monitor = None
         # The keycap's thicker bottom edge is the outer box showing through a 3pt gap.
         self.view = pressable(self._clicked, "edge", radius=theme.RADIUS["keycap"])
-        self.view.setAccessibilityLabel_(f"Shortcut key, {key_title(value)}")
+        # Translators: {key} is the key combination recorded by the person.
+        self.view.setAccessibilityLabel_(tr("Shortcut key, {key}").format(key=key_title(value)))
         face = box("ground", radius=theme.RADIUS["keycap"] - 1)
         self.view.addSubview_(face)
         pin(face, self.view, (1, 1, 3, 1))
         self.key = Label(key_title(value), theme.TYPE["keycap"], mono=True, tracking=-0.02, wrap=True)
         squeeze(self.key.view)
-        self.hint = Label(self.HINT, theme.TYPE["small"], ink="ink_3", align=AppKit.NSTextAlignmentRight, wrap=True)
+        self.hint = Label(self.hint_text, theme.TYPE["small"], ink="ink_3", align=AppKit.NSTextAlignmentRight, wrap=True)
         line = stack(spacing=8)
         line.addArrangedSubview_(self.key.view)
         line.addArrangedSubview_(self.hint.view)
@@ -1649,14 +1658,15 @@ class KeyRecorder:
     def set_value(self, value):
         self.value = value
         self.key.set(key_title(value))
-        self.view.setAccessibilityLabel_(f"Shortcut key, {key_title(value)}")
+        # Translators: {key} is the key combination recorded by the person.
+        self.view.setAccessibilityLabel_(tr("Shortcut key, {key}").format(key=key_title(value)))
 
     def _clicked(self):
         if self.monitor is not None:
             self._stop()
             return
-        self.key.set(self.RECORDING_TITLE, ink="signal")
-        self.hint.set(self.RECORDING_HINT)
+        self.key.set(self.recording_title, ink="signal")
+        self.hint.set(self.recording_hint)
         paint(self.view, "signal")
         mask = AppKit.NSEventMaskKeyDown | AppKit.NSEventMaskFlagsChanged
         self.monitor = AppKit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(mask, self._recorded)
@@ -1680,26 +1690,31 @@ class KeyRecorder:
             AppKit.NSEvent.removeMonitor_(self.monitor)
             self.monitor = None
         self.key.set(key_title(self.value), ink="ink")
-        self.hint.set(self.HINT)
+        self.hint.set(self.hint_text)
         paint(self.view, "edge")
 
 
 class JumpKeyRecorder:
     """Records a modifier chord for a peer-specific local jump key."""
 
-    HINT = "Click, then press a key combination"
+    HINT = N_("Click, then press a key combination")
 
-    def __init__(self, value="", on_change=None, on_arm=None, compact=False):
+    def __init__(self, value="", on_change=None, on_arm=None, compact=False, *, hint=HINT,
+                 recording_title=N_("Press a key combination…"), recording_hint=N_("Click again to cancel")):
         self.value = value or ""
         self.on_change = on_change
         self.on_arm = on_arm
+        self.hint_text = hint
+        self.recording_title = recording_title
+        self.recording_hint = recording_hint
         self.monitor = None
         self.compact = compact
         self.view = pressable(self._clicked, "edge", radius=theme.RADIUS["keycap"])
-        self.view.setAccessibilityLabel_("Jump straight here key, " + self._title())
+        # Translators: {key} is the key combination recorded by the person.
+        self.view.setAccessibilityLabel_(tr("Jump straight here key, {key}").format(key=self._title()))
         if compact:
             self.key = Label("", theme.TYPE["small"], ink="ink_2", wrap=True)
-            self.hint = Label(self.HINT, theme.TYPE["small"], ink="ink_3", wrap=True)
+            self.hint = Label(self.hint_text, theme.TYPE["small"], ink="ink_3", wrap=True)
             for label in (self.key, self.hint):
                 label.view.setTranslatesAutoresizingMaskIntoConstraints_(True)
                 self.view.addSubview_(label.view)
@@ -1710,7 +1725,7 @@ class JumpKeyRecorder:
         pin(face, self.view, (1, 1, 3, 1))
         self.key = Label(self._title(), theme.TYPE["body"], ink="ink_3", wrap=True)
         squeeze(self.key.view)
-        self.hint = Label(self.HINT, theme.TYPE["small"], ink="ink_3", align=AppKit.NSTextAlignmentLeft, wrap=True)
+        self.hint = Label(self.hint_text, theme.TYPE["small"], ink="ink_3", align=AppKit.NSTextAlignmentLeft, wrap=True)
         self.line = stack(spacing=5)
         self.line.addArrangedSubview_(self.key.view)
         self.line.addArrangedSubview_(self.hint.view)
@@ -1724,7 +1739,7 @@ class JumpKeyRecorder:
             symbols = {"ctrl": "⌃", "alt": "⌥", "shift": "⇧", "cmd": "⌘"}
             parts = self.value.split("+")
             title = "".join(symbols.get(part, part) for part in parts[:-1]) + " " + key_title(parts[-1])
-            self.key.set(title.strip() if has_value else "Set a key", size=theme.TYPE["small"] if has_value else 12.5,
+            self.key.set(title.strip() if has_value else tr("Set a key"), size=theme.TYPE["small"] if has_value else 12.5,
                          ink=ink or ("ink" if has_value else "ink_2"), mono=has_value)
             self.hint.view.setHidden_(True)
             paint(self.view, "well" if has_value else None, "edge" if has_value else None, radius=4)
@@ -1738,21 +1753,22 @@ class JumpKeyRecorder:
 
     def _title(self):
         if not self.value:
-            return "Choose a key combination"
+            return tr("Choose a key combination")
         names = {"ctrl": "Control", "alt": "Option", "shift": "Shift", "cmd": "Command"}
         return " ".join(names.get(part, key_title(part)) for part in self.value.split("+"))
 
     def set_value(self, value):
         self.value = value or ""
         self._show_title()
-        self.view.setAccessibilityLabel_("Jump straight here key, " + self._title())
+        # Translators: {key} is the key combination recorded for a machine.
+        self.view.setAccessibilityLabel_(tr("Jump straight here key, {key}").format(key=self._title()))
 
     def _clicked(self):
         if self.monitor is not None:
             self._stop()
             return
-        self.key.set("Press a key combination…", size=theme.TYPE["body"], ink="signal", mono=False)
-        self.hint.set("Click again to cancel")
+        self.key.set(self.recording_title, size=theme.TYPE["body"], ink="signal", mono=False)
+        self.hint.set(self.recording_hint)
         paint(self.view, "signal")
         if self.compact:
             self.hint.view.setHidden_(False)
@@ -1797,7 +1813,7 @@ class JumpKeyRecorder:
             AppKit.NSEvent.removeMonitor_(self.monitor)
             self.monitor = None
         self._show_title()
-        self.hint.set(self.HINT)
+        self.hint.set(self.hint_text)
         if not self.compact:
             paint(self.view, "edge")
         if was_armed and self.on_arm is not None:
@@ -1829,25 +1845,30 @@ class IgnoredRecorder:
     that refusal. Recorded through a local event monitor, same as KeyRecorder, so it works before
     either Mac permission is granted."""
 
-    TITLE = "Add a key or button"
-    RECORDING_TITLE = "Press a key or button…"
-    HINT = "Click, then press it"
-    RECORDING_HINT = "Click again to cancel"
+    TITLE = N_("Add a key or button")
+    RECORDING_TITLE = N_("Press a key or button…")
+    HINT = N_("Click, then press it")
+    RECORDING_HINT = N_("Click again to cancel")
 
-    def __init__(self, trigger_code, on_recorded=None):
+    def __init__(self, trigger_code, on_recorded=None, *, title=TITLE, recording_title=RECORDING_TITLE,
+                 hint=HINT, recording_hint=RECORDING_HINT):
         self.trigger_code = trigger_code
         self.on_recorded = on_recorded
+        self.title_text = title
+        self.recording_title = recording_title
+        self.hint_text = hint
+        self.recording_hint = recording_hint
         self.monitor = None
         self.view = pressable(self._clicked, "edge", radius=theme.RADIUS["keycap"])
-        self.view.setAccessibilityLabel_("Add a key or button that stays on this Mac")
+        self.view.setAccessibilityLabel_(tr("Add a key or button that stays on this Mac"))
         face = box("ground", radius=theme.RADIUS["keycap"] - 1)
         self.view.addSubview_(face)
         pin(face, self.view, (1, 1, 3, 1))
         # Body size, unlike the shortcut's keycap: this is an action at the foot of a list, and at
         # keycap size it outweighed the entries above it.
-        self.title = Label(self.TITLE, theme.TYPE["body"], 600, wrap=True)
+        self.title = Label(self.title_text, theme.TYPE["body"], 600, wrap=True)
         squeeze(self.title.view)
-        self.hint = Label(self.HINT, theme.TYPE["small"], ink="ink_3", align=AppKit.NSTextAlignmentRight, wrap=True)
+        self.hint = Label(self.hint_text, theme.TYPE["small"], ink="ink_3", align=AppKit.NSTextAlignmentRight, wrap=True)
         line = stack(spacing=8)
         line.addArrangedSubview_(self.title.view)
         line.addArrangedSubview_(self.hint.view)
@@ -1862,8 +1883,8 @@ class IgnoredRecorder:
         if self.monitor is not None:
             self._stop()
             return
-        self.title.set(self.RECORDING_TITLE, ink="signal")
-        self.hint.set(self.RECORDING_HINT)
+        self.title.set(self.recording_title, ink="signal")
+        self.hint.set(self.recording_hint)
         paint(self.view, "signal")
         mask = (
             AppKit.NSEventMaskKeyDown
@@ -1906,8 +1927,8 @@ class IgnoredRecorder:
         if self.monitor is not None:
             AppKit.NSEvent.removeMonitor_(self.monitor)
             self.monitor = None
-        self.title.set(self.TITLE, ink="ink")
-        self.hint.set(self.HINT)
+        self.title.set(self.title_text, ink="ink")
+        self.hint.set(self.hint_text)
         paint(self.view, "edge")
 
 
@@ -1956,7 +1977,7 @@ class CodeBoxes:
             ])
             container.heightAnchor().constraintEqualToConstant_(48).setActive_(True)
             control.setDelegate_(self.delegate)
-            control.setAccessibilityLabel_(f"Digit {index + 1}")
+            control.setAccessibilityLabel_(tr("Digit {n}").format(n=index + 1))
             self.view.addArrangedSubview_(container)
             self.fields.append(control)
         self._held = [""] * digits
@@ -2112,8 +2133,9 @@ class Sidebar:
         self.dot_insets = []
         for index, (key, name, symbol, *_rest) in enumerate(pages):
             row = pressable(lambda key=key: self._choose(key), role=AppKit.NSAccessibilityRadioButtonRole)
+            name = tr(name)
             row.setAccessibilityLabel_(name)
-            row.setToolTip_(f"{name}  ⌘{index + 1}")
+            row.setToolTip_(tr("{name}  ⌘{key}").format(name=name, key=index + 1))
             row.ring_inset = 2.0
             row.sidebar_owner = self
             row.heightAnchor().constraintEqualToConstant_(36).setActive_(True)
@@ -2264,7 +2286,8 @@ class Sidebar:
             dot.setHidden_(tone is None)
             if tone is not None:
                 paint(dot, tone)
-            row.setAccessibilityLabel_(name if tone is None else f"{name}, needs attention")
+            # Translators: {name} is a settings page name.
+            row.setAccessibilityLabel_(name if tone is None else tr("{name}, needs attention").format(name=name))
 
 
 class _Overlay(AppKit.NSView):

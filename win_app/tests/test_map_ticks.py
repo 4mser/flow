@@ -163,7 +163,7 @@ class MapTicks(unittest.TestCase):
                         continue
                     box = canvas._cycle_box(rect)
                     self.assertEqual((box.width(), box.height()), (16, 16))
-                    self.assertAlmostEqual(box.left(), rect.right() - 24)
+                    self.assertAlmostEqual(box.left(), rect.right() - (36 if rect.height() < 56 else 24))
                     self.assertFalse(box.intersects(title))
                     if band == "small":
                         self.assertGreaterEqual(title.width(), rect.width() - 16 - 1e-9)

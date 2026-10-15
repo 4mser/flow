@@ -1138,8 +1138,7 @@ class OverlapTests(Base):
         self.assertNotIn("part", zones)
         self.assertEqual(self.store.current()["peers"][0]["ways"]["thirds"], list(ways.PARTS))
 
-    def test_an_old_file_with_two_notches_keeps_the_first_machine(self):
-        # 1.5.3: the notch reaches one machine; an old file that ticked two keeps the first in ways order.
+    def test_two_legacy_notches_keep_only_the_first_machine_in_ways_order(self):
         def two_notches(s):
             s["peers"][0]["id"] = PEER_ID
             s["zones"] = [{**z, "peer": PEER_ID} for z in s["zones"]]
@@ -1150,7 +1149,7 @@ class OverlapTests(Base):
             s["zones"].append({"peer": SECOND_ID, "kind": "notch"})
         saved = self.compiled(two_notches)
         self.assertEqual([peer["ways"]["notch"] for peer in saved["peers"]], [True, False])
-        self.assertEqual([zone["kind"] for zone in saved["zones"]].count("notch"), 1)
+        self.assertEqual([zone["peer"] for zone in saved["zones"] if zone["kind"] == "notch"], [PEER_ID])
 
 
 if __name__ == "__main__":

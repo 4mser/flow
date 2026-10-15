@@ -159,6 +159,12 @@ def proof_injection_and_capture():
             keys, _, _ = seen.take(0.15)
             check(f"modifier {pressed} reads back as {named}", [(k[0], k[1]) for k in keys] == [(named, True), (named, False)], keys)
 
+        for name, code in (("hangul", 122), ("hanja", 123)):
+            inject_x11.inject_key(name, True)
+            inject_x11.inject_key(name, False)
+            keys, _, _ = seen.take(0.15)
+            check(f"{name} reads back as itself on evdev {code}", [k[:3] for k in keys] == [(name, True, code), (name, False, code)], keys)
+
         inject_x11.inject_key("q", True, us="q")
         inject_x11.inject_key("q", False, us="q")
         keys, _, _ = seen.take()

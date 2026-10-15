@@ -228,6 +228,8 @@ QLabel[vernier="note-amber"] {{ color: {amber}; font-size: {note}px; }}
 QLabel[vernier="note-fault"] {{ color: {fault}; font-size: {note}px; }}
 QLabel[vernier="note-live"] {{ color: {signal}; font-size: {note}px; }}
 QLabel[vernier="note-quiet"] {{ color: {ink_3}; font-size: {note}px; }}
+QLabel[profile_warning="true"] {{ border: 1px solid {rule}; padding: 8px; }}
+QLabel[profile_heading="true"] {{ font-weight: 600; }}
 QLabel[vernier="key"] {{ color: {ink_2}; font-size: {note}px; }}
 QLabel[vernier="mono"] {{ color: {ink_2}; font-family: "{mono}"; font-size: {note}px; }}
 QLabel[vernier="readout"] {{ color: {ink}; font-family: "{sans}"; font-size: {note}px; font-weight: 700; }}
@@ -257,6 +259,9 @@ QPushButton[vernier="live"] {{ background: {signal}; border-color: {signal}; col
 QPushButton[vernier="live"][keyboard_ring="true"]:focus {{ border: 2px solid {ink}; }}
 QPushButton[vernier="small"] {{ font-size: {small}px; padding: 4px 10px; }}
 QPushButton[vernier="small"][keyboard_ring="true"]:focus {{ padding: 3px 9px; }}
+QPushButton[flat="true"][vernier="small"] {{ background: transparent; border: 0; padding: 4px 2px; min-width: 0; color: {ink_2}; font-weight: 400; }}
+QPushButton[flat="true"][vernier="small"]:disabled {{ color: {ink_3}; }}
+QPushButton[flat="true"][vernier="small"][keyboard_ring="true"]:focus {{ border: 1px solid {signal}; padding: 3px 1px; }}
 QPushButton[vernier="choice"] {{ color: {ink_2}; font-size: {small}px; font-weight: 400; padding: 4px 8px; }}
 QPushButton[vernier="choice"]:checked {{ background: {selected_bg}; border-color: {selected_bg}; color: {selected_ink}; font-weight: 600; }}
 QPushButton[vernier="choice"][keyboard_ring="true"]:focus {{ padding: 3px 7px; }}

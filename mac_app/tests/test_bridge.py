@@ -423,7 +423,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(link.dropped, [])
         self.assertFalse(link.stopped)
 
-    def test_hid_activity_missing_from_the_tap_returns_input_home(self):
+    def _redirected_after_a_pause(self):
         class ActiveHIDQuartz(FakeQuartz):
             kCGEventSourceStateHIDSystemState = 1
             kCGAnyInputEventType = 0
@@ -441,15 +441,47 @@ class ControllerTests(unittest.TestCase):
         controller._event_tap_callback(None, FakeQuartz.kCGEventMouseMoved, event, None)
         self.assertTrue(controller.set_redirecting(True))
         self.clock.value += 3.0
+        return controller, link, ActiveHIDQuartz, event
 
+    def test_hid_activity_missing_from_the_tap_returns_input_home(self):
+        controller, link, quartz, _event = self._redirected_after_a_pause()
+        with self.assertNoLogs(controller.logger, level="WARNING"):
+            controller._check_tap_watchdog()
+        self.assertTrue(controller.redirecting)
+
+        self.clock.value += 2.5
         with self.assertLogs(controller.logger, level="WARNING") as said:
             controller._check_tap_watchdog()
 
         self.assertFalse(controller.redirecting)
         self.assertFalse(controller.owner.away)
-        self.assertIn(True, [enabled for _tap, enabled in ActiveHIDQuartz.tap_enable_calls])
+        self.assertIn(True, [enabled for _tap, enabled in quartz.tap_enable_calls])
         self.assertTrue(any("event tap is not receiving input" in line for line in said.output), said.output)
         self.assertTrue(link.live())
+
+    def test_first_input_after_a_pause_is_not_mistaken_for_a_dead_tap(self):
+        # 14-10-2026 09:08:07: the HID system had the touch that ended a 14 s pause 18 ms before
+        # the watchdog looked, and the tap had not been called with it yet.
+        controller, _link, quartz, event = self._redirected_after_a_pause()
+        with self.assertNoLogs(controller.logger, level="WARNING"):
+            controller._check_tap_watchdog()
+            self.clock.value += 0.02
+            controller._event_tap_callback(None, FakeQuartz.kCGEventMouseMoved, event, None)
+            self.clock.value += 2.5
+            quartz.hid_seconds_ago = 2.5
+            controller._check_tap_watchdog()
+        self.assertTrue(controller.redirecting)
+        self.assertTrue(controller.owner.away)
+
+    def test_an_event_the_tap_had_is_not_unseen_for_reading_the_clocks_apart(self):
+        # The age is read before the clock, so the event the tap last had comes out a little newer.
+        controller, _link, quartz, event = self._redirected_after_a_pause()
+        controller._event_tap_callback(None, FakeQuartz.kCGEventMouseMoved, event, None)
+        self.clock.value += 3.0
+        quartz.hid_seconds_ago = 2.998
+        with self.assertNoLogs(controller.logger, level="WARNING"):
+            controller._check_tap_watchdog()
+        self.assertTrue(controller.redirecting)
 
     def test_move_logs_that_the_shortcut_double_tap_started_it(self):
         bring_up(self.controller)

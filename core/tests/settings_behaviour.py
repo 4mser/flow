@@ -15,6 +15,7 @@ from typing import Optional
 from unittest import TestCase
 
 from core import protocol, settings_sync, ways, peerlist
+from core.i18n import tr
 from core.tests.app_methods import load_methods
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -171,8 +172,19 @@ def reflect_shortcut_visibility(app, platform):
                          platform=system_platform,
                          OWN_PLATFORM="windows",
                          TRIGGER_KEYS=SimpleNamespace(get=stop))
+        namespace["profiles"] = importlib.import_module("core.profiles")
+        namespace["tr"] = importlib.import_module("core.i18n").tr
         cls = load_methods("win_app/kvm_bridge_win.py", "WindowsApplication", ["_reflect_ways"], namespace)
         app._crossing_settings = lambda: {"machine_id": app._config.machine_id, "peers": [], "zones": []}
+        # Crossing profiles (1.5.5): Same ways off, so the page shows this machine's own settings.
+        app._profile_settings = app._crossing_settings
+        app._crossing_view_settings = app._crossing_settings
+        app._reflect_profiles = lambda _settings: None
+        app._profile_remote = lambda: False
+        app._profile_machine_name = lambda _settings, peer: peer
+        app._profile_live = lambda _peer: False
+        app._profile_caps = lambda _peer, _settings: set()
+        app._profile_read_only = lambda: False
         app._crossing_machines = lambda: []
         app._chosen_machine = lambda: None
         app._rebuild_machine_choice = lambda values: None
@@ -260,7 +272,7 @@ def status_fixture(platform, caps, cached=False, following=False, offline=()):
     app.cfg().design_follow_peer = IDS[0] if following else ""
     app._design_peer_caps = lambda: caps
     app._lock_followed_design = lambda entry, name: setattr(app, "locked_to", entry)
-    namespace = dict(settings_sync=settings_sync, peerlist=peerlist, protocol=protocol)
+    namespace = dict(settings_sync=settings_sync, peerlist=peerlist, protocol=protocol, tr=tr)
     if platform == "mac":
         class MenuChoice:
             def __init__(self, choices, **kwargs):

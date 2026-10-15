@@ -4,12 +4,13 @@ import copy
 import unittest
 from itertools import combinations
 
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAccessible, QImage
+from PySide6.QtCore import QPoint, QRectF, Qt
+from PySide6.QtGui import QAccessible, QImage, QPainter
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
 import app_config
+import diagram
 from core import ways
 import test_crossing_page_parity as parity
 
@@ -36,6 +37,20 @@ def band_point(canvas, third, side="right"):
     if side in ("left", "right"):
         return QPoint(round(rect.left() if side == "left" else rect.right()), round(rect.top() + rect.height() * fraction))
     return QPoint(round(rect.left() + rect.width() * fraction), round(rect.top() if side == "top" else rect.bottom()))
+
+
+def stroke_insets(image, left, top, right, bottom, reference):
+    """Device-pixel insets of every pixel that differs from the colour at `reference`, measured inside
+    the box (left, top, right, bottom), inclusive."""
+    base = image.pixelColor(*reference)
+    xs, ys = [], []
+    for y in range(top, bottom + 1):
+        for x in range(left, right + 1):
+            pixel = image.pixelColor(x, y)
+            if abs(pixel.red() - base.red()) + abs(pixel.green() - base.green()) + abs(pixel.blue() - base.blue()) > 60:
+                xs.append(x)
+                ys.append(y)
+    return min(xs) - left, min(ys) - top, right - max(xs), bottom - max(ys)
 
 
 def paint(canvas):
@@ -108,6 +123,42 @@ class CrossingLedgerTests(unittest.TestCase):
                     self._close_window()
                     self._open_window()
                     self.assertEqual(row_of(self.window, peer).corner_grid.buttons[corner].isChecked(), on)
+
+    def test_corner_brackets_sit_centred_in_whole_squares(self):
+        # A style sheet's min-height replaced the minimum setFixedSize set, so the grid squashed
+        # each square to 28 x 19 and the bracket drawn for 28 x 28 was clipped off-centre.
+        self.window.resize(1280, 1392)
+        self.window.show()
+        QApplication.processEvents()
+        row = row_of(self.window, self.peers[0]["id"])
+        for kind, enabled in (("free", True), ("on", True), ("held", False), ("unavailable", False)):
+            for corner, button in row.corner_grid.buttons.items():
+                with self.subTest(kind=kind, corner=corner):
+                    button.set_state(kind, "", "", enabled)
+                    self.assertEqual(button.size().toTuple(), (28, 28))
+                    image = button.grab().toImage()
+                    w, h = image.width(), image.height()
+                    insets = stroke_insets(image, 3, 3, w - 4, h - 4, (w // 2, h // 2))
+                    self.assertLessEqual(max(insets) - min(insets), 1, insets)
+                    self.assertGreaterEqual(min(insets), 3, insets)
+
+    def test_map_corner_pad_bracket_sits_centred_in_its_pad(self):
+        # Drawn at 4x so a half-pixel offset shows as two device pixels.
+        scale = 4
+        for corner in ways.CORNERS:
+            with self.subTest(corner=corner):
+                image = QImage(80 * scale, 80 * scale, QImage.Format.Format_ARGB32)
+                image.fill(Qt.GlobalColor.black)
+                painter = QPainter(image)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.scale(scale, scale)
+                diagram.AtlasCanvas._paint_corner_pad(painter, QRectF(30, 30, 20, 20), corner, 1.0)
+                painter.end()
+                x = 30 if corner.endswith("left") else 50
+                y = 30 if corner.startswith("top") else 50
+                insets = stroke_insets(image, (x - 6) * scale, (y - 6) * scale, (x + 6) * scale - 1, (y + 6) * scale - 1,
+                                       ((x + 5) * scale + 2, (y + 5) * scale + 2))
+                self.assertLessEqual(max(insets) - min(insets), 1, insets)
 
     def test_two_corners_at_once_a_held_one_and_an_unavailable_one_refuse_without_a_write(self):
         first, second = [entry["id"] for entry in self.peers]

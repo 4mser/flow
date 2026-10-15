@@ -27,6 +27,7 @@ from frame_clock import PREVIEW_MAX_RATE, FrameClock
 import motion
 import notch_beam
 import notch_island
+from core.i18n import N_
 import theme
 import tokens
 
@@ -711,7 +712,7 @@ def notch_update(renderer):
 # The crossing effects' previews: effects.preview_scene drawn by effects_overlay.draw_scene, the same
 # replay the overlay uses on screen. Every tile shows one still frame at the place the page's Show at
 # chooses, and plays the full journey while TileHover says the pointer is over it.
-STAGE_METHODS = (("edge", "Edge"), ("corner", "Corner"), ("notch", "Notch"))
+STAGE_METHODS = (("edge", N_("Edge")), ("corner", N_("Corner")), ("notch", N_("Notch")))
 
 
 def _played(view, still_at, switch=False):

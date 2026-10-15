@@ -175,6 +175,8 @@ VK_MAP = {
     "cmd": 0x5B,
     "cmd_r": 0x5C,
     "caps_lock": 0x14,
+    "hangul": 0x15,
+    "hanja": 0x19,
     "insert": 0x2D,
     "menu": 0x5D,
     "num_lock": 0x90,

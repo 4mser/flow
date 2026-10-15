@@ -24,6 +24,7 @@ import qr
 import theme
 import widgets
 from core import feature_flags, pairing, peerlist, ways as core_ways
+from core.i18n import tr
 
 QR_SIDE = 176
 CODE_GROUP = 3
@@ -35,7 +36,7 @@ def grouped(code):
 
 
 def seconds(count):
-    return f"Expires in {count} s"
+    return tr("Expires in {n} s").format(n=count)
 
 
 class _RenameDelegate(AppKit.NSObject):
@@ -86,41 +87,41 @@ class MachinesPanel:
     def _machines_module(self):
         module = widgets.Module()
         header = widgets.stack(spacing=12)
-        widgets.add(header, widgets.eyebrow("Machines"))
-        self.nearby_button = widgets.action_button("Pair nearby", self.pair_nearby, style="primary")
-        self.phone_button = widgets.action_button("Pair a phone", self.pair_phone)
+        widgets.add(header, widgets.eyebrow(tr("Machines")))
+        self.nearby_button = widgets.action_button(tr("Pair nearby"), self.pair_nearby, style="primary")
+        self.phone_button = widgets.action_button(tr("Pair a phone"), self.pair_phone)
         self.phone_button.view.setHidden_(not feature_flags.PAIRING_QR_VISIBLE)
-        self.pair_button = widgets.action_button("Pair a machine", self._toggle_sheet)
+        self.pair_button = widgets.action_button(tr("Pair a machine"), self._toggle_sheet)
         for button in (self.nearby_button, self.phone_button, self.pair_button):
             widgets.add(header, button.view, full_width=False)
         module.add(header)
         self.list = widgets.stack(spacing=8)
         module.add(self.list)
-        self.empty = widgets.note("No machines paired yet.")
+        self.empty = widgets.note(tr("No machines paired yet."))
         module.add(self.empty.view)
         line = widgets.stack(vertical=False, spacing=10)
-        self.list_note = widgets.note("Beamer connects to each machine on its own whenever both are running.", reading=False)
+        self.list_note = widgets.note(tr("Beamer connects to each machine on its own whenever both are running."), reading=False)
         line.addArrangedSubview_(self.list_note.view)
         module.add(line)
         return module
 
     def own_name_module(self):
         module = widgets.Module()
-        module.add(widgets.eyebrow("This Mac"))
+        module.add(widgets.eyebrow(tr("This Mac")))
         line = widgets.stack(vertical=False, spacing=9)
         own_name = self.settings_store.current().get("name", "")
-        name = widgets.Label(own_name or socket.gethostname().split(".")[0] or "Mac",
+        name = widgets.Label(own_name or socket.gethostname().split(".")[0] or tr("Mac"),
                              theme.TYPE["body"], 600)
         widgets.squeeze(name.view)
         line.addArrangedSubview_(name.view)
-        rename = self._chip("Rename", lambda: self._begin_rename(None), "Rename this Mac")
+        rename = self._chip(tr("Rename"), lambda: self._begin_rename(None), tr("Rename this Mac"))
         line.addArrangedSubview_(rename)
         module.add(line)
         box, edit = widgets.field(mono=False)
-        edit.setAccessibilityLabel_("Name for this Mac")
+        edit.setAccessibilityLabel_(tr("Name for this Mac"))
         edit.setStringValue_(own_name)
         box.setHidden_(True)
-        note = widgets.note("Only on this Mac", reading=False)
+        note = widgets.note(tr("Only on this Mac"), reading=False)
         note.view.setHidden_(True)
         delegate = _RenameDelegate.alloc().init()
         delegate.panel, delegate.token = self, None
@@ -132,7 +133,7 @@ class MachinesPanel:
 
     def _sheet(self):
         module = widgets.Module()
-        module.add(widgets.eyebrow("Pair a machine"))
+        module.add(widgets.eyebrow(tr("Pair a machine")))
         self.pair_grid = widgets.stack(spacing=20)
         self.pair_grid.setAlignment_(AppKit.NSLayoutAttributeTop)
         show = self._show_half()
@@ -147,11 +148,11 @@ class MachinesPanel:
 
     def _show_half(self):
         half = widgets.stack(spacing=8)
-        widgets.add(half, widgets.label("Show a code on this Mac", theme.TYPE["body"], 600))
+        widgets.add(half, widgets.label(tr("Show a code on this Mac"), theme.TYPE["body"], 600))
         widgets.add(half, widgets.note(
-            "On the other machine, open Beamer, choose this Mac in its list and type the code."
+            tr("On the other machine, open Beamer, choose this Mac in its list and type the code.")
         ).view)
-        self.show_button = widgets.action_button("Show a code", self._show_code, style="primary")
+        self.show_button = widgets.action_button(tr("Show a code"), self._show_code, style="primary")
         half.addArrangedSubview_(self.show_button.view)
         self.shown_code_boxes = widgets.CodeBoxes(pairing.CODE_DIGITS, None, editable=False)
         for control in self.shown_code_boxes.fields:
@@ -165,14 +166,14 @@ class MachinesPanel:
         # Whole points to a module already: scaling would soften the edges.
         self.qr_view.setImageScaling_(AppKit.NSImageScaleNone)
         self.qr_view.setImageAlignment_(AppKit.NSImageAlignTopLeft)
-        self.qr_view.setAccessibilityLabel_("The pairing code as a QR code")
+        self.qr_view.setAccessibilityLabel_(tr("The pairing code as a QR code"))
         widgets.size(self.qr_view, QR_SIDE, QR_SIDE)
         half.addArrangedSubview_(self.qr_view)
         self.qr_caption = widgets.note("")
         widgets.add(half, self.qr_caption.view)
         self.hosted_status = widgets.note()
         widgets.add(half, self.hosted_status.view)
-        self.cancel_button = widgets.action_button("Cancel code", self._cancel_code, scale="small")
+        self.cancel_button = widgets.action_button(tr("Cancel code"), self._cancel_code, scale="small")
         half.addArrangedSubview_(self.cancel_button.view)
         self._show_code_widgets(False)
         return half
@@ -187,22 +188,22 @@ class MachinesPanel:
         self.nearby_choices = widgets.stack(spacing=2)
         widgets.add(nearby, self.nearby_choices)
         self.nearby_sas = widgets.Label("", theme.TYPE["readout"], 700, mono=True, ink="ink")
-        self.nearby_sas.view.setAccessibilityLabel_("Nearby pairing digits")
+        self.nearby_sas.view.setAccessibilityLabel_(tr("Nearby pairing digits"))
         widgets.add(nearby, self.nearby_sas.view)
         self.nearby_peer_label = widgets.Label("", theme.TYPE["note"], ink="ink_2")
         widgets.add(nearby, self.nearby_peer_label.view)
         nearby_buttons = widgets.stack(vertical=False, spacing=8)
-        self.nearby_confirm = widgets.action_button("Confirm", self._confirm_nearby, style="primary")
-        self.nearby_cancel = widgets.action_button("Cancel", self._cancel_nearby, scale="small")
+        self.nearby_confirm = widgets.action_button(tr("Confirm"), self._confirm_nearby, style="primary")
+        self.nearby_cancel = widgets.action_button(tr("Cancel"), self._cancel_nearby, scale="small")
         nearby_buttons.addArrangedSubview_(self.nearby_confirm.view)
         nearby_buttons.addArrangedSubview_(self.nearby_cancel.view)
         widgets.add(nearby, nearby_buttons)
         self.nearby_view = nearby
         self._nearby_widgets(False)
         widgets.add(half, nearby)
-        widgets.add(half, widgets.label("Enter a code from another machine", theme.TYPE["body"], 600))
+        widgets.add(half, widgets.label(tr("Enter a code from another machine"), theme.TYPE["body"], 600))
         heard = widgets.stack(spacing=8)
-        widgets.add(heard, widgets.label("On this network", theme.TYPE["note"], 600, ink="ink_2"))
+        widgets.add(heard, widgets.label(tr("On this network"), theme.TYPE["note"], 600, ink="ink_2"))
         self.heard_list = widgets.stack(spacing=1)
         self.heard_frame = widgets.box("rule")
         self.heard_frame.addSubview_(self.heard_list)
@@ -215,29 +216,29 @@ class MachinesPanel:
         find_secret_box.setHidden_(True)
         self.find_boxes = (find_box, find_secret_box)
         for control in (self.find_field, self.find_secret):
-            control.setPlaceholderAttributedString_(widgets.attributed("Address", theme.TYPE["small"], ink="ink_3", mono=True))
-            control.setAccessibilityLabel_("Address of a machine that is not listed")
+            control.setPlaceholderAttributedString_(widgets.attributed(tr("Address"), theme.TYPE["small"], ink="ink_3", mono=True))
+            control.setAccessibilityLabel_(tr("Address of a machine that is not listed"))
             control.setTarget_(self._target(self._address_typed))
             control.setAction_("fire:")
         heard.setCustomSpacing_afterView_(14, self.heard_empty.view)
         heard.setCustomSpacing_afterView_(14, self.heard_frame)
-        widgets.add(heard, widgets.label("Not listed? Type its address.", theme.TYPE["note"], ink="ink_2"))
+        widgets.add(heard, widgets.label(tr("Not listed? Type its address."), theme.TYPE["note"], ink="ink_2"))
         find_line = widgets.stack(vertical=False, spacing=8)
         for box in self.find_boxes:
             find_line.addArrangedSubview_(widgets.hug(box, AppKit.NSLayoutPriorityDefaultLow))
         widgets.add(heard, find_line)
         widgets.add(half, heard)
-        widgets.add(half, widgets.label("Code shown on the other machine", theme.TYPE["note"], 600, ink="ink_2"))
+        widgets.add(half, widgets.label(tr("Code shown on the other machine"), theme.TYPE["note"], 600, ink="ink_2"))
         self.code_boxes = widgets.CodeBoxes(pairing.CODE_DIGITS, lambda _control: self._pair())
         widgets.add(half, self.code_boxes.view)
         line = widgets.stack(vertical=False, spacing=10)
         line.setAlignment_(AppKit.NSLayoutAttributeTop)
         self.pair_status = widgets.note()
         line.addArrangedSubview_(self.pair_status.view)
-        self.confirm_button = widgets.action_button("Pair", self._pair, style="primary")
+        self.confirm_button = widgets.action_button(tr("Pair"), self._pair, style="primary")
         line.addArrangedSubview_(self.confirm_button.view)
         widgets.add(half, line)
-        self._say("Choose a machine, or type its address, then type the code it shows.")
+        self._say(tr("Choose a machine, or type its address, then type the code it shows."))
         return half
 
     def _target(self, callback):
@@ -295,7 +296,7 @@ class MachinesPanel:
         self.list_note.view.setHidden_(not rows)
         wanted = self.open or not rows
         motion.set_hidden(self.sheet.view, not wanted)
-        self.pair_button.set_title("Cancel" if self.open and rows else "Pair a machine")
+        self.pair_button.set_title(tr("Cancel") if self.open and rows else tr("Pair a machine"))
         self.pair_button.view.setHidden_(False)
         if wanted:
             self._refresh_sheet(hide)
@@ -337,7 +338,8 @@ class MachinesPanel:
         state = row.state
         frame = widgets.box("ground", "rule", theme.RADIUS["field"])
         label = self._shown(row.label)
-        frame.setAccessibilityLabel_(f"{label}, {self._shown(state.word)}")
+        shown_word = self._shown(tr(state.word))
+        frame.setAccessibilityLabel_(tr("{name}, {state}").format(name=label, state=shown_word))
         body = widgets.stack(spacing=6)
         head = widgets.stack(vertical=False, spacing=9)
         led = widgets.LED()
@@ -345,9 +347,9 @@ class MachinesPanel:
         head.addArrangedSubview_(led.view)
         name = widgets.Label(label, theme.TYPE["body"], 600, wrap=True)
         head.addArrangedSubview_(widgets.hug(widgets.squeeze(name.view), AppKit.NSLayoutPriorityDefaultLow))
-        rename = self._chip("Rename", lambda t=row.token: self._begin_rename(t), f"Rename {label}")
+        rename = self._chip(tr("Rename"), lambda t=row.token: self._begin_rename(t), tr("Rename {name}").format(name=label))
         head.addArrangedSubview_(rename)
-        tag = widgets.Label(self._shown(state.word), theme.TYPE["eyebrow"], 700, state.tone,
+        tag = widgets.Label(shown_word, theme.TYPE["eyebrow"], 700, state.tone,
                             tracking=theme.TRACKING["eyebrow"], upper=state.key != "dormant")
         if self.wide:
             head.addArrangedSubview_(tag.view)
@@ -355,16 +357,16 @@ class MachinesPanel:
         if not self.wide:
             widgets.add(body, tag.view)
         remove = self._removal(row)
-        repair = (self._chip("Re-pair", lambda t=row.token: self.re_pair(t), f"Re-pair {label}")
+        repair = (self._chip(tr("Re-pair"), lambda t=row.token: self.re_pair(t), tr("Re-pair {name}").format(name=label))
                   if state.key == "dormant" else None)
         where = row.platform if row.phone else "  ".join((row.platform, self._shown(row.address)))
         widgets.add(body, widgets.Label(where, theme.TYPE["small"], ink="ink_3", wrap=True).view)
         if row.left_out:
-            widgets.add(body, widgets.note("Left out of the layout. The shortcut and the menu still reach it.").view)
+            widgets.add(body, widgets.note(tr("Left out of the layout. The shortcut and the menu still reach it.")).view)
         widgets.add(body, widgets.note(self._shown(state.detail)).view)
         entry = next((item for item in self.controller.book.peers() if item.get("token") == row.token), {})
         if not row.phone and getattr(getattr(self.owner, "shortcut_goes_to", None), "value", "last") == "ticked":
-            cycle = widgets.Switch("In the shortcut's cycle",
+            cycle = widgets.Switch(tr("In the shortcut's cycle"),
                                    on_change=lambda on, peer=entry.get("id"): self.owner._set_shortcut_cycle(peer, on))
             cycle.value = entry.get("shortcut_cycle") is not False
             cycle.set_enabled(row.in_use)
@@ -372,37 +374,41 @@ class MachinesPanel:
             self._cycle_controls[row.token] = cycle
             widgets.add(body, cycle.view)
         edit_box, edit = widgets.field(mono=False)
-        edit.setAccessibilityLabel_(f"Name for {label}")
+        edit.setAccessibilityLabel_(tr("Name for {name}").format(name=label))
         edit.setStringValue_(entry.get("label", "") or entry.get("name", ""))
         edit_box.setHidden_(True)
         delegate = _RenameDelegate.alloc().init()
         delegate.panel, delegate.token = self, row.token
         edit.setDelegate_(delegate)
-        note = widgets.note("Only on this Mac", reading=False)
+        note = widgets.note(tr("Only on this Mac"), reading=False)
         note.view.setHidden_(True)
         self._rename_views[row.token] = (name.view, rename, edit_box, edit, note, delegate)
         widgets.add(body, edit_box)
         widgets.add(body, note.view)
-        in_use = widgets.Switch("In use", on_change=lambda on, t=row.token: self._direction(t, in_use=on))
+        in_use = widgets.Switch(tr("In use"), on_change=lambda on, t=row.token: self._direction(t, in_use=on))
         in_use.value = row.in_use
-        in_use.view.setToolTip_(f"Off: no input or settings link to {label}. Pairing, directions, ways and jump key are kept. Turn it back on here to reconnect.")
+        # Translators: {name} is the other machine's chosen name.
+        in_use.view.setToolTip_(tr("Off: no input or settings link to {name}. Pairing, directions, ways and jump key are kept. Turn it back on here to reconnect.").format(name=label))
         if row.phone:
-            in_use.view.setToolTip_(f"Off: {label} cannot connect or drive this Mac. Turn it back on here to reconnect.")
+            in_use.view.setToolTip_(tr("Off: {name} cannot connect or drive this Mac. Turn it back on here to reconnect.").format(name=label))
         in_use.view.focus_id = (row.token, "in_use")
-        left_out = self._chip("Put back" if row.left_out else "Leave out",
+        action = tr("Put back") if row.left_out else tr("Leave out")
+        left_out = self._chip(action,
                               lambda out=not row.left_out, t=row.token: self._left_out(t, out),
-                              f"{'Put back' if row.left_out else 'Leave out'} {label}", (row.token, "left_out"))
-        drives = widgets.Switch("This Mac drives it", on_change=lambda on, t=row.token: self._direction(t, send=on))
+                              tr("{action} {name}").format(action=action, name=label), (row.token, "left_out"))
+        drives = widgets.Switch(tr("This Mac drives it"), on_change=lambda on, t=row.token: self._direction(t, send=on))
         drives.value = row.drives
-        drives.view.setToolTip_(f"Input moves only when this Mac enables this switch and {label} enables It drives this Mac.")
+        # Translators: {name} is the other machine's chosen name.
+        drives.view.setToolTip_(tr("Input moves only when this Mac enables this switch and {name} enables It drives this Mac.").format(name=label))
         drives.view.focus_id = (row.token, "drives")
-        driven = widgets.Switch("It drives this Mac", on_change=lambda on, t=row.token: self._direction(t, allow_drive=on))
+        driven = widgets.Switch(tr("It drives this Mac"), on_change=lambda on, t=row.token: self._direction(t, allow_drive=on))
         driven.value = row.driven
-        driven.view.setToolTip_(f"Input moves only when {label} enables This machine drives it and this Mac enables this switch.")
+        # Translators: {name} is the other machine's chosen name.
+        driven.view.setToolTip_(tr("Input moves only when {name} enables This machine drives it and this Mac enables this switch.").format(name=label))
         driven.view.focus_id = (row.token, "driven")
         opened = row.token in self.directions_open
-        disclosure = self._chip("Hide directions" if opened else "Directions", lambda t=row.token: self._toggle_directions(t),
-                                f"{'Hide' if opened else 'Show'} directions for {label}",
+        disclosure = self._chip(tr("Hide directions") if opened else tr("Directions"), lambda t=row.token: self._toggle_directions(t),
+                                tr("{action} directions for {name}").format(action=tr("Hide") if opened else tr("Show"), name=label),
                                 (row.token, "directions"))
         widgets.add(body, self._controls(row, in_use, left_out, disclosure, drives, driven, remove, repair))
         frame.addSubview_(body)
@@ -488,12 +494,12 @@ class MachinesPanel:
     def _removal(self, row):
         label = self._shown(row.label)
         if self.removing != row.token:
-            return self._chip("Remove", lambda t=row.token: self._ask_to_remove(t), f"Remove {label}", (row.token, "remove"))
+            return self._chip(tr("Remove"), lambda t=row.token: self._ask_to_remove(t), tr("Remove {name}").format(name=label), (row.token, "remove"))
         line = widgets.stack(vertical=False, spacing=8)
-        words = widgets.note(f"Remove {label}? It stays paired on that machine until you remove this one there too.", ink="ink", reading=False)
+        words = widgets.note(tr("Remove {name}? It stays paired on that machine until you remove this one there too.").format(name=label), ink="ink", reading=False)
         line.addArrangedSubview_(words.view)
-        line.addArrangedSubview_(self._chip("Remove", lambda t=row.token: self._remove(t), f"Confirm removing {label}", (row.token, "confirm")))
-        line.addArrangedSubview_(self._chip("Keep", self._keep, f"Keep {label}", (row.token, "keep")))
+        line.addArrangedSubview_(self._chip(tr("Remove"), lambda t=row.token: self._remove(t), tr("Confirm removing {name}").format(name=label), (row.token, "confirm")))
+        line.addArrangedSubview_(self._chip(tr("Keep"), self._keep, tr("Keep {name}").format(name=label), (row.token, "keep")))
         return line
 
     def _ask_to_remove(self, token):
@@ -514,7 +520,8 @@ class MachinesPanel:
             removed = self.settings_store.remove_peer(token)
         except Exception as exc:
             self.logger.warning("could not remove a machine: %s", exc)
-            self.owner._say(f"Could not remove it: {exc}", "fault")
+            # Translators: {error} is the system error message.
+            self.owner._say(tr("Could not remove it: {error}").format(error=exc), "fault")
             self.refresh()
             return
         if removed is not None:
@@ -559,12 +566,13 @@ class MachinesPanel:
         self._cancel_code()
         service = self.service
         if service is None:
-            self._say("Pairing is not available on this Mac.", "fault")
+            self._say(tr("Pairing is not available on this Mac."), "fault")
             return
         try:
             service.begin_nearby()
         except pairing.PairingError as exc:
-            self._say(f"Nearby pairing is not available: {exc}", "fault")
+            # Translators: {error} is the system error message.
+            self._say(tr("Nearby pairing is not available: {error}").format(error=exc), "fault")
             return
         self._nearby_key = None
         self._refresh_nearby()
@@ -591,20 +599,20 @@ class MachinesPanel:
             return
 
         messages = {
-            "searching": "Press Pair nearby on the other machine within 60 seconds.",
-            "choosing": "Choose a machine to pair nearby.",
-            "confirm": "Compare all six digits on both machines, then confirm on each.",
-            "waiting": "Waiting for confirmation on the other machine.",
-            "paired": "Nearby pairing complete.",
-            "expired": "Nearby pairing expired. Press Pair nearby to try again.",
-            "refused": "Nearby pairing refused. Use a new window to try again.",
-            "not_saved": "The new peer could not be saved.",
+            "searching": tr("Press Pair nearby on the other machine within 60 seconds."),
+            "choosing": tr("Choose a machine to pair nearby."),
+            "confirm": tr("Compare all six digits on both machines, then confirm on each."),
+            "waiting": tr("Waiting for confirmation on the other machine."),
+            "paired": tr("Nearby pairing complete."),
+            "expired": tr("Nearby pairing expired. Press Pair nearby to try again."),
+            "refused": tr("Nearby pairing refused. Use a new window to try again."),
+            "not_saved": tr("The new peer could not be saved."),
         }
-        message = messages.get(state, "Connecting to the selected machine…" if state == "exchanging" else "")
+        message = messages.get(state, tr("Connecting to the selected machine…") if state == "exchanging" else "")
         tone = "fault" if state in {"refused", "expired", "not_saved"} else "ink_2"
         self.nearby_status_label.set(message, ink=tone)
         seconds_left = status.get("seconds_left", 0)
-        self.nearby_expiry.set(f"Expires in {seconds_left} s" if state in {"searching", "choosing", "exchanging", "confirm", "waiting"} else "")
+        self.nearby_expiry.set(seconds(seconds_left) if state in {"searching", "choosing", "exchanging", "confirm", "waiting"} else "")
         self.nearby_expiry.view.setHidden_(state not in {"searching", "choosing", "exchanging", "confirm", "waiting"})
 
         peers = status.get("peers") or []
@@ -625,12 +633,12 @@ class MachinesPanel:
                     row = widgets.pressable(lambda item=candidate: self._choose_nearby(item),
                                             "well" if picked else "ground", "rule", 5,
                                             role=AppKit.NSAccessibilityRadioButtonRole)
-                    label = candidate.get("name") or "Another machine"
+                    label = candidate.get("name") or tr("Another machine")
                     platform = machines.platform_name(candidate.get("platform") or "")
                     address = candidate.get("address")
                     detail = " · ".join(part for part in (label, platform, address) if part)
                     row.setAccessibilityLabel_(self._shown(detail))
-                    row.setAccessibilityValue_("Selected" if picked else "Not selected")
+                    row.setAccessibilityValue_(tr("Selected") if picked else tr("Not selected"))
                     text = widgets.Label(self._shown(detail), theme.TYPE["note"], 600 if picked else 400)
                     row.addSubview_(text.view)
                     widgets.pin(text.view, row, (7, 10, 7, 10))
@@ -642,7 +650,7 @@ class MachinesPanel:
         self.nearby_sas.set(shown_sas)
         self.nearby_sas.view.setHidden_(not shown_sas)
         if isinstance(peer, dict):
-            peer_name = peer.get("name") or "Another machine"
+            peer_name = peer.get("name") or tr("Another machine")
             peer_platform = machines.platform_name(peer.get("platform") or "")
             selected = f"Selected: {peer_name} · {peer_platform}"
         else:
@@ -716,7 +724,7 @@ class MachinesPanel:
         self.code_boxes.clear()
         self.chosen = None
         self._heard_key = None
-        self._say("Choose a machine, or type its address, then type the code it shows.")
+        self._say(tr("Choose a machine, or type its address, then type the code it shows."))
 
     def _refresh_sheet(self, hide):
         self._refresh_code(hide)
@@ -755,7 +763,7 @@ class MachinesPanel:
         try:
             service.begin_pairing()
         except pairing.PairingError as exc:
-            self.hosted_status.set(peerlist.pairing_error_text(exc, "this machine"), ink="fault")
+            self.hosted_status.set(peerlist.pairing_error_text(exc, tr("this machine")), ink="fault")
             self.hosted_status.view.setHidden_(False)
             return
         self._hosted = None
@@ -784,14 +792,14 @@ class MachinesPanel:
             address = pairing.pairing_address()
             qr_text = service.qr_text(address)
             if hide:
-                self.code_address.set(self._shown(f"{address} · port {service.tcp_port}") if address else "")
-                self._set_qr(None, "The QR is hidden while addresses are hidden.")
+                self.code_address.set(self._shown(tr("{address} · port {port}").format(address=address, port=service.tcp_port)) if address else "")
+                self._set_qr(None, tr("The QR is hidden while addresses are hidden."))
             elif qr_text is None:
-                self.code_address.set(f"{address} · port {service.tcp_port}" if address else "No network address found")
-                self._set_qr(None, f"No QR: {service.tcp_error}" if service.tcp_error else "No QR while this Mac has no address.")
+                self.code_address.set(tr("{address} · port {port}").format(address=address, port=service.tcp_port) if address else tr("No network address found"))
+                self._set_qr(None, tr("No QR: {reason}").format(reason=service.tcp_error) if service.tcp_error else tr("No QR while this Mac has no address."))
             else:
-                self.code_address.set(f"{address} · port {service.tcp_port}")
-                self._set_qr(qr_text, "The same code as a QR, for a phone to scan.")
+                self.code_address.set(tr("{address} · port {port}").format(address=address, port=service.tcp_port))
+                self._set_qr(qr_text, tr("The same code as a QR, for a phone to scan."))
             self.hosted_status.view.setHidden_(not self.hosted_status.text)
             return
         if self._showing:
@@ -867,11 +875,10 @@ class MachinesPanel:
         for index, (item, shared) in enumerate(zip(heard, peerlist.sharing_a_name(heard))):
             self._heard_row(index, item, item["address"] == chosen, shared)
         if service is not None and service.error:
-            self.heard_empty.set(f"Beamer cannot look for machines: {service.error}", ink="fault")
+            self.heard_empty.set(tr("Beamer cannot look for machines: {reason}").format(reason=service.error), ink="fault")
         else:
             self.heard_empty.set(
-                "Looking for machines running Beamer. Open it on the other machine and it appears here; "
-                "across a VPN or on guest Wi-Fi it may not, so type its address below.", ink="ink_2")
+                tr("Looking for machines running Beamer. Open it on the other machine and it appears here; across a VPN or on guest Wi-Fi it may not, so type its address below."), ink="ink_2")
         self.heard_frame.setHidden_(not heard)
         self.heard_empty.view.setHidden_(bool(heard))
         if chosen is not None and chosen not in {item["address"] for item in heard}:
@@ -885,8 +892,10 @@ class MachinesPanel:
                                 role=AppKit.NSAccessibilityRadioButtonRole)
         row.ring_inset = 1.0
         platform = machines.platform_name(item.get("platform") or "")
-        row.setAccessibilityLabel_(self._shown(f"{item['name']}, {item['address']}")
-                                   + (", older Beamer" if older else ", showing a code" if showing else ""))
+        # Translators: {name} and {address} come from the other machine.
+        sentence = (tr("{name}, {address}, older Beamer") if older else
+                    tr("{name}, {address}, showing a code") if showing else tr("{name}, {address}"))
+        row.setAccessibilityLabel_(self._shown(sentence.format(name=item["name"], address=item["address"])))
         line = widgets.stack(vertical=False, spacing=9)
         led = widgets.LED()
         led.set("amber" if older else "signal" if showing else "off")
@@ -915,7 +924,7 @@ class MachinesPanel:
         for box_field in (self.find_field, self.find_secret):
             box_field.setStringValue_("")
         self.code_boxes.clear()
-        self.code_boxes.view.setAccessibilityLabel_(self._shown(f"Code shown on {self.chosen['name']}"))
+        self.code_boxes.view.setAccessibilityLabel_(self._shown(tr("Code shown on {name}").format(name=self.chosen["name"])))
         self._say_choice()
         self._heard_key = None
         self._refresh_heard()
@@ -926,9 +935,9 @@ class MachinesPanel:
         if chosen.get("pairing") != pairing.PAIRING_V3:
             self._say(peerlist.pairing_error_text(pairing.PairingError(pairing.ERROR_VERSION), chosen["name"]), "fault")
         elif chosen["pair_id"] is None:
-            self._say(f"{chosen['name']} is not showing a code yet. Show one in Beamer on it first.")
+            self._say(tr("{name} is not showing a code yet. Show one in Beamer on it first.").format(name=chosen["name"]))
         else:
-            self._say(f"Six digits, as shown on {chosen['name']}.")
+            self._say(tr("Six digits, as shown on {name}.").format(name=chosen["name"]))
 
     def _pair(self):
         wanted = self._wanted()
@@ -937,7 +946,7 @@ class MachinesPanel:
             return
         code = re.sub(r"\D", "", self.code_boxes.value)
         if len(code) != pairing.CODE_DIGITS:
-            self._say(f"The code is {pairing.CODE_DIGITS} digits.", "fault")
+            self._say(tr("The code is {n} digits.").format(n=pairing.CODE_DIGITS), "fault")
             return
         kind, target = wanted
         self._cancel_nearby()
@@ -954,11 +963,11 @@ class MachinesPanel:
                 return
             run = lambda: service.pair(target, code)
         else:
-            name = "That machine"
+            name = tr("That machine")
             run = lambda: service.pair_by_address(target, code)
         self.pairing = True
         self.confirm_button.set_enabled(False)
-        self._say(self._shown(f"Pairing with {name}…" if kind == "machine" else f"Pairing with {target}…"))
+        self._say(tr("Pairing with {name}…").format(name=name if kind == "machine" else target))
 
         def work():
             try:
@@ -985,7 +994,7 @@ class MachinesPanel:
         self.chosen = None
         self._heard_key = None
         self.open = False
-        self._say("Choose a machine, or type its address, then type the code it shows.")
+        self._say(tr("Choose a machine, or type its address, then type the code it shows."))
         self.owner.peers_changed()
-        self.owner._say(f"Paired with {proved}. Connecting…", "signal")
+        self.owner._say(tr("Paired with {name}. Connecting…").format(name=proved), "signal")
         self.logger.info("paired with %s", proved)

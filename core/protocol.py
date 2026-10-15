@@ -373,7 +373,8 @@ def _inflated_within(stream, budget):
 def settings_msg(data: dict) -> dict:
     """Same on all machines: whether it is on, its stamp and, while on, the shared values, as
     settings_sync.message_data builds them. Sent on every change while on and announced on every
-    new connection; an older Beamer ignores the type."""
+    new connection. Profile registers use settings_sync.desk_message_data for a
+    separate frame; older peers never receive that optional member."""
     return {"type": MSG_SETTINGS, "data": dict(data)}
 
 

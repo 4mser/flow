@@ -8,6 +8,7 @@ pyobjc-framework-ServiceManagement, which would be a new dependency for four cal
 from pathlib import Path
 
 import objc
+from core.i18n import N_, tr
 
 objc.loadBundle(
     "ServiceManagement", {}, bundle_path="/System/Library/Frameworks/ServiceManagement.framework"
@@ -20,10 +21,10 @@ SMAppService = objc.lookUpClass("SMAppService")
 
 NOT_REGISTERED, ENABLED, REQUIRES_APPROVAL, NOT_FOUND = 0, 1, 2, 3
 STATUS_TEXT = {
-    NOT_REGISTERED: "Not registered",
-    ENABLED: "Enabled",
-    REQUIRES_APPROVAL: "Requires approval",
-    NOT_FOUND: "Not found",
+    NOT_REGISTERED: N_("Not registered"),
+    ENABLED: N_("Enabled"),
+    REQUIRES_APPROVAL: N_("Requires approval"),
+    NOT_FOUND: N_("Not found"),
 }
 
 
@@ -32,7 +33,7 @@ def status():
 
 
 def status_text(value):
-    return STATUS_TEXT.get(value, "Unknown")
+    return tr(STATUS_TEXT.get(value, N_("Unknown")))
 
 
 def installed_in_applications(bundle_path):

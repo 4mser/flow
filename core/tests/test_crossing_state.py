@@ -565,6 +565,17 @@ class CrossingStateTests(unittest.TestCase):
         self.assertIn(A, out["tell"])
         self.assertTrue(ways.has_way(out["settings"], A))
 
+    def test_a_relayed_picture_without_our_tile_is_not_answered(self):
+        # A-B-C with A and C unpaired: each end used to restamp the picture the other end sent
+        # through B, which lacks the receiver's tile, and the pair exchanged them for ever.
+        held = self.state().paired(settings(), platform="mac", own_displays=DISPLAYS, now=100)["settings"]
+        state = dict(set_at=200, by=B, tiles={A: tile(160, displays={"0": dict(x=0, y=0, w=3840, h=2160)}),
+                                              B: tile(320)})
+        out = self.state().receive_picture(held, state, source=B, capable={OWN, A, B},
+                                          own_displays=DISPLAYS, **self.args())
+        self.assertFalse(out["send_picture"])
+        self.assertTrue(out["forward_picture"])
+
     def test_migration_keeps_a_whole_edge_in_use_over_a_pick_left_on_an_off_part_zone(self):
         # AGY review, 10-10: the page showed the whole edge, so migration must not shrink it to the pick.
         held = settings()

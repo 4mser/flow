@@ -3,6 +3,7 @@ blooming into fluid wash on arrival.
 """
 
 import math
+from core.i18n import N_
 
 from . import effects
 
@@ -929,30 +930,30 @@ def _sumi_bloom_arrive(ctx, s):
 
 EFFECTS = [
     effects.Effect(
-        "capillary", "Capillary", "quiet",
-        "A soft pigment meniscus swells against the boundary with viscous surface tension. On "
+        "capillary", N_("Capillary"), "quiet",
+        N_("A soft pigment meniscus swells against the boundary with viscous surface tension. On "
         "breakthrough, it releases cleanly and diffuses as a calm, translucent wash on the "
-        "arrival screen.",
+        "arrival screen."),
         _capillary_depart, _capillary_arrive, 0.45, 0.50,
     ),
     effects.Effect(
-        "viscous_drop", "Viscous drop", "medium",
-        "An organic ink droplet gathers at the pointer, flattening against the glass edge before "
+        "viscous_drop", N_("Viscous drop"), "medium",
+        N_("An organic ink droplet gathers at the pointer, flattening against the glass edge before "
         "necking through the seam. On arrival, it splashes into a multi-lobed pigment bloom that "
-        "bleeds outward.",
+        "bleeds outward."),
         _viscous_drop_depart, _viscous_drop_arrive, 0.55, 0.60,
     ),
     effects.Effect(
-        "sumi_bloom", "Sumi bloom", "showpiece",
-        "Dense calligraphic ink pulls from the boundary into a viscous bridge that necks and "
+        "sumi_bloom", N_("Sumi bloom"), "showpiece",
+        N_("Dense calligraphic ink pulls from the boundary into a viscous bridge that necks and "
         "snaps through the seam. It arrives as an ink-in-water vortex bloom, unfurling delicate "
-        "pigment filaments that dissolve into the screen.",
+        "pigment filaments that dissolve into the screen."),
         _sumi_bloom_depart, _sumi_bloom_arrive, 0.70, 0.75,
     ),
 ]
 
 PACKS = {
-    "indigo_ink": ("Indigo ink", ["#16243b", "#253d66", "#3f639e", "#6891ce", "#a8c5ed"]),
-    "matcha": ("Matcha", ["#233818", "#3e5c2c", "#638a44", "#92b86e", "#cde6b0"]),
-    "terracotta": ("Terracotta", ["#4d1f16", "#7c3423", "#b35338", "#d97b5d", "#f3b59f"]),
+    "indigo_ink": (N_("Indigo ink"), ["#16243b", "#253d66", "#3f639e", "#6891ce", "#a8c5ed"]),
+    "matcha": (N_("Matcha"), ["#233818", "#3e5c2c", "#638a44", "#92b86e", "#cde6b0"]),
+    "terracotta": (N_("Terracotta"), ["#4d1f16", "#7c3423", "#b35338", "#d97b5d", "#f3b59f"]),
 }

@@ -39,6 +39,7 @@ import motion
 import theme
 import tokens
 from core.locale import americanise
+from core.i18n import N_, tr
 from core import ways as core_ways
 
 LEFT_CTRL_VK = 0xA2
@@ -418,6 +419,10 @@ class ActionButton(QPushButton):
     """An intrinsic action whose full label remains readable in a narrow column."""
 
     def __init__(self, text="", parent=None):
+        if isinstance(text, QWidget) and parent is None:
+            parent, text = text, ""
+        if text is None:
+            text = ""
         super().__init__(text, parent)
         self.setMaximumWidth(240)
         self.setMinimumHeight(30)
@@ -724,7 +729,9 @@ class Choice:
                  exclusive=True) -> None:
         self.view = _SegmentedView(parent)
         self._buttons: dict = {}
+        self._names: dict = {}
         for index, (value, text) in enumerate(items):
+            self._names[value] = text
             button = ActionButton(text, self.view)
             button.setMaximumWidth(16777215)
             button.setProperty("vernier", "choice")
@@ -766,8 +773,9 @@ class Choice:
 
     def set_names(self, prefix: str) -> None:
         """Each cell's accessible name leads with what the row chooses: "Where your Mac is, Left"."""
-        for button in self._buttons.values():
-            button.setAccessibleName(f"{prefix}, {button.text()}")
+        for value, button in self._buttons.items():
+            button.setAccessibleName(tr("{name}, {choice}").format(
+                name=prefix, choice=button.text()))
 
 
 class _TileOutline(QWidget):
@@ -941,7 +949,7 @@ class ChoiceTiles:
             tile.name_label.setIndent(_TileOutline.CHECK_ROOM if candidate == value else 0)
             tile.outline.update()
             title = self._titles[candidate]
-            tile.setAccessibleName(f"{title}, selected" if candidate == value else title)
+            tile.setAccessibleName(tr("{name}, selected").format(name=title) if candidate == value else title)
 
     def tile(self, value):
         return self._tiles.get(value)
@@ -1242,8 +1250,8 @@ class InputRecorder(ActionButton):
     ("key", virtual key) or ("button", name) pair, and a left click anywhere disarms it. The key is
     read as the low-level hook will report it, so what is recorded is what the hook matches."""
 
-    HINT = "Click, then press it"
-    RECORDING_HINT = "Click again to cancel"
+    HINT = N_("Click, then press it")
+    RECORDING_HINT = N_("Click again to cancel")
     BUTTONS = {
         Qt.MouseButton.RightButton: "right",
         Qt.MouseButton.MiddleButton: "middle",
@@ -1252,7 +1260,8 @@ class InputRecorder(ActionButton):
     }
 
     def __init__(self, title: str, on_record, hook_vk, parent: QWidget | None = None, keys_only: bool = False,
-                 name: str = "", mono: bool = True) -> None:
+                 name: str = "", mono: bool = True, hint: str = HINT,
+                 recording_hint: str = RECORDING_HINT) -> None:
         super().__init__(parent)
         # What the recorder is, before what it shows: "Shortcut key, Right Ctrl".
         self.name = name
@@ -1277,7 +1286,9 @@ class InputRecorder(ActionButton):
         row.setSpacing(10)
         self.key = label(title, "keycap", wrap=True)
         self.key.setFont(theme.mono_font(tokens.TYPE["field_mono"]) if mono else theme.font(tokens.TYPE["body"]))
-        self.hint = label(self.HINT, "small", wrap=True)
+        self.hint = label(hint, "small", wrap=True)
+        self.hint_text = hint
+        self.recording_hint = recording_hint
         for part in (self.key, self.hint):
             part.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         row.addWidget(self.key, 1)
@@ -1303,7 +1314,7 @@ class InputRecorder(ActionButton):
             self.key.setText(title)
 
     def _spoken(self, title: str) -> str:
-        return f"{self.name}, {title}" if self.name else title
+        return tr("{name}, {key}").format(name=self.name, key=title) if self.name else title
 
     def cancel(self) -> None:
         self.left_ctrl_held = False
@@ -1313,7 +1324,7 @@ class InputRecorder(ActionButton):
         QApplication.instance().removeEventFilter(self)
         self.key.setText(self.title)
         set_role(self.key, "keycap")
-        self.hint.setText(self.HINT)
+        self.hint.setText(self.hint_text)
         set_role(self, "keycap")
 
     def _toggle(self) -> None:
@@ -1321,9 +1332,9 @@ class InputRecorder(ActionButton):
             self.cancel()
             return
         self.armed = True
-        self.key.setText("Press a key or button…")
+        self.key.setText(tr("Press a key or button…"))
         set_role(self.key, "keycap-live")
-        self.hint.setText(self.RECORDING_HINT)
+        self.hint.setText(self.recording_hint)
         set_role(self, "keycap-live")
         QApplication.instance().installEventFilter(self)
 
@@ -1381,8 +1392,8 @@ class JumpKeyRecorder(ActionButton):
         row = QVBoxLayout(self)
         row.setContentsMargins(12, 5, 12, 5)
         row.setSpacing(2)
-        self.key = label("Choose a key combination", "body", wrap=True)
-        self.hint = label("Click, then press a key combination", "small", wrap=True)
+        self.key = label(tr("Choose a key combination"), "body", wrap=True)
+        self.hint = label(tr("Click, then press a key combination"), "small", wrap=True)
         self.key.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         row.addWidget(self.key)
@@ -1400,8 +1411,8 @@ class JumpKeyRecorder(ActionButton):
     def set_value(self, value: str) -> None:
         self.value = value or ""
         shown = " ".join(self._names.get(part, part.upper() if len(part) == 1 else part.replace("_", " ").title())
-                         for part in self.value.split("+")) if self.value else "Choose a key combination"
-        name = f"Jump straight here key, {shown}"
+                         for part in self.value.split("+")) if self.value else tr("Choose a key combination")
+        name = tr("Jump straight here key, {key}").format(key=shown)
         if self.accessibleName() != name:
             self.setAccessibleName(name)
         if not self.armed:
@@ -1418,7 +1429,7 @@ class JumpKeyRecorder(ActionButton):
             self.on_arm(False)
         self.set_value(self.value)
         set_role(self.key, "keycap" if self.value else "body")
-        self.hint.setText("Click, then press a key combination")
+        self.hint.setText(tr("Click, then press a key combination"))
         set_role(self, "keycap")
 
     def _toggle(self) -> None:
@@ -1426,9 +1437,9 @@ class JumpKeyRecorder(ActionButton):
             self.cancel()
             return
         self.armed = True
-        self.key.setText("Press a key combination…")
+        self.key.setText(tr("Press a key combination…"))
         set_role(self.key, "keycap-live")
-        self.hint.setText("Click again to cancel")
+        self.hint.setText(tr("Click again to cancel"))
         set_role(self, "keycap-live")
         QApplication.instance().installEventFilter(self)
         if self.on_arm is not None:
@@ -1614,7 +1625,7 @@ class Sidebar(QWidget):
         details_layout.addWidget(self.link_peer)
         self._link_layout.addWidget(self._link_details, 1)
         self.response_time = label("", "note")
-        self.response_time.setAccessibleName("Response time: no fresh measurement")
+        self.response_time.setAccessibleName(tr("Response time: no fresh measurement"))
         self.response_time.hide()
         outer.addWidget(link)
         response_row = QHBoxLayout()
@@ -1630,10 +1641,11 @@ class Sidebar(QWidget):
         list_layout.setSpacing(2)
         self._buttons: dict = {}
         for key, name, _purpose in pages:
-            button = PageButton(name)
+            shown_name = tr(name)
+            button = PageButton(shown_name)
             button._sidebar = self
             button._page_key = key
-            button.setToolTip(name)
+            button.setToolTip(shown_name)
             button.clicked.connect(lambda _checked=False, k=key: self._pointer_select(k))
             list_layout.addWidget(button)
             self._buttons[key] = button
@@ -1789,7 +1801,7 @@ class Sidebar(QWidget):
         self.response_time.setVisible(connected)
         if not connected:
             self.response_time.setText("")
-            self.response_time.setAccessibleName("Response time: disconnected")
+            self.response_time.setAccessibleName(tr("Response time: disconnected"))
             self.response_time.setToolTip("")
             return
         target = f" to {self._response_peer}" if getattr(self, "_response_peer", "") else ""

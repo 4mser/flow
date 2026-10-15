@@ -14,6 +14,8 @@ import hashlib
 import json
 import logging
 import os
+import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -26,12 +28,32 @@ from core import ignored
 from core import peerlist
 from core import protocol
 from core import receiver
+from core import i18n
 from core import return_edge
 from core import ways, crossing_state
+from core import profiles
 from core.pairing import local_address_towards
 import tokens
 
 LOGGER = logging.getLogger(__name__)
+_PROFILE_LOAD_NOTES = {}
+
+
+def load_notes(path: Path) -> list:
+    """Consume notices discovered while loading this file, without storing UI flags in it."""
+    with SETTINGS_LOCK:
+        return sorted(_PROFILE_LOAD_NOTES.pop(Path(path).resolve(), set()))
+
+
+def _remember_profile_notes(path, notes):
+    if "older_version" in notes:
+        _PROFILE_LOAD_NOTES.setdefault(Path(path).resolve(), set()).add("older_version")
+
+try:
+    PROFILE_APP_VERSION = (Path(getattr(sys, "_MEIPASS", None) or Path(__file__).resolve().parent.parent)
+                           / "VERSION").read_text().strip()
+except OSError:
+    PROFILE_APP_VERSION = profiles.APP_VERSION
 
 
 # Today's two styles and five colours, then every crossing effect and colour pack in effects.py.
@@ -103,6 +125,7 @@ class Config:
     check_updates: bool = True
     # Every address the window shows is hidden.
     hide_addresses: bool = False
+    language: str = "auto"
     # Same on all machines: the Crossing and Design pages kept in step with the Mac's, and the unix
     # seconds of the last change to that or to a shared value; see settings_sync.
     same_on_both: bool = False
@@ -146,6 +169,10 @@ class Config:
     # Only the machine in use shows a pointer: this PC's while it drives another, and after a driver
     # lets go of it until it moves (core/idle_pointer). This machine's own choice, never shared.
     hide_idle_pointer: bool = True
+    # Linux on Wayland: a key combination bound through the desktop's GlobalShortcuts portal sends
+    # input out while it is at home, where the double-tap cannot be seen. Off until chosen, since
+    # turning it on asks the desktop's permission. This machine's own choice, never shared.
+    home_shortcut: bool = False
     # The Mac's address is learned, never typed: it is the peer address the
     # Mac's own link arrives from.
     mac_host: str = ""
@@ -238,12 +265,16 @@ def validate_config(config: Config) -> None:
         raise ConfigError(f"modifier_style must be one of: {', '.join(MODIFIER_STYLES)}")
     if not isinstance(config.block_while_dragging, bool):
         raise ConfigError("block_while_dragging must be true or false")
+    if not isinstance(config.language, str) or (config.language != "auto" and config.language not in i18n.LANGUAGES):
+        raise ConfigError("language must be auto or a supported language code")
     if not isinstance(config.hold_full_screen, bool):
         raise ConfigError("hold_full_screen must be true or false")
     if not isinstance(config.show_in_tray, bool):
         raise ConfigError("show_in_tray must be true or false")
     if not isinstance(config.hide_idle_pointer, bool):
         raise ConfigError("hide_idle_pointer must be true or false")
+    if not isinstance(config.home_shortcut, bool):
+        raise ConfigError("home_shortcut must be true or false")
     if not isinstance(config.mac_hardware_address, str):
         raise ConfigError("mac_hardware_address must be text")
     if not isinstance(config.crossing_methods, list) or any(
@@ -365,6 +396,7 @@ def config_from_dict(raw: dict) -> Config:
             allow_mac_to_drive=raw.get("allow_mac_to_drive", True),
             check_updates=raw.get("check_updates", True),
             hide_addresses=raw.get("hide_addresses", False),
+            language=raw.get("language", "auto"),
             same_on_both=raw.get("same_on_both", False),
             same_set_at=_stamp(raw.get("same_set_at", 0)),
             same_groups=raw.get("same_groups", ["crossing", "design", "shortcut", "names"]
@@ -391,6 +423,7 @@ def config_from_dict(raw: dict) -> Config:
             hold_full_screen=raw.get("hold_full_screen", False),
             show_in_tray=raw.get("show_in_tray", True),
             hide_idle_pointer=raw.get("hide_idle_pointer", True),
+            home_shortcut=raw.get("home_shortcut", False),
             mac_hardware_address=raw.get("mac_hardware_address", "") or "",
             mac_host=raw.get("mac_host", "") or "",
             mac_return_edge=raw.get("mac_return_edge", "") or "",
@@ -449,6 +482,7 @@ def config_to_dict(config: Config) -> dict:
         "allow_mac_to_drive": config.allow_mac_to_drive,
         "check_updates": config.check_updates,
         "hide_addresses": config.hide_addresses,
+        "language": config.language,
         "same_on_both": config.same_on_both,
         "same_set_at": int(config.same_set_at),
         "same_groups": list(config.same_groups),
@@ -474,6 +508,7 @@ def config_to_dict(config: Config) -> dict:
         "hold_full_screen": config.hold_full_screen,
         "show_in_tray": config.show_in_tray,
         "hide_idle_pointer": config.hide_idle_pointer,
+        "home_shortcut": config.home_shortcut,
         "mac_hardware_address": config.mac_hardware_address,
         "mac_host": config.mac_host,
         "mac_return_edge": config.mac_return_edge,
@@ -673,6 +708,7 @@ def learn_peer_id(settings: dict, index: int, peer_id: str) -> None:
 
 def _write_json(path: Path, payload: dict) -> None:
     """A new file beside the old, then a rename over it."""
+    _backup_before_profile_upgrade(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = None
     try:
@@ -714,8 +750,11 @@ def load_settings(path: Path) -> dict:
     legacy = _read_object(legacy_config_path(path))
     if not path.exists():
         settings = migrate(legacy)
+        settings, notes = profiles.before_load(settings)
+        _remember_profile_notes(path, notes)
         settings = crossing_state.migrate(settings, "pc")["settings"]
         settings = crossing_state.paired(settings, platform="pc", own_displays={}, now=time.time())["settings"]
+        settings, _ = profiles.after_load(settings, platform="pc", now=time.time(), app=PROFILE_APP_VERSION)
         _write_json(path, settings)
         return settings
     settings = _read_object(path)
@@ -725,6 +764,9 @@ def load_settings(path: Path) -> dict:
         or not all(isinstance(entry, dict) for entry in settings["peers"] + settings["zones"])
     ):
         raise SettingsFileError(f"{path} is not a version {SCHEMA} Beamer settings file, and is left as it is")
+    original = copy.deepcopy(settings)
+    settings, notes = profiles.before_load(settings)
+    _remember_profile_notes(path, notes)
     if any("way_back_by" in entry and not isinstance(entry["way_back_by"], str) for entry in settings["peers"]):
         raise SettingsFileError(f"{path} has a peer way_back_by that is not text, and is left as it is")
     if any("in_use" in entry and not isinstance(entry["in_use"], bool) for entry in settings["peers"]):
@@ -768,7 +810,12 @@ def load_settings(path: Path) -> dict:
     settings = outcome["settings"]
     if remigrated:
         settings = crossing_state.paired(settings, platform="pc", own_displays={}, now=time.time())["settings"]
-    if remigrated or phones_repaired or intents_repaired or outcome["changed"]:
+    settings, _ = profiles.after_load(settings, platform="pc", now=time.time(), app=PROFILE_APP_VERSION)
+    if (remigrated or phones_repaired or intents_repaired or outcome["changed"] or "older_version" in notes
+            or _without_profile_state(settings) != _without_profile_state(original)
+            # Once the file holds profile state, a load's reconcile (its status, an older Beamer's
+            # edit folded in) is saved; only an upgrade waits for the first real save.
+            or "crossing_own" in original and settings != original):
         _write_json(path, settings)
     return settings
 
@@ -944,6 +991,46 @@ def write_settings(path: Path, settings: dict) -> None:
            for entry in settings.get("peers", []) if isinstance(entry, dict)):
         raise SettingsFileError(f"{path} has a peer jump_key that is not a recorded modifier chord")
     _write_json(path, settings)
+
+
+def _without_profile_state(settings: dict) -> dict:
+    result = copy.deepcopy(settings)
+    for name in ("crossing_own", "crossing_desk", "crossing_own_unreadable", "crossing_desk_unreadable",
+                 "_crossing_profiles_upgrade_pending"):
+        result.pop(name, None)
+    return result
+
+
+def _backup_before_profile_upgrade(path: Path) -> None:
+    """Keep the exact schema-6 source before the first save of a profile-migrated file."""
+    backup = path.with_name("settings.json.before-1.5.5")
+    if backup.exists():
+        return
+    try:
+        source = path.read_bytes()
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise
+    raw = json.loads(source)
+    if not isinstance(raw, dict) or raw.get("schema") != SCHEMA:
+        return
+    own, desk = raw.get("crossing_own"), raw.get("crossing_desk")
+    if profiles._local_shape(own, desk):
+        return
+    temporary_path = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{backup.name}.", dir=path.parent)
+        os.close(descriptor)
+        temporary_path = Path(temporary_name)
+        shutil.copyfile(path, temporary_path)
+        try:
+            os.link(temporary_path, backup)
+        except FileExistsError:
+            pass
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def set_own(path: Path, **fields) -> None:

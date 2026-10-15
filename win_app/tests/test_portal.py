@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -33,6 +34,16 @@ class RequestTest(unittest.TestCase):
         bus.answers["CreateSession"] = (0, {"session_handle": "/session/1", "capabilities": 3})
         results = portal.Portal(bus).request("I", "CreateSession", "sa{sv}", lambda token: ("", {"handle_token": ("s", token)}))
         self.assertEqual(results, {"session_handle": "/session/1", "capabilities": 3})
+
+    def test_a_request_unanswered_for_a_minute_is_logged_once_and_still_waited_for(self):
+        bus = FakeBus()
+        bus.answers["CreateSession"] = None
+        with unittest.mock.patch.object(portal, "SLOW_ANSWER_SECONDS", 0.05), \
+                self.assertLogs(portal.LOGGER, level="WARNING") as said, self.assertRaises(portal.PortalError):
+            portal.Portal(bus).request("org.freedesktop.portal.InputCapture", "CreateSession", "sa{sv}",
+                                       lambda token: ("", {"handle_token": ("s", token)}), timeout=0.4)
+        self.assertEqual(said.output, ["WARNING:portal:Still waiting for the desktop's answer to "
+                                       "InputCapture.CreateSession after 0 s"])
 
     def test_a_refusal_and_another_ending_are_told_apart(self):
         bus = FakeBus()

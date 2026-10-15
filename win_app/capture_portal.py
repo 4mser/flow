@@ -67,6 +67,7 @@ from capture_x11 import (  # noqa: F401  (the same evdev names and titles as X11
 from core import keytable
 from core import return_edge as crossing
 import desktop_portal
+import inject_portal
 import portal
 
 LOGGER = logging.getLogger(__name__)
@@ -93,6 +94,11 @@ HOME_AGAIN_SECONDS = 0.5
 # ei events that arrive before the portal's Activated signal says which barrier, held until it does.
 EARLY_MAX = 64
 EARLY_SECONDS = 1.0
+# A shortcut push must trigger capture before this deadline expires.
+PUSH_SECONDS = 1.5
+PUSH_INSET_PX = 4
+PUSH_STEPS = 6
+PUSH_STEP_PX = 24
 # libei's scroll is in the desktop's pixels; mutter and weston send 10 for one wheel click.
 PIXELS_PER_NOTCH = 10.0
 # evdev's button codes, as X numbers them for capture_x11's table.
@@ -411,6 +417,7 @@ class Hooks:
         self._ei_factory = ei or _ei_receiver
         self._tokens = tokens or portal.TokenStore("input-capture")
         self._clock = clock
+        self._push_lock = threading.Lock()
         self._whole_edges = linux_desktop.desktop() == "kde"
         self._unmatched_displays_logged = set()
         self._thread: Optional[threading.Thread] = None
@@ -427,9 +434,11 @@ class Hooks:
         self._reset()
 
     def _reset(self) -> None:
+        self._pending_push = None
         self._activation: Optional[int] = None
         self._press: Optional[Press] = None
         self._away = False
+        self._last_wall: Optional[str] = None
         self._home_since: Optional[float] = None
         self._early: List[tuple] = []
         self._early_at = 0.0
@@ -460,6 +469,42 @@ class Hooks:
 
     def barriers_from(self, models: Callable[[], list]) -> None:
         self._models = models
+
+    def push_through(self, models, on_captured, on_failed, timeout=PUSH_SECONDS) -> bool:
+        """Push the local pointer through one of the target peer's placed barriers."""
+        with self._push_lock:
+            if self._session is None or self._activation is not None or self._pending_push is not None:
+                return False
+        display_map = desktop_portal.display_map()
+        selected = barriers(models, self._zones, display_map=display_map,
+                            warn_unmatched=self._warn_unmatched_display)
+        if not selected:
+            return False
+        wall, (x1, y1, x2, y2) = selected[0]
+        if wall == "right":
+            start = (x1 - PUSH_INSET_PX, (y1 + y2) // 2)
+        elif wall == "left":
+            start = (x1 + PUSH_INSET_PX, (y1 + y2) // 2)
+        elif wall == "bottom":
+            start = ((x1 + x2) // 2, y1 - PUSH_INSET_PX)
+        else:
+            start = ((x1 + x2) // 2, y1 + PUSH_INSET_PX)
+        with self._push_lock:
+            if self._session is None or self._activation is not None or self._pending_push is not None:
+                return False
+            pending = (self._clock() + timeout, wall, on_captured, on_failed)
+            self._pending_push = pending
+
+        # Checked when the session runs it, which can be after the deadline though _tick has not
+        # yet cleared the push.
+        def wanted() -> bool:
+            with self._push_lock:
+                return self._pending_push is pending and self._clock() <= pending[0]
+
+        nx, ny = _NORMAL[wall]
+        moves = [(nx * PUSH_STEP_PX, ny * PUSH_STEP_PX) for _ in range(PUSH_STEPS)]
+        inject_portal.push(*start, moves, wanted)
+        return True
 
     @property
     def grabbed(self) -> bool:
@@ -651,6 +696,7 @@ class Hooks:
         barrier = options.get("barrier_id")
         # 0 is a push that met two barriers at once (a corner's two walls); the pointer says which.
         wall = self._walls.get(barrier) if barrier else self._wall_at(point)
+        self._last_wall = wall
         self._activation = activation
         self._frame = []
         desktop_portal.set_captured(True)
@@ -667,6 +713,19 @@ class Hooks:
             return
         self._press = Press(wall, point, self._zones, self._clock)
         desktop_portal.note_position(*self._press.point)
+        with self._push_lock:
+            pending = self._pending_push
+            if pending is not None and pending[0] >= self._clock() and pending[1] == wall:
+                self._pending_push = None
+            else:
+                pending = None
+        if pending is not None:
+            try:
+                pending[2]()
+            except Exception:
+                LOGGER.exception("The shortcut push capture callback failed; letting input go")
+                self._let_go(self._press.point)
+                return
         early, self._early = self._early, []
         for event, sequence in early:
             if self._current(sequence):
@@ -721,6 +780,35 @@ class Hooks:
         if self.on_home is not None:
             self.on_home()
 
+    def _consume_shake_home(self) -> bool:
+        # The hooks are handed the sender's bound callbacks rather than the sender, so its one-shot
+        # "this way home was a shake" flag is reached through on_motion's owner.
+        sender = getattr(self._on_motion, "__self__", None)
+        consume = getattr(sender, "_consume_shake_home", None)
+        return bool(consume()) if callable(consume) else False
+
+    def _shake_release_point(self, point: Tuple[int, int]) -> Tuple[int, int]:
+        wall = self._last_wall
+        candidates = [rect for edge, rect in self._placed if edge == wall]
+        if not candidates:
+            return point
+        x, y = point
+
+        def distance(rect):
+            x1, y1, x2, y2 = rect
+            return max(x1 - x, 0, x - x2) + max(y1 - y, 0, y - y2)
+
+        x1, y1, x2, y2 = min(candidates, key=distance)
+        if wall == "left":
+            x = x1 + 24
+        elif wall == "right":
+            x = x2 - 24
+        elif wall == "top":
+            y = y1 + 24
+        elif wall == "bottom":
+            y = y2 - 24
+        return x, y
+
     def _let_go(self, point: Tuple[int, int]) -> None:
         """Release at `point`. Input counts as held until the Release has gone, and a Release that
         fails ends the session, whose closing lets go of input whatever else has failed."""
@@ -757,6 +845,17 @@ class Hooks:
             return False
 
     def _tick(self) -> None:
+        with self._push_lock:
+            pending = self._pending_push
+            if pending is not None and self._clock() > pending[0]:
+                self._pending_push = None
+            else:
+                pending = None
+        if pending is not None:
+            try:
+                pending[3]()
+            except Exception:
+                LOGGER.exception("The shortcut push failure callback failed")
         session = self._session
         if self._activation is None:
             # Input away with nothing captured (a switch that passed input_held() just before a
@@ -783,6 +882,9 @@ class Hooks:
             return
         if self._away_wanted():
             self._home_since = None
+            return
+        if self._consume_shake_home():
+            self._let_go(self._shake_release_point(desktop_portal.cursor_position()))
             return
         now = self._clock()
         if self._home_since is None:
@@ -821,6 +923,11 @@ class Hooks:
         self._walls = {index + 1: wall for index, (wall, _position) in enumerate(placed) if index + 1 not in failed}
         if failed:
             LOGGER.warning("The desktop refused %d of %d edge barriers", len(failed), len(placed))
+        # Once per session: without it the log cannot tell a capture waiting on the desktop's
+        # dialog from one that is ready and simply not crossed yet (14-10-2026, Fedora).
+        if session.enabled and not getattr(session, "announced", False):
+            session.announced = True
+            LOGGER.info("Input capture is ready: %d of %d edge barriers placed", len(placed) - len(failed), len(placed))
 
     def _warn_unmatched_display(self, display: str) -> None:
         if display in self._unmatched_displays_logged:

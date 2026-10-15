@@ -125,6 +125,7 @@ KEYPAD_NAMES = {0xFF95: "home", 0xFF96: "left", 0xFF97: "up", 0xFF98: "right", 0
 _TITLES = {
     "shift": "Left Shift", "shift_r": "Right Shift", "ctrl": "Left Ctrl", "ctrl_r": "Right Ctrl",
     "alt": "Left Alt", "alt_r": "Right Alt", "cmd": "Left Super", "cmd_r": "Right Super", "caps_lock": "Caps Lock",
+    "hangul": "Han/Yeong", "hanja": "Hanja",
     "backspace": "Backspace", "tab": "Tab", "enter": "Enter", "esc": "Esc", "space": "Space", "delete": "Delete",
     "insert": "Insert", "home": "Home", "end": "End", "page_up": "Page Up", "page_down": "Page Down", "left": "Left",
     "right": "Right", "up": "Up", "down": "Down", "menu": "Menu", "print_screen": "Print Screen", "pause": "Pause",
@@ -144,7 +145,7 @@ VK_TITLES[96] = "Num Enter"
 # trigger also reaches apps at home, so Print Screen stays out as on Windows.
 NOT_TRIGGER_VKS = {code for code, physical in keytable.EVDEV_NAMES.items()
                     if physical.startswith(("media_", "volume_", "browser_", "brightness_", "mic_"))
-                    or physical in ("search", "mail", "calculator")}
+                    or physical in ("search", "mail", "calculator", "hangul", "hanja")}
 UNRECORDABLE_TRIGGER_VKS = {code for code, physical in keytable.EVDEV_NAMES.items()
                             if physical in ("backspace", "tab", "enter", "esc", "space", "print_screen")}
 

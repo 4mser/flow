@@ -65,7 +65,7 @@ setup(
             "../win_app/assets/B612Mono-Regular.ttf",
             "../win_app/assets/B612Mono-Bold.ttf",
         ],
-    ), ("", ["../VERSION"])],
+    ), ("", ["../VERSION"]), ("locales", [str(path) for path in Path(__file__).resolve().parent.parent.glob("locales/*.po")])],
     options={
         "py2app": {
             "argv_emulation": False,
@@ -78,7 +78,7 @@ setup(
             # the scan misses cannot drop out; naming the package whole would ship its tests too.
             "includes": [
                 "objc", "AppKit", "ApplicationServices", "Quartz", "UserNotifications",
-                "core.crash_log", "core.effects", "core.idle_pointer", "core.ignored", "core.keytable", "core.link", "core.owner", "core.pairing",
+                "core.crash_log", "core.effects", "core.i18n", "core.locale", "core.idle_pointer", "core.ignored", "core.keytable", "core.link", "core.owner", "core.pairing",
                 "core.peerlist", "core.protocol", "core.receiver", "core.return_edge", "core.settings_sync",
                 "core.updates", "core.wol",
                 "core.fx_ink", "core.fx_instrument", "core.fx_membrane", "core.fx_sparks", "core.fx_warp",
@@ -98,6 +98,8 @@ setup(
                 "ATSApplicationFontsPath": "Fonts",
                 "NSHumanReadableCopyright": "Copyright 2026 Toby Kalkman",
                 "NSLocalNetworkUsageDescription": "Beamer needs to reach your other computers on your local network to share keyboard and mouse input.",
+                "CFBundleLocalizations": ["en", "it"],
+                "CFBundleDevelopmentRegion": "en_GB",
             },
         }
     },

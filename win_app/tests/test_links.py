@@ -5,6 +5,8 @@ import queue
 import threading
 import time
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 from links_rig import B, C, CAPS, HERE, Rig, edge_zone, make_config
 
@@ -196,6 +198,29 @@ class TakingTests(unittest.TestCase):
         kinds = [message["type"] for message in self.rig.sent(B)]
         self.assertEqual(kinds, ["focus", "clipboard", "keydown"])
         self.assertEqual(self.rig.sent(B, "clipboard")[0]["data"]["text"], "here")
+
+    def test_input_method_keys_send_one_tap_and_never_enter_held_key_state(self):
+        self.sender.set_redirecting(True)
+        self.rig.accept_take()
+        self.rig.flush()
+        self.rig.links.sent.clear()
+        self.assertTrue(self.sender.on_key("hangul", True, 0x15))
+        self.assertTrue(self.sender.on_key("hangul", False, 0x15))
+        messages = self.rig.sent(B)
+        self.assertEqual([(item["type"], item["data"]["key"]) for item in messages],
+                         [(protocol.MSG_KEYDOWN, "hangul"), (protocol.MSG_KEYUP, "hangul")])
+        self.assertNotIn(0x15, self.sender._keys_down)
+        self.assertNotIn((B, "hangul"), self.sender._sent_names)
+        self.assertNotIn(0x15, self.sender._input_method_tap_releases)
+
+    def test_input_method_key_pressed_at_home_is_released_at_home(self):
+        self.assertFalse(self.sender.on_key("hanja", True, 0x19))
+        self.sender.set_redirecting(True)
+        self.rig.accept_take()
+        self.rig.flush()
+        self.rig.links.sent.clear()
+        self.assertFalse(self.sender.on_key("hanja", False, 0x19))
+        self.assertEqual(self.rig.sent(B), [])
 
     def test_noncomposable_dead_key_sequence_is_sent_as_text(self):
         self.sender.set_redirecting(True)
@@ -532,6 +557,12 @@ class KeyTests(unittest.TestCase):
     """Keys leave as the key table names them for the peer's platform (WIRE.md section 7)."""
 
     def setUp(self):
+        # These are Windows virtual keys, and the Windows key's shortcuts are this PC's own: the
+        # sender as Windows runs it, whichever machine runs the suite.
+        for name, value in (("sys", SimpleNamespace(platform="win32")), ("OWN_PLATFORM", "windows")):
+            patcher = mock.patch.object(sender, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.rig = Rig()
         self.sender = self.rig.sender
         self.sender.set_redirecting(True)

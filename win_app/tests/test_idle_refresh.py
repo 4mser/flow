@@ -29,6 +29,10 @@ class IdleRefreshTest(unittest.TestCase):
         theme.init_fonts()
 
     def setUp(self):
+        # British spelling, whatever region the machine running the suite is set to.
+        us_region = patch("core.locale.is_us_region", return_value=False)
+        us_region.start()
+        self.addCleanup(us_region.stop)
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
         self.path = Path(self.folder.name) / "idle-fixture.json"

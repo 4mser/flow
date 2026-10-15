@@ -13,6 +13,7 @@ import sys
 import time
 from typing import Callable, Optional
 
+from core.i18n import N_, joined, tr, trc
 from core import peerlist
 from core import return_edge
 from core.settings_sync import next_stamp
@@ -22,6 +23,16 @@ CORNERS = return_edge.CORNERS
 PARTS = return_edge.PARTS
 DEFAULT_PARTS = ["middle"]
 DEFAULT_CORNER = "top_left"
+EDGE_NAMES = {"left": N_("left"), "right": N_("right"), "top": N_("top"), "bottom": N_("bottom")}
+HERE_NAMES = {"this PC": N_("this PC"), "this Mac": N_("this Mac"), "this computer": N_("this computer")}
+PART_NAMES_LOWER = {"top": N_("top"), "middle": N_("middle"), "bottom": N_("bottom"),
+                    "left": N_("left"), "right": N_("right")}
+CORNER_NAMES = {"top_left": N_("Top left"), "top_right": N_("Top right"),
+                "bottom_left": N_("Bottom left"), "bottom_right": N_("Bottom right")}
+CORNER_NAMES_LOWER = {"top_left": N_("top left"), "top_right": N_("top right"),
+                      "bottom_left": N_("bottom left"), "bottom_right": N_("bottom right")}
+VERTICAL_PART_NAMES = {"start": N_("Top"), "middle": N_("Middle"), "end": N_("Bottom")}
+HORIZONTAL_PART_NAMES = {"start": N_("Left"), "middle": N_("Middle"), "end": N_("Right")}
 # How a notice names each kind of zone.
 KIND_WORDS = {"edge": "edge", "part": "part of the edge", "corner": "corner", "notch": "notch"}
 _JUMP_MODIFIERS = {"alt", "cmd", "ctrl", "shift"}
@@ -32,12 +43,12 @@ _JUMP_KEYS = {"backspace", "caps_lock", "delete", "down", "end", "enter", "esc",
 
 
 ATLAS_SENTENCES = {
-    "set_elsewhere": "Set on {first} or {second}.",
-    "between": "Crosses between {first} and {second}.",
-    "gap": "No edge leads to {name}. The shortcut and the menu still reach it.",
-    "edge_off": "Edge to {name} is off. Tick Edge to turn it back on.",
-    "unpicked": "None of the thirds picked for {name} touch its tile. Click a third along its edge.",
-    "overlap": "{first} overlaps {second}. Drag them apart.",
+    "set_elsewhere": N_("Set on {first} or {second}."),
+    "between": N_("Crosses between {first} and {second}."),
+    "gap": N_("No edge leads to {name}. The shortcut and the menu still reach it."),
+    "edge_off": N_("Edge to {name} is off. Tick Edge to turn it back on."),
+    "unpicked": N_("None of the thirds picked for {name} touch its tile. Click a third along its edge."),
+    "overlap": N_("{first} overlaps {second}. Drag them apart."),
 }
 ATLAS_PARTS = ("start", "middle", "end")
 DIAGRAM_THIS = (120.0, 75.0)
@@ -45,6 +56,30 @@ DIAGRAM_OTHER = (112.0, 63.0)
 DIAGRAM_GAP = 10.0
 DIAGRAM_SPLIT_GAP = 6.0
 DIAGRAM_MARGIN = 12.0
+# Machine tiles use map units; manual resizing clamps their longer side to this range.
+RESIZE_MIN = 40
+RESIZE_MAX = 480
+
+
+def resize_tile(tile, long_side):
+    """Return a proportionally resized copy with its origin and display rectangles unchanged."""
+    width, height = tile["w"], tile["h"]
+    target = max(RESIZE_MIN, min(RESIZE_MAX, int(round(long_side))))
+    scale = target / max(width, height)
+    resized = copy.deepcopy(tile)
+    resized["w"] = max(1, int(round(width * scale)))
+    resized["h"] = max(1, int(round(height * scale)))
+    for offset in resized.get("display_offsets", {}).values():
+        offset["x"] = int(round(offset["x"] * scale))
+        offset["y"] = int(round(offset["y"] * scale))
+    return resized
+
+
+def resize_from_drag(tile, dx, dy):
+    """Resize from the bottom-right handle using the larger proportional axis movement."""
+    width, height = tile["w"], tile["h"]
+    change = max((dx / width, dy / height), key=abs)
+    return resize_tile(tile, max(width, height) * (1 + change))
 
 
 def diagram_layout(width, height, machines):
@@ -828,16 +863,16 @@ def inverse_layout(settings, layout, width=160, height=100, gap=12, peer=None, o
 def part_names(edge: str) -> dict:
     """The labels for thirds along an edge, in the direction they run."""
     if edge in ("left", "right"):
-        return {"start": "Top", "middle": "Middle", "end": "Bottom"}
-    return {"start": "Left", "middle": "Middle", "end": "Right"}
+        return VERTICAL_PART_NAMES.copy()
+    return HORIZONTAL_PART_NAMES.copy()
 
 
 def parts_phrase(edge: str, parts) -> str:
     """The selected thirds in a sentence, defaulting to the middle when none are known."""
     names = part_names(edge)
-    chosen = [names[part].lower() for part in PARTS if part in parts] or ["middle"]
-    joined = chosen[0] if len(chosen) == 1 else ", ".join(chosen[:-1]) + " and " + chosen[-1]
-    return f"the {joined} of the {edge} edge"
+    chosen = [tr(PART_NAMES_LOWER[names[part].lower()])
+              for part in PARTS if part in parts] or [tr(PART_NAMES_LOWER["middle"])]
+    return tr("the {parts} of the {edge} edge").format(parts=joined(chosen), edge=tr(EDGE_NAMES.get(edge, edge)) if edge in EDGE_NAMES else edge)
 
 
 def toggle_part(parts, part, on) -> list:
@@ -925,15 +960,19 @@ def corner_holder(settings: dict, corner: str, exclude: Optional[str] = None) ->
 def edge_form_detail(side, methods, parts, here="This Mac") -> str:
     """The Edge way's detail on the Crossing page: which form crosses, or where to place it first."""
     if side not in EDGES:
-        return f"Place it beside {here} on the map"
+        return tr("Place it beside {here} on the map").format(here=here)
     thirds = picked_thirds(methods, parts)
     if not thirds:
-        return "Whole edge or the thirds you pick"
+        return tr("Whole edge or the thirds you pick")
     if len(thirds) == len(PARTS):
-        return "Whole edge"
-    names = [part_names(side)[part] for part in thirds]
-    named = names[0] if len(names) == 1 else " and ".join([", ".join(names[:-1]), names[-1].lower()])
-    return f"{named.capitalize()} third{'s' if len(names) > 1 else ''}"
+        return tr("Whole edge")
+    names = [tr(part_names(side)[part])
+             for part in thirds]
+    if len(names) == 1:
+        return tr("{name} third").format(name=names[0])
+    head = joined(names[:-1])
+    last = tr(PART_NAMES_LOWER[part_names(side)[thirds[-1]].lower()])
+    return tr("{first} and {last} thirds").format(first=head, last=last)
 
 
 def third_stretches(contact, own):
@@ -995,16 +1034,16 @@ def check_jump_key(settings: dict, peer: str, value, trigger_key: str) -> Option
         return None
     entry = _entry(settings, peer)
     if entry is not None and entry.get("port") == 0:
-        raise ValueError("a phone cannot be a jump target")
+        raise ValueError(tr("a phone cannot be a jump target"))
     if not isinstance(value, str):
-        raise ValueError("choose a modifier and one non-modifier key")
+        raise ValueError(tr("choose a modifier and one non-modifier key"))
     if not valid_jump_key(value):
-        raise ValueError("choose a modifier and one non-modifier key")
+        raise ValueError(tr("choose a modifier and one non-modifier key"))
     if _trigger_in_chord(trigger_key, value):
-        raise ValueError("that key is the trigger shortcut's: pick a chord without it")
+        raise ValueError(tr("that key is the trigger shortcut's: pick a chord without it"))
     for entry in settings.get("peers", []):
         if entry.get("id") != peer and jump_key(entry) == value:
-            raise ValueError("that key is already assigned to another machine")
+            raise ValueError(tr("that key is already assigned to another machine"))
     return value
 
 
@@ -1019,7 +1058,7 @@ def check_trigger_key(settings, trigger_key):
     for peer in settings.get("peers", []):
         chord = jump_key(peer)
         if chord and _trigger_in_chord(trigger_key, chord):
-            raise ValueError(f"That shortcut clashes with the jump key {chord}; the jump key has been kept.")
+            raise ValueError(tr("That shortcut clashes with the jump key {key}; the jump key has been kept.").format(key=chord))
 
 
 def shared_trigger_values(settings, values):
@@ -1265,6 +1304,7 @@ def _clashing(settings: dict):
 def clash(settings: dict, here: str) -> Optional[str]:
     """The sentence for two zones in use over one stretch of this machine's screen, naming the
     machines they lead to, or None when there is no such pair. `here` is "this Mac" or "this PC"."""
+    here = tr(HERE_NAMES[here]) if here in HERE_NAMES else here
     found = _clashing(settings)
     if found is None:
         return None
@@ -1274,20 +1314,27 @@ def clash(settings: dict, here: str) -> Optional[str]:
     other = peerlist.label_for(peers, peer_id=second.get("peer")) or peerlist.UNNAMED
     scope, part = stretch
     if isinstance(scope, tuple) and scope[0] == "display":
-        where = f"the {scope[2]} edge of display {scope[1]}"
+        where = tr("the {edge} edge of display {display}").format(edge=tr(EDGE_NAMES[scope[2]]), display=scope[1])
         kind = scope[0]
     elif isinstance(scope, tuple) and scope[0] == "display_corner":
-        where = f"the {part.replace('_', ' ')} corner of display {scope[1]}"
+        where = tr("the {corner} corner of display {display}").format(corner=tr(CORNER_NAMES_LOWER[part]), display=scope[1])
         kind = "corner"
     else:
-        where = {"notch": "the notch", "corner": f"the {part.replace('_', ' ')} corner"}.get(
-            scope, f"the {scope} edge")
+        where = (tr("the notch") if scope == "notch" else
+                 tr("the {corner} corner").format(corner=tr(CORNER_NAMES_LOWER[part])) if scope == "corner" else
+                 tr("the {edge} edge").format(edge=tr(EDGE_NAMES[scope])))
         kind = scope
     if first.get("peer") == second.get("peer"):
-        return f"Two of the ways to {one} cover {where} of {here}. Keep one of them."
-    fix = {"notch": "Turn the notch off for one of them.", "corner": "Choose another corner for one of them."}.get(
-        kind, "Move one of them to another side, or give each its own thirds of the edge.")
-    return f"{one} and {other} would both lead from {where} of {here}. {fix}"
+        # Translators: {where} names the screen region and {here} is this PC or Mac.
+        return tr("Two of the ways to {name} cover {where} of {here}. Keep one of them.").format(name=one, where=where, here=here)
+    if kind == "notch":
+        # Translators: {where} names the screen region and {here} is this PC or Mac.
+        return tr("{first} and {second} would both lead from {where} of {here}. Turn the notch off for one of them.").format(first=one, second=other, where=where, here=here)
+    if kind == "corner":
+        # Translators: {where} names the screen region and {here} is this PC or Mac.
+        return tr("{first} and {second} would both lead from {where} of {here}. Choose another corner for one of them.").format(first=one, second=other, where=where, here=here)
+    # Translators: {where} names the screen region and {here} is this PC or Mac.
+    return tr("{first} and {second} would both lead from {where} of {here}. Move one of them to another side, or give each its own thirds of the edge.").format(first=one, second=other, where=where, here=here)
 
 
 def _id_bytes(text) -> Optional[bytes]:
@@ -1366,6 +1413,7 @@ def crosses_on_map(settings: dict, peer: str) -> bool:
 def blocked_sentence(settings: dict, peer: str, here: str, live: Optional[Callable[[str], bool]] = None) -> str:
     """The Crossing page's sentence for a machine whose side another machine's edge already holds and
     that has no way in of its own; "" otherwise, and "" for a holder with no link now, which gives way."""
+    here = tr(HERE_NAMES[here]) if here in HERE_NAMES else here
     entry = _entry(settings, peer) or {}
     side = entry.get("side")
     if side not in EDGES or has_way(settings, peer):
@@ -1377,8 +1425,8 @@ def blocked_sentence(settings: dict, peer: str, here: str, live: Optional[Callab
     peers = settings["peers"]
     name = peerlist.label_for(peers, peer_id=peer) or peerlist.UNNAMED
     other = peerlist.label_for(peers, peer_id=holder) or peerlist.UNNAMED
-    return (f"{name} has no way in: {other} already leads from the {side} edge of {here}. Give each its own "
-            "thirds of that edge by moving the machines on the map, or move one to another side.")
+    # Translators: {here} is this PC or Mac; {side} is the side of its screen.
+    return tr("{name} has no way in: {other} already leads from the {side} edge of {here}. Give each its own thirds of that edge by moving the machines on the map, or move one to another side.").format(name=name, other=other, side=tr(EDGE_NAMES[side]), here=here)
 
 
 def no_way_back_sentence(settings: dict, peer: str) -> str:
@@ -1391,13 +1439,13 @@ def no_way_back_sentence(settings: dict, peer: str) -> str:
     other_id = entry.get("way_back_by")
     other_bytes = _id_bytes(other_id)
     if other_bytes is not None and other_bytes != _id_bytes(settings.get("machine_id")):
-        other = peerlist.label_for(settings["peers"], peer_id=other_id) or "another machine"
+        other = peerlist.label_for(settings["peers"], peer_id=other_id) or tr("another machine")
         side = entry.get("side")
         facing = return_edge.OPPOSITE[side] if side in EDGES else None
-        where = f" on its {facing} too" if facing else " too"
-        return (f"{name} has {other}{where}, so none of its edges leads back here. On {name}'s Crossing page, "
-                "share that side by thirds or move one of them.")
-    return f"{name} has no way back to this machine: none of its edges leads here. Its own Crossing page says why."
+        if facing:
+            return tr("{name} has {other} on its {facing} too, so none of its edges leads back here. On {name}'s Crossing page, share that side by thirds or move one of them.").format(name=name, other=other, facing=tr(EDGE_NAMES[facing]))
+        return tr("{name} has {other} too, so none of its edges leads back here. On {name}'s Crossing page, share that side by thirds or move one of them.").format(name=name, other=other)
+    return tr("{name} has no way back to this machine: none of its edges leads here. Its own Crossing page says why.").format(name=name)
 
 
 def way_back_by(settings: dict, peer: str) -> Optional[str]:
@@ -1458,13 +1506,14 @@ def settle_presence(settings: dict, here: str, live, gone) -> list:
 
 def gone_sentence(settings: dict, peer: str, here: str, gone: Callable[[str], bool]) -> str:
     """The Crossing page's sentence for a machine that has removed this pairing, "" for any other."""
+    here = tr(HERE_NAMES[here]) if here in HERE_NAMES else here
     if not gone(peer):
         return ""
     name = peerlist.label_for(settings["peers"], peer_id=peer) or peerlist.UNNAMED
     if has_way(settings, peer):
-        return (f"{name} no longer has this pairing. If another machine takes its side, {here} gives it up. "
-                f"Remove {name} here and pair the two again.")
-    return f"{name} no longer has this pairing, so it has no way in. Remove {name} here and pair the two again."
+        # Translators: {here} is this PC or Mac.
+        return tr("{name} no longer has this pairing. If another machine takes its side, {here} gives it up. Remove {name} here and pair the two again.").format(name=name, here=here)
+    return tr("{name} no longer has this pairing, so it has no way in. Remove {name} here and pair the two again.").format(name=name)
 
 
 
@@ -1588,17 +1637,20 @@ def missing_pairings(settings: dict, peer: str) -> list:
 
 def missing_sentence(settings: dict, peer: str, here: str) -> str:
     """The Crossing page's sentence for `missing_pairings`, "" when there are none."""
+    here = tr(HERE_NAMES[here]) if here in HERE_NAMES else here
     missing = missing_pairings(settings, peer)
     if not missing:
         return ""
     peers = settings["peers"]
     names = [peerlist.label_for(peers, peer_id=entry.get("id")) or peerlist.UNNAMED for entry in missing]
     target = peerlist.label_for(peers, peer_id=peer) or peerlist.UNNAMED
-    drivers = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " or " + names[-1]
     if len(names) == 1:
-        why = f"{names[0]} is not paired with {target}"
-    elif len(names) == 2:
-        why = f"neither is paired with {target}"
-    else:
-        why = f"none of them is paired with {target}"
-    return f"While {drivers} drives {here}, this way to {target} does nothing: {why}. Pair them to use it from there too."
+        # Translators: {here} is this PC or Mac; {name} and {target} are machine names.
+        return tr("While {name} drives {here}, this way to {target} does nothing: {name} is not paired with {target}. Pair them to use it from there too.").format(name=names[0], here=here, target=target)
+    if len(names) == 2:
+        drivers = trc("ways alternatives", "{first} or {last}").format(first=names[0], last=names[1])
+        # Translators: {drivers} is a list of machine names; {here} is this PC or Mac.
+        return tr("While {drivers} drives {here}, this way to {target} does nothing: neither is paired with {target}. Pair them to use it from there too.").format(drivers=drivers, here=here, target=target)
+    drivers = trc("ways alternatives", "{head} or {last}").format(head=trc("list", ", ").join(names[:-1]), last=names[-1])
+    # Translators: {drivers} is a list of machine names; {here} is this PC or Mac.
+    return tr("While {drivers} drives {here}, this way to {target} does nothing: none of them is paired with {target}. Pair them to use it from there too.").format(drivers=drivers, here=here, target=target)

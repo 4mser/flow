@@ -77,6 +77,7 @@ class Config:
     check_updates: bool = True
     # Every address the window shows is hidden; see pages.redact.
     hide_addresses: bool = False
+    language: str = "auto"
     # Only the machine in use shows a pointer: this Mac's after a driver lets go of it, until it
     # moves (core/idle_pointer). Its pointer always hides while it drives. This Mac's own choice.
     hide_idle_pointer: bool = True
@@ -219,5 +220,6 @@ def parse_config(raw: dict) -> Config:
         scroll_speed=raw.get("scroll_speed", 1.0),
         reverse_scroll=raw.get("reverse_scroll", False),
         appearance=raw.get("appearance") if raw.get("appearance") in APPEARANCES else "system",
+        language=raw.get("language") if raw.get("language") in ("auto", "en", "it") else "auto",
         ignored_inputs=raw.get("ignored_inputs", []),
     )

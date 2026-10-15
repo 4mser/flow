@@ -801,6 +801,17 @@ def move_to(x: int, y: int) -> None:
     remote().submit(lambda session: session.place(x, y))
 
 
+def push(x: int, y: int, moves: List[Tuple[int, int]], wanted: Callable[[], bool]) -> None:
+    def go(session: Remote) -> None:
+        if not wanted():
+            return
+        session.place(x, y)
+        for dx, dy in moves:
+            session.move_by(dx, dy)
+
+    remote().submit(go)
+
+
 def inject_mouse_button(button: str, down: bool) -> None:
     code = BUTTONS.get(button)
     if code is None:

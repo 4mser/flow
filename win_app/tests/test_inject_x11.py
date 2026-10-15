@@ -3,6 +3,7 @@ tools/x11_proof.sh types through the same module on a real X server and reads it
 
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -68,6 +69,8 @@ class NamedKeyTest(unittest.TestCase):
         self.assertEqual(plan("alt_r"), [(PRESS, 108)])
         self.assertEqual(plan("f24"), [(PRESS, 202)])
         self.assertEqual(plan("media_play_pause"), [(PRESS, 172)])
+        self.assertEqual(plan("hangul"), [(PRESS, 130)])
+        self.assertEqual(plan("hanja"), [(PRESS, 131)])
 
     def test_search_intents_open_the_gnome_activities_key(self):
         self.assertEqual(plan("spotlight"), [(PRESS, 133)])
@@ -89,8 +92,11 @@ class NamedKeyTest(unittest.TestCase):
         self.assertEqual(state.mods_down, {"shift_r"})
 
     def test_an_unknown_name_is_dropped(self):
-        with self.assertLogs(inject_x11.LOGGER, "WARNING"):
-            self.assertEqual(plan("hyper_q"), [])
+        old_names = {name: code for name, code in inject_x11.NAME_TO_CODE.items() if name not in ("hangul", "hanja")}
+        with mock.patch.object(inject_x11, "NAME_TO_CODE", old_names):
+            for name in ("hangul", "hanja"):
+                with self.subTest(name=name), self.assertLogs(inject_x11.LOGGER, "WARNING"):
+                    self.assertEqual(plan(name), [])
 
 
 class CharacterTest(unittest.TestCase):

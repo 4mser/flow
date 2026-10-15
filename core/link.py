@@ -24,6 +24,7 @@ import time
 from core import peerlist
 from core import protocol
 from core import receiver
+from core.i18n import tr
 from core.response_time import ResponseTime
 
 LOGGER = logging.getLogger("Beamer")
@@ -64,12 +65,12 @@ def connection_ended(exc, name):
     """What a failed connect says, in the words 1.4.x used, naming the peer."""
     number = getattr(exc, "errno", None)
     if number in (51, 64, 65, errno.EHOSTUNREACH, errno.ENETUNREACH):
-        return LinkEnded(f"{name} is unreachable from this machine. Check that both can communicate on the local network.", "unreachable")
+        return LinkEnded(tr("{name} is unreachable from this machine. Check that both can communicate on the local network.").format(name=name), "unreachable")
     if number in (61, errno.ECONNREFUSED):
-        return LinkEnded(f"{name} is reachable, but Beamer is not listening on this port.", "refused")
+        return LinkEnded(tr("{name} is reachable, but Beamer is not listening on this port.").format(name=name), "refused")
     if isinstance(exc, (socket.timeout, TimeoutError)):
-        return LinkEnded(f"{name} did not answer before the connection timed out.", "timeout")
-    return LinkEnded(f"Connection failed: {exc}", "failed")
+        return LinkEnded(tr("{name} did not answer before the connection timed out.").format(name=name), "timeout")
+    return LinkEnded(tr("Connection failed: {error}").format(error=exc), "failed")
 
 
 class OutboundLink:
@@ -246,7 +247,7 @@ class OutboundLink:
                                        peer_id=entry.get("id"), host=entry.get("host"))
         except Exception:
             shown = ""
-        return shown or entry.get("host") or "The other machine"
+        return shown or entry.get("host") or tr("The other machine")
 
     # The thread
 
@@ -264,7 +265,7 @@ class OutboundLink:
                     self._wake.clear()
                     continue
                 if entry is None:
-                    self._report(False, "This pairing was removed", "removed")
+                    self._report(False, tr("This pairing was removed"), "removed")
                     return
                 target = self._target(entry)
                 shape = (entry.get("host"), entry.get("port"), entry.get("id"))
@@ -311,7 +312,7 @@ class OutboundLink:
                             if self.kind != "forgotten":
                                 LOGGER.info("%s has closed every handshake for %d seconds; it no longer has this pairing",
                                             name, FORGOTTEN_AFTER_SECONDS)
-                            self._report(False, f"{name} no longer has this pairing: use Re-pair on Overview", "forgotten")
+                            self._report(False, tr("{name} no longer has this pairing: use Re-pair on Overview").format(name=name), "forgotten")
                             wait = max(wait, FORGOTTEN_RETRY_SECONDS)
                         else:
                             self._report(False, ended.text, ended.kind)
@@ -326,7 +327,7 @@ class OutboundLink:
                     closed_since = None
                     LOGGER.exception("the link to %s failed", self._name(entry))
                     if tried is None and not self._stop.is_set():
-                        self._report(False, "The link failed", "failed")
+                        self._report(False, tr("The link failed"), "failed")
                 if self._stop.is_set():
                     break
                 self._wake.wait(wait)
@@ -370,25 +371,25 @@ class OutboundLink:
                 try:
                     sock = self._tunnel()
                 except OSError as tunnel_exc:
-                    raise LinkEnded("macOS 27 blocked direct LAN access. Open /Applications/Beamer Tunnel.command.", "blocked") from tunnel_exc
+                    raise LinkEnded(tr("macOS 27 blocked direct LAN access. Open /Applications/Beamer Tunnel.command."), "blocked") from tunnel_exc
                 self.via_tunnel = True
-            self.status = f"Connecting to {host}:{port}"
+            self.status = tr("Connecting to {host}:{port}").format(host=host, port=port)
             with self._lock:
                 self._pending = sock
             if self._stop.is_set():
-                raise LinkEnded("This link was stopped", "off")
+                raise LinkEnded(tr("This link was stopped"), "off")
             deadline = time.monotonic() + HANDSHAKE_SECONDS
             fields = self._handshake(_Interruptible(sock, self._stop), entry, host, deadline, direct)
             if self._stop.is_set():
-                raise LinkEnded("This link was stopped", "off")
+                raise LinkEnded(tr("This link was stopped"), "off")
         except LinkEnded:
             self._forget_pending(sock)
             raise
         except (socket.timeout, TimeoutError):
             self._forget_pending(sock)
             if self._answered:
-                raise LinkEnded(f"{name} stopped responding", "stopped") from None
-            raise LinkEnded(f"{name} did not answer as a Beamer: it is probably running one from before version 4", "not_beamer") from None
+                raise LinkEnded(tr("{name} stopped responding").format(name=name), "stopped") from None
+            raise LinkEnded(tr("{name} did not answer as a Beamer: it is probably running one from before version 4").format(name=name), "not_beamer") from None
         except (protocol.ConnectionClosed, ConnectionError):
             self._forget_pending(sock)
             raise LinkEnded(self._closed_text(entry), "closed") from None
@@ -397,10 +398,10 @@ class OutboundLink:
             raise connection_ended(exc, name) from None
         except protocol.AuthenticationError:
             self._forget_pending(sock)
-            raise LinkEnded(f"{name} could not be authenticated: something on the path altered the link", "unauthenticated") from None
+            raise LinkEnded(tr("{name} could not be authenticated: something on the path altered the link").format(name=name), "unauthenticated") from None
         except protocol.ProtocolError as exc:
             self._forget_pending(sock)
-            raise LinkEnded(f"{name} did not answer like Beamer: {exc}", "failed") from None
+            raise LinkEnded(tr("{name} did not answer like Beamer: {error}").format(name=name, error=exc), "failed") from None
         self._answered = True
         sock.settimeout(READ_SECONDS)
         with self._lock:
@@ -427,8 +428,8 @@ class OutboundLink:
     def _closed_text(self, entry):
         name = self._name(entry)
         if not entry.get("linked"):
-            return f"Update Beamer on {name} to 1.5.0; if it is up to date, pair the two again"
-        return f"{name} closed the connection: it may have removed this machine, or be too busy to answer"
+            return tr("Update Beamer on {name} to 1.5.0; if it is up to date, pair the two again").format(name=name)
+        return tr("{name} closed the connection: it may have removed this machine, or be too busy to answer").format(name=name)
 
     def _handshake(self, sock, entry, host, deadline, direct):
         name = self._name(entry)
@@ -443,14 +444,14 @@ class OutboundLink:
             preamble = protocol.recv_link_preamble(sock, deadline)
         except protocol.VersionMismatch as exc:
             if exc.peer_version is None:
-                raise LinkEnded(f"{name} did not answer as a Beamer", "not_beamer") from None
+                raise LinkEnded(tr("{name} did not answer as a Beamer").format(name=name), "not_beamer") from None
             if exc.peer_version < protocol.LINK_VERSION:
-                raise LinkEnded(f"Update Beamer on {name}: it is older than this one", "older") from None
-            raise LinkEnded(f"{name} runs a newer Beamer: update Beamer on this machine", "newer") from None
+                raise LinkEnded(tr("Update Beamer on {name}: it is older than this one").format(name=name), "older") from None
+            raise LinkEnded(tr("{name} runs a newer Beamer: update Beamer on this machine").format(name=name), "newer") from None
         try:
             session.accept_preamble(preamble)
         except protocol.PreambleRefused:
-            raise LinkEnded(f"A different Beamer answered at {host}", "different") from None
+            raise LinkEnded(tr("A different Beamer answered at {host}").format(host=host), "different") from None
         hello = protocol.hello_v6(
             own_id, identity["name"], identity["platform"], identity["app"], identity["caps"], int(identity.get("port") or 0), self._hardware_towards(host, identity))
         sock.settimeout(max(0.001, deadline - time.monotonic()))
@@ -459,10 +460,10 @@ class OutboundLink:
             welcome = protocol.read_welcome(protocol.recv_first_msg(sock, session, deadline))
         except protocol.HelloRefused as refused:
             if refused.error == protocol.ERROR_WRONG_ID:
-                raise LinkEnded(f"{name} has this pairing under another machine: use Re-pair on Overview.", "wrong_id", stop_dialling=True) from None
-            raise LinkEnded(f"{name} could not read what this machine sent first; Beamer on the two machines may differ", "unreadable") from None
+                raise LinkEnded(tr("{name} has this pairing under another machine: use Re-pair on Overview.").format(name=name), "wrong_id", stop_dialling=True) from None
+            raise LinkEnded(tr("{name} could not read what this machine sent first; Beamer on the two machines may differ").format(name=name), "unreadable") from None
         except (protocol.InvalidWelcome, protocol.NotAnObject):
-            raise LinkEnded(f"A different Beamer answered at {host}", "different") from None
+            raise LinkEnded(tr("A different Beamer answered at {host}").format(host=host), "different") from None
         changes = {"name": welcome["name"], "platform": welcome["platform"]}
         if welcome["hw"] is not None:
             changes["hw"] = welcome["hw"]
@@ -472,11 +473,11 @@ class OutboundLink:
             outcome, _ = self._book.admit(self.key_id, own_id, welcome["id"], changes)
         except Exception:
             LOGGER.exception("Could not save what the link to %s taught", name)
-            raise LinkEnded(f"Could not save what {name} told this machine", "failed") from None
+            raise LinkEnded(tr("Could not save what {name} told this machine").format(name=name), "failed") from None
         if outcome == receiver.GONE:
-            raise LinkEnded("This pairing was removed", "removed")
+            raise LinkEnded(tr("This pairing was removed"), "removed")
         if outcome == receiver.WRONG_ID:
-            raise LinkEnded(f"A different Beamer answered at {host}", "different")
+                raise LinkEnded(tr("A different Beamer answered at {host}").format(host=host), "different")
         sock.settimeout(READ_SECONDS)
         welcome["own_caps"] = identity["caps"]
         welcome["session"] = session
@@ -504,11 +505,12 @@ class OutboundLink:
         name = self._name(entry)
         writer = threading.Thread(target=self._write, args=(sock, session), name="Beamer-link-writer", daemon=True)
         writer.start()
-        way = " via the secure macOS 27 fallback" if self.via_tunnel else ""
+        message = (tr("Connected to {name} via the secure macOS 27 fallback").format(name=name) if self.via_tunnel
+                   else tr("Connected to {name}").format(name=name))
         self.dialled = (self._dialled_to, self._dialled_port)
-        self._report(True, f"Connected to {name}{way}", "connected")
+        self._report(True, message, "connected")
         self._call(1, fields)
-        reason, kind = f"{name} closed the connection", "closed"
+        reason, kind = tr("{name} closed the connection").format(name=name), "closed"
         try:
             self._read(sock, session, name)
         except LinkEnded as ended:
@@ -516,9 +518,9 @@ class OutboundLink:
         except (protocol.ConnectionClosed, ConnectionError):
             pass
         except protocol.AuthenticationError:
-            reason, kind = f"{name} could not be authenticated: something on the path altered the link", "unauthenticated"
+            reason, kind = tr("{name} could not be authenticated: something on the path altered the link").format(name=name), "unauthenticated"
         except (OSError, protocol.ProtocolError) as exc:
-            reason, kind = f"The link to {name} failed: {exc}", "failed"
+            reason, kind = tr("The link to {name} failed: {error}").format(name=name, error=exc), "failed"
         finally:
             if self._drop_reason is not None:
                 reason, kind, self._drop_reason = self._drop_reason, "failed", None
@@ -578,7 +580,7 @@ class OutboundLink:
                     if length - 20 > protocol.SMALL_MESSAGE_BYTES:
                         self._begin_ack_pause(began or now)
             elif now - self._last_rx > SILENCE_SECONDS:
-                raise LinkEnded(f"{name} stopped responding", "stopped")
+                raise LinkEnded(tr("{name} stopped responding").format(name=name), "stopped")
             while len(buffer) >= protocol.HEADER_SIZE:
                 length = int.from_bytes(buffer[:protocol.HEADER_SIZE], "big")
                 if length < protocol.MIN_FRAME_BYTES or length > protocol.MAX_FRAME_BYTES:
@@ -586,7 +588,7 @@ class OutboundLink:
                 if len(buffer) < protocol.HEADER_SIZE + length:
                     break
                 if now - began > protocol.FRAME_COMPLETE_SECONDS:
-                    raise LinkEnded(f"{name} took too long to send one message", "stopped")
+                    raise LinkEnded(tr("{name} took too long to send one message").format(name=name), "stopped")
                 body = bytes(buffer[protocol.HEADER_SIZE:protocol.HEADER_SIZE + length])
                 del buffer[:protocol.HEADER_SIZE + length]
                 plain = session.open_raw(body)
@@ -604,7 +606,7 @@ class OutboundLink:
                     if next_length - 20 > protocol.SMALL_MESSAGE_BYTES:
                         self._begin_ack_pause(began or now)
             if buffer and now - began > protocol.FRAME_COMPLETE_SECONDS:
-                raise LinkEnded(f"{name} took too long to send one message", "stopped")
+                raise LinkEnded(tr("{name} took too long to send one message").format(name=name), "stopped")
             self._tick(self._clock())
 
     def _large_due(self, began):
@@ -662,16 +664,16 @@ class OutboundLink:
                 "%s stopped acknowledging input: oldest seq %d, last acked seq %d, %d unacknowledged",
                 self.peer_name, oldest[0], last_acked, pending,
             )
-            raise LinkEnded(f"{self.peer_name} stopped acknowledging input", "stalled")
+            raise LinkEnded(tr("{name} stopped acknowledging input").format(name=self.peer_name), "stalled")
         if self._writing and now - self._last_progress > STALL_SECONDS:
-            raise LinkEnded(f"{self._name(self.entry())} stopped accepting data", "stopped")
+            raise LinkEnded(tr("{name} stopped accepting data").format(name=self._name(self.entry())), "stopped")
         if now - self._checked_at >= 1.0:
             self._checked_at = now
             entry = self.entry()
             if entry is None:
-                raise LinkEnded("This pairing was removed", "removed")
+                raise LinkEnded(tr("This pairing was removed"), "removed")
             if entry.get("send") is not True:
-                raise LinkEnded("Sending to this machine was switched off", "off")
+                raise LinkEnded(tr("Sending to this machine was switched off"), "off")
         if self._response_time_enabled:
             if now >= self._next_response_probe:
                 self._next_response_probe = now + PING_SECONDS

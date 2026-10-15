@@ -138,7 +138,7 @@ class Hand:
     def connect(self, other):
         link = Initiator(other.machine, self.desk.own, key(self.desk.own, other.own))
         welcome = link.handshake(hello=link.hello(id=self.desk.own, name=self.desk.name,
-                                                  platform=self.desk.platform_name, caps=list(CAPS)))
+                                                  platform=self.desk.platform_name, caps=list(self.desk.caps)))
         with self.lock:
             self.links[text(other.own)] = link
             self.capabilities[text(other.own)] = set(welcome["caps"])
@@ -245,7 +245,7 @@ class Desk:
     """One machine. `platform` is "mac" or "pc"; `displays` maps the app's display keys to their
     rectangles in its own pixels (points on a Mac)."""
 
-    def __init__(self, net, own, name, platform, displays, tile=(160, 100)):
+    def __init__(self, net, own, name, platform, displays, tile=(160, 100), profiles=False):
         self.net = net
         self.own = own
         self.id = text(own)
@@ -254,8 +254,10 @@ class Desk:
         self.platform_name = "macos" if platform == "mac" else "windows"
         self.screen = Screen(displays)
         self.tile_size = tile
+        self.profiles = profiles
+        self.caps = CAPS + ["profiles"] if profiles else list(CAPS)
         self.lock = threading.RLock()
-        self.machine = Machine([], [], caps=CAPS, desktop=self.screen, own=own, name=name)
+        self.machine = Machine([], [], caps=self.caps, desktop=self.screen, own=own, name=name)
         self.machine.settings.data.update({"layout": {}, "layout_set_at": 0, "layout_by": "",
                                            "same_on_both": False})
         self.machine.book = receiver.PeerBook(self.machine.settings.load, self.machine.settings.save, self.lock)
@@ -333,8 +335,9 @@ class Net:
         self.desks = {}
         self.shells = shells
 
-    def add(self, name, platform, displays, seed, tile=(160, 100)):
-        desk = Desk(self, ident(seed), name, platform, displays, tile)
+    def add(self, name, platform, displays, seed, tile=(160, 100), profiles=False):
+        """`profiles` makes it a 1.5.5 desk: it advertises `profiles` and its shell syncs the desk."""
+        desk = Desk(self, ident(seed), name, platform, displays, tile, profiles)
         self.test.addCleanup(desk.hand.close)
         desk.shell = self.shells[platform](desk)
         self.test.addCleanup(desk.shell.stop)

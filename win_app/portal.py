@@ -33,6 +33,9 @@ PROPERTIES = "org.freedesktop.DBus.Properties"
 NOTIFICATION = "org.freedesktop.portal.Notification"
 CALL_SECONDS = 10.0
 TICK_SECONDS = 0.1
+# A request still unanswered after this long is said in the log once, and still waited for: the
+# user may be taking their time over the dialog, or the desktop may have lost it.
+SLOW_ANSWER_SECONDS = 60.0
 
 
 class Refused(Exception):
@@ -127,7 +130,9 @@ class Portal:
         token = self.token()
         path = f"/org/freedesktop/portal/desktop/request/{self._sender}/{token}"
         self.call(interface, method, signature, make_body(token))
-        deadline = None if timeout is None else time.monotonic() + timeout
+        started = time.monotonic()
+        deadline = None if timeout is None else started + timeout
+        warned = False
         while True:
             for item in list(self._waiting):
                 _kind, at, iface, member, body = item
@@ -141,6 +146,10 @@ class Portal:
                     raise PortalError(f"{method} ended without an answer ({code})")
             if self._stopping():
                 raise PortalError(f"{method} was abandoned: Beamer is stopping")
+            if not warned and time.monotonic() - started >= SLOW_ANSWER_SECONDS:
+                warned = True
+                LOGGER.warning("Still waiting for the desktop's answer to %s.%s after %d s",
+                               interface.rsplit(".", 1)[-1], method, SLOW_ANSWER_SECONDS)
             wait = TICK_SECONDS
             if deadline is not None:
                 wait = min(wait, deadline - time.monotonic())

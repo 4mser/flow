@@ -286,7 +286,19 @@ class AtlasCanvas(Page):
         arranged = list(window.atlas_legend.superview().arrangedSubviews())
         self.assertLess(arranged.index(window.atlas_canvas), arranged.index(window.atlas_canvas_hint.view))
         self.assertLess(arranged.index(window.atlas_canvas_hint.view), arranged.index(window.atlas_legend))
-        self.assertLess(arranged.index(window.atlas_legend), arranged.index(window.crossing_ledger))
+        # The ledger has its own card below the map's (1.5.5, Map first): find each card in the page.
+        def card(view):
+            while view.superview() is not None and view.superview() is not page:
+                view = view.superview()
+            return view
+        page = window.atlas_canvas.superview()
+        while page is not None and not any(v is not None and v.isKindOfClass_(AppKit.NSStackView)
+                                           and window.crossing_ledger.isDescendantOf_(v) and v is not page
+                                           for v in [page.superview()]):
+            page = page.superview()
+        page = page.superview()
+        cards = list(page.arrangedSubviews())
+        self.assertLess(cards.index(card(window.atlas_legend)), cards.index(card(window.crossing_ledger)))
 
     def test_left_out_ledger_row_has_status_and_named_put_back_action(self):
         window = self.build([(BEE, token(100), "Bee", {"left_out": True})])

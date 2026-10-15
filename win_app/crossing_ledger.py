@@ -6,7 +6,8 @@ from PySide6.QtWidgets import (QAccessibleWidget, QCheckBox, QFrame, QGraphicsOp
                                QGridLayout, QHBoxLayout, QLabel, QLayout, QLineEdit, QPushButton,
                                QSizePolicy, QStyle, QStyleOptionButton, QVBoxLayout, QWidget)
 
-from core import ways
+from core.i18n import N_, tr
+from core import profiles, ways
 import theme
 import widgets
 
@@ -41,8 +42,9 @@ def _quiet_style(button):
     button.setStyleSheet(f"QPushButton {{ color: {theme.colour('ink_2')}; background: transparent; border: 0; padding: 0; font-size: {round(theme.TYPE['note'])}px; font-weight: 400; text-align: left; }} QPushButton:focus {{ border: 1px solid {theme.colour('signal')}; }}")
 
 
-SIDE_NAMES = {"left": "Left", "right": "Right", "top": "Top", "bottom": "Bottom"}
-CORNER_TITLES = {corner: corner.replace("_", " ").capitalize() for corner in ways.CORNERS}
+SIDE_NAMES = {"left": N_("Left"), "right": N_("Right"), "top": N_("Top"), "bottom": N_("Bottom")}
+CORNER_TITLES = {"top_left": N_("Top left"), "top_right": N_("Top right"),
+                 "bottom_left": N_("Bottom left"), "bottom_right": N_("Bottom right")}
 CHIP_HEIGHT = 26
 
 
@@ -179,8 +181,11 @@ class _Chip(QPushButton):
             segment.setEnabled(segments_enabled)
             title = ways.part_names(self.side)[third]
             lit = edge_on and third in picked
-            segment.setAccessibleName(f"{SIDE_NAMES[self.side]} edge, {title.lower()} third, {'on' if lit else 'off'}")
-            segment.setToolTip(f"{title} third: click to {'leave it out' if lit else 'turn it on'}")
+            segment.setAccessibleName(tr("{side} edge, {third} third, {state}").format(
+                side=tr(SIDE_NAMES[self.side]),
+                third=tr(ways.PART_NAMES_LOWER[title.lower()]), state=tr("on" if lit else "off")))
+            segment.setToolTip(tr("{third} third: click to {action}").format(
+                third=tr(title), action=tr("leave it out" if lit else "turn it on")))
             segment.blockSignals(True)
             segment.setChecked(lit)
             segment.blockSignals(False)
@@ -273,6 +278,8 @@ class _Chip(QPushButton):
         elif kind == "held":
             border, ink, icon = _tone("rule"), _tone("ink_3"), _tone("ink_3")
             painter.setOpacity(.45)
+        if not live:
+            border, fill, ink, icon, dashed = _tone("rule"), None, _tone("ink_3"), _tone("ink_3"), False
         if pressed:
             border, fill, ink, dashed = _tone("signal"), _mix("signal_dim", "signal", .12), _tone("ink"), False
         elif hover:
@@ -299,7 +306,7 @@ class _Chip(QPushButton):
             bar_x = self.width() - 10 - 22
             for index, third in enumerate(ways.PARTS):
                 on = self.edge_on and third in self.picked
-                stroke = QPen(_tone("signal" if on else "edge"), 3 if on else 1.5)
+                stroke = QPen(_tone("ink_3" if not live else "signal" if on else "edge"), 3 if on else 1.5)
                 stroke.setCapStyle(Qt.PenCapStyle.RoundCap)
                 painter.setPen(stroke)
                 start = bar_x + 1 + index * 7.3
@@ -340,31 +347,34 @@ class EdgeChips(QWidget):
         lock = "Left out: Put back to change its ways"
         for side in ways.EDGES:
             chip, kind = self.chips[side], self.kinds[side]
-            title = SIDE_NAMES[side]
+            title = tr(SIDE_NAMES[side])
             if kind == "unavailable" or left_out and kind in ("free", "held"):
                 # A left-out row shows only the ways it keeps.
                 chip.hide()
                 continue
-            held_by = labels.get(sides[side].get("by"), "Another machine") if kind == "held" else ""
+            held_by = labels.get(sides[side].get("by"), tr("Another machine")) if kind == "held" else ""
             if kind == "contact":
-                answer = "turn it off" if edge_on else "turn it on"
-                chip.set_state("contact", title, edge_on, lock if left_out else f"{title} edge: touches {name}; click to {answer}",
-                               f"{title} edge, touches {name}, {'on' if edge_on else 'off'}", edge_on, picked,
+                answer = tr("turn it off" if edge_on else "turn it on")
+                chip.set_state("contact", title, edge_on,
+                               tr("Left out: Put back to change its ways") if left_out else tr("{side} edge: touches {name}; click to {action}").format(side=title, name=name, action=answer),
+                               tr("{side} edge, touches {name}, {state}").format(side=title, name=name, state=tr("on" if edge_on else "off")), edge_on, picked,
                                enabled=not left_out, segments_enabled=not left_out)
             elif kind == "on":
-                chip.set_state("on", f"{title}, wraps", True, lock if left_out else f"{title} edge wraps round to {name}; click to remove",
-                               f"{title} edge, wraps round, on", enabled=not left_out)
+                chip.set_state("on", tr("{side}, wraps").format(side=title), True, tr("Left out: Put back to change its ways") if left_out else tr("{side} edge wraps round to {name}; click to remove").format(side=title, name=name),
+                               tr("{side} edge, wraps round, on").format(side=title), enabled=not left_out)
             elif kind == "kept":
-                chip.set_state("kept", f"{title}, wraps", False,
-                               lock if left_out else (f"{title} edge wraps round to {name} once Edge is on; click to turn Edge on" if not edge_on
-                                                      else f"{title} edge: none of it is free just now; click to remove"),
-                               f"{title} edge, wraps round, kept", enabled=not left_out)
+                tip = tr("Left out: Put back to change its ways") if left_out else (
+                    tr("{side} edge wraps round to {name} once Edge is on; click to turn Edge on").format(side=title, name=name) if not edge_on
+                    else tr("{side} edge: none of it is free just now; click to remove").format(side=title))
+                chip.set_state("kept", tr("{side}, wraps").format(side=title), False, tip,
+                               tr("{side} edge, wraps round, kept").format(side=title), enabled=not left_out)
             elif kind == "held":
-                chip.set_state("held", f"{title}, {held_by}", False, f"{title} edge: {held_by}'s",
-                               f"{title} edge, held by {held_by}", enabled=False)
+                chip.set_state("held", tr("{side}, {name}").format(side=title, name=held_by), False,
+                               tr("{side} edge: {name}'s").format(side=title, name=held_by),
+                               tr("{side} edge, held by {name}").format(side=title, name=held_by), enabled=False)
             else:
-                chip.set_state("free", title, False, lock if left_out else f"{title} edge: click to wrap round to {name}",
-                               f"{title} edge, wraps round, off", enabled=not left_out)
+                chip.set_state("free", title, False, tr("Left out: Put back to change its ways") if left_out else tr("{side} edge: click to wrap round to {name}").format(side=title, name=name),
+                               tr("{side} edge, wraps round, off").format(side=title), enabled=not left_out)
             chip.show()
         self.updateGeometry()
 
@@ -379,8 +389,10 @@ class _CornerButton(QPushButton):
         super().__init__()
         self.corner, self.kind = corner, "unavailable"
         self.setCheckable(True)
+        # No min-width or min-height in the sheet: a style sheet's minimum replaces the one
+        # setFixedSize sets, and the grid then squashed the square to 28 x 19 and clipped the bracket.
         self.setFixedSize(28, 28)
-        self.setStyleSheet("QPushButton { padding: 0; min-width: 0; min-height: 0; }")
+        self.setStyleSheet("QPushButton { padding: 0; }")
         self.clicked.connect(lambda _checked=False: callback(self.corner))
 
     def nextCheckState(self):
@@ -426,6 +438,8 @@ class _CornerButton(QPushButton):
             border, bracket, dashed = _tone("signal", .35), _tone("signal", .5), False
         elif kind == "unavailable":
             opacity = .4
+        if not self.isEnabled():
+            border, fill, bracket, dashed, opacity = _tone("rule"), None, _tone("ink_3"), False, 1.0
         if pressed:
             border, fill, dashed = _tone("signal"), _mix("signal_dim", "signal", .12), False
             bracket = _tone("ink")
@@ -441,7 +455,10 @@ class _CornerButton(QPushButton):
         painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 5, 5)
         vertical, horizontal = self.corner.split("_")
         dx, dy = (1 if horizontal == "left" else -1), (1 if vertical == "top" else -1)
-        x, y = (10 if horizontal == "left" else 18), (10 if vertical == "top" else 18)
+        # The 7 px bracket sits centred in the square, its corner towards the square's corner.
+        inset_x, inset_y = (self.width() - 7) / 2, (self.height() - 7) / 2
+        x = inset_x if horizontal == "left" else self.width() - inset_x
+        y = inset_y if vertical == "top" else self.height() - inset_y
         stroke = QPen(bracket, 1.8)
         stroke.setCapStyle(Qt.PenCapStyle.RoundCap)
         stroke.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -479,17 +496,17 @@ class CornerGrid(QWidget):
         lock = "Left out: Put back to change its ways"
         for corner, button in self.buttons.items():
             kind = corners.get(corner, {}).get("state", "unavailable")
-            title = CORNER_TITLES[corner]
+            title = tr(CORNER_TITLES[corner])
             if kind == "held":
-                holder = labels.get(corners[corner].get("by"), "Another machine")
-                button.set_state("held", lock if left_out else f"{holder}'s corner", f"{title} corner, held by {holder}", False)
+                holder = labels.get(corners[corner].get("by"), tr("Another machine"))
+                button.set_state("held", tr("Left out: Put back to change its ways") if left_out else tr("{name}'s corner").format(name=holder), tr("{corner} corner, held by {name}").format(corner=title, name=holder), False)
             elif kind == "unavailable":
-                button.set_state("unavailable", lock if left_out else f"Place {name} beside this {platform_word} first",
-                                 f"{title} corner, unavailable", False)
+                button.set_state("unavailable", tr("Left out: Put back to change its ways") if left_out else tr("Place {name} beside this {platform} first").format(name=name, platform=platform_word),
+                                 tr("{corner} corner, unavailable").format(corner=title), False)
             else:
                 on = kind == "on"
-                button.set_state(kind, lock if left_out else f"{title} corner: click to turn it {'off' if on else 'on'}",
-                                 f"{title} corner, {'on' if on else 'off'}", not left_out)
+                button.set_state(kind, tr("Left out: Put back to change its ways") if left_out else tr("{corner} corner: click to turn it {state}").format(corner=title, state=tr("off" if on else "on")),
+                                 tr("{corner} corner, {state}").format(corner=title, state=tr("on" if on else "off")), not left_out)
 
 
 class _Name(QLabel):
@@ -537,7 +554,7 @@ class _Jump(widgets.JumpKeyRecorder):
     def set_value(self, value):
         super().set_value(value)
         if not value and not self.armed:
-            self.key.setText("Set a key")
+            self.key.setText(tr("Set a key"))
         self._reflect_style()
 
     def _reflect_style(self):
@@ -589,7 +606,7 @@ class _Cycle(QCheckBox):
 
 
 # Machine, Edges, Corners, Keys: minimum width and stretch, the spec's minmax(132, 1.3fr), minmax(220, 2fr), 70, minmax(128, 1fr).
-COLUMNS = (("Machine", 132, 13), ("Edges", 220, 20), ("Corners", 70, 0), ("Keys", 128, 10))
+COLUMNS = ((N_("Machine"), 132, 13), (N_("Edges"), 220, 20), (N_("Corners"), 70, 0), (N_("Keys"), 128, 10))
 
 
 class LedgerRow(QFrame):
@@ -599,6 +616,7 @@ class LedgerRow(QFrame):
     def __init__(self, peer, owner):
         super().__init__()
         self.peer, self.owner, self.selected, self.narrow = peer, owner, False, None
+        self.remote = self.remote_mac = self.read_only = False
         self.setProperty("ledger_role", "row")
         self.setProperty("vernier", "plain")
         self.setMinimumWidth(0)
@@ -635,7 +653,7 @@ class LedgerRow(QFrame):
         self.edit.hide()
         self.edit.returnPressed.connect(self.save_name)
         self.edit.installEventFilter(self)
-        self.rename_hint = widgets.label("Return saves, Escape cancels · Only on this PC", "small", wrap=True)
+        self.rename_hint = widgets.label(tr("Return saves, Escape cancels · Only on this PC"), "small", wrap=True)
         self.rename_hint.hide()
         machine.addWidget(self.name)
         machine.addWidget(self.edit)
@@ -643,8 +661,8 @@ class LedgerRow(QFrame):
         machine.addLayout(status_line)
         actions = QHBoxLayout()
         actions.setSpacing(10)
-        self.rename = _quiet("Rename", self.begin_rename)
-        self.leave = _quiet("Leave out", lambda: owner._canvas_left_out(peer, not self.left_out))
+        self.rename = _quiet(tr("Rename"), self.begin_rename)
+        self.leave = _quiet(tr("Leave out"), lambda: owner._canvas_left_out(peer, not self.left_out))
         actions.addWidget(self.rename)
         actions.addWidget(self.leave)
         actions.addStretch()
@@ -655,7 +673,7 @@ class LedgerRow(QFrame):
         edges.setContentsMargins(0, 0, 0, 0)
         edges.setSpacing(2)
         edges.addWidget(self.edge_chips, 0, Qt.AlignmentFlag.AlignTop)
-        self.edge_note = widgets.label("Place it on the map", "small", wrap=True)
+        self.edge_note = widgets.label(tr("Place it on the map"), "small", wrap=True)
         edges.addWidget(self.edge_note, 0, Qt.AlignmentFlag.AlignTop)
         edges.addStretch()
         self.corner_grid = CornerGrid(peer, owner)
@@ -668,30 +686,53 @@ class LedgerRow(QFrame):
         keys.setSpacing(4)
         self.cycle = _Cycle()
         self.cycle.setFont(theme.font(theme.TYPE["body"]))
-        self.cycle.setToolTip("In the shortcut's cycle")
+        self.cycle.setToolTip(tr("In the shortcut's cycle"))
         self.cycle.toggled.connect(lambda on: owner._set_shortcut_cycle(peer, on))
         keys.addWidget(self.cycle)
         jump = QHBoxLayout()
         jump.setSpacing(5)
-        jump.addWidget(widgets.label("Jump", "small"))
+        jump.addWidget(widgets.label(tr("Jump"), "small"))
         self.jump = _Jump(lambda value: owner._ledger_jump(peer, value), owner._jump_arming)
         jump.addWidget(self.jump, 0, Qt.AlignmentFlag.AlignLeft)
-        self.clear = _quiet("Clear", lambda: owner._ledger_jump(peer, ""))
-        self.clear.setAccessibleName("Clear jump key")
+        self.clear = _quiet(tr("Clear"), lambda: owner._ledger_jump(peer, ""))
+        self.clear.setAccessibleName(tr("Clear jump key"))
         jump.addWidget(self.clear)
         jump.addStretch()
         keys.addLayout(jump)
         keys.addStretch()
+        self.notch_cell = QWidget(self)
+        self.notch_cell.setProperty("vernier", "plain")
+        self.notch_cell.setProperty("ledger_role", "cell")
+        notch_layout = QVBoxLayout(self.notch_cell)
+        notch_layout.setContentsMargins(0, 0, 0, 0)
+        notch_layout.setSpacing(4)
+        self.notch = QCheckBox(tr("Notch"))
+        self.notch.toggled.connect(lambda on: owner._write_ways(peer=peer, notch=on))
+        notch_layout.addWidget(self.notch)
+        self.notch_return = QCheckBox(tr("Return here"))
+        self.notch_return.toggled.connect(lambda on: owner._write_ways(peer=peer, notch_return=on))
+        notch_layout.addWidget(self.notch_return)
+        notch_layout.addStretch()
         self.effect = QGraphicsOpacityEffect(self)
         self.setGraphicsEffect(self.effect)
         self.reflow(False)
 
-    def reflow(self, narrow):
-        if self.narrow == narrow:
+    def reflow(self, narrow, remote=None, remote_mac=None):
+        remote = self.remote if remote is None else remote
+        remote_mac = self.remote_mac if remote_mac is None else remote_mac
+        if (self.narrow, self.remote, self.remote_mac) == (narrow, remote, remote_mac):
             return
-        self.narrow = narrow
-        for cell in self.cells:
+        self.narrow, self.remote, self.remote_mac = narrow, remote, remote_mac
+        for cell in (*self.cells, self.notch_cell):
             self.grid.removeWidget(cell)
+        self.keys.setVisible(not remote)
+        self.notch_cell.setVisible(remote_mac)
+        self.rename.setVisible(not remote)
+        self.leave.setVisible(not remote)
+        if remote:
+            self.jump.cancel()
+            self.cancel_name()
+        cells = self.cells[:3] + ([self.notch_cell] if remote_mac else [] if remote else [self.keys])
         for col in range(4):
             self.grid.setColumnMinimumWidth(col, 0)
             self.grid.setColumnStretch(col, 0)
@@ -699,17 +740,20 @@ class LedgerRow(QFrame):
             self.grid.addWidget(self.machine, 0, 0, 1, 2)
             self.grid.addWidget(self.edge, 1, 0, 1, 2)
             self.grid.addWidget(self.corner_cell, 2, 0)
-            self.grid.addWidget(self.keys, 2, 1)
+            if len(cells) == 4:
+                self.grid.addWidget(cells[3], 2, 1)
             self.grid.setColumnMinimumWidth(0, COLUMNS[2][1])
             self.grid.setColumnStretch(1, 1)
         else:
-            for index, (cell, (_title, minimum, stretch)) in enumerate(zip(self.cells, COLUMNS)):
+            for index, (cell, (_title, minimum, stretch)) in enumerate(zip(cells, COLUMNS)):
                 self.grid.addWidget(cell, 0, index)
                 self.grid.setColumnMinimumWidth(index, minimum)
                 self.grid.setColumnStretch(index, stretch)
 
     def reflect(self, settings, entry, name, side, linked, selected, trigger, labels, legacy="", reach=None):
-        seen = (theme.is_dark(), id(settings), repr(entry), name, side, linked, selected, trigger, repr(labels), legacy, repr(reach))
+        self.read_only = bool(getattr(self.owner, "_profile_read_only", lambda: False)())
+        seen = (theme.is_dark(), id(settings), repr(entry), name, side, linked, selected, trigger,
+                repr(labels), legacy, repr(reach), self.remote, self.remote_mac, self.read_only)
         if seen == getattr(self, "_reflection_seen", None):
             return
         self._reflection_seen = seen
@@ -721,14 +765,15 @@ class LedgerRow(QFrame):
         self.machine.setAccessibleName(name)
         self.name.set_name(name)
         self.name.setStyleSheet(f"color: {theme.colour('ink' if linked and not self.left_out else 'ink_2')}")
-        platform = {"windows": "Windows", "macos": "macOS", "linux": "Linux"}.get(entry.get("platform"), "Computer")
-        status = "Left out" if self.left_out else "Linked" if linked else "Offline, ways kept"
-        self.status.setText(legacy or f"{platform} · {status}")
+        platform = {"windows": N_("Windows"), "macos": N_("macOS"), "linux": N_("Linux")}.get(
+            entry.get("platform"), N_("Computer"))
+        status = tr("Left out") if self.left_out else tr("Linked") if linked else tr("Offline, ways kept")
+        self.status.setText(legacy if legacy else tr("{platform} · {status}").format(platform=tr(platform), status=status))
         self.status.setStyleSheet(f"color: {theme.colour('amber' if legacy else 'ink_3')}")
         self.dot.setStyleSheet(f"background: {theme.colour('amber' if legacy else 'signal' if linked and not self.left_out else 'ink_3')}; border-radius: 3px;")
-        self.status.setAccessibleDescription("Linked" if linked else status)
-        self.leave.setText("Put back" if self.left_out else "Leave out")
-        self.leave.setToolTip("Left out machines stay paired and linked. The shortcut, menu and clipboard still reach them." if self.left_out else "Leave this machine out of crossings")
+        self.status.setAccessibleDescription(tr("Linked") if linked else status)
+        self.leave.setText(tr("Put back" if self.left_out else "Leave out"))
+        self.leave.setToolTip(tr("Left out machines stay paired and linked. The shortcut, menu and clipboard still reach them." if self.left_out else "Leave this machine out of crossings"))
         held = ways.ways(settings, self.peer)
         picked = ways.picked_thirds(held["methods"], held["parts"])
         edge_on = bool(picked)
@@ -740,13 +785,28 @@ class LedgerRow(QFrame):
         contact = next((edge for edge, value in sides.items() if value.get("state") == "contact"), "")
         self.edge_chips.reflect(sides, name, labels, edge_on, picked if edge_on else (), contact, self.left_out)
         self.edge_note.setVisible(not self.edge_chips.any_shown())
-        self.corner_grid.reflect(corners, name, labels, "PC", self.left_out)
+        self.corner_grid.reflect(corners, name, labels, tr("Mac") if self.remote_mac else tr("PC"), self.left_out)
+        self.edge_chips.setEnabled(not self.read_only)
+        self.corner_grid.setEnabled(not self.read_only)
+        self.notch_cell.setEnabled(not self.read_only and not self.left_out)
+        notch_on = "notch" in held["methods"]
+        for check, value in ((self.notch, notch_on),
+                             (self.notch_return, entry.get("notch_return", False))):
+            check.blockSignals(True)
+            check.setChecked(bool(value))
+            check.blockSignals(False)
+        self.notch.setAccessibleName(tr("Notch, on") if notch_on else tr("Notch, off"))
+        self.notch.setToolTip(tr("Push into the notch to reach {name}").format(name=name))
+        self.notch_return.setVisible(notch_on)
+        self.notch_return.setAccessibleName(tr("Return through the notch, on") if self.notch_return.isChecked()
+                                           else tr("Return through the notch, off"))
+        self.notch_return.setToolTip(tr("Coming back from {name}, arrive just below the notch").format(name=name))
         self.cycle.blockSignals(True)
         self.cycle.setText(trigger)
         self.cycle.setChecked(entry.get("shortcut_cycle", True))
         self.cycle.blockSignals(False)
         self.jump.set_value(entry.get("jump_key", ""))
-        self.jump.setToolTip(f"Press {self.jump.key.text()} to send input to {name}; press again to bring it home." if self.jump.value else f"Choose a key combination to jump to {name} and back.")
+        self.jump.setToolTip(tr("Press {key} to send input to {name}; press again to bring it home.").format(key=self.jump.key.text(), name=name) if self.jump.value else tr("Choose a key combination to jump to {name} and back.").format(name=name))
         self.clear.setVisible(bool(self.jump.value))
         self.effect.setOpacity(.5 if self.left_out or not linked else 1)
         self.update()
@@ -756,6 +816,8 @@ class LedgerRow(QFrame):
             self.reflect(*self._reflection)
 
     def begin_rename(self):
+        if self.remote or self.read_only:
+            return
         self.edit.setText(self.entry.get("label") or self.entry.get("name") or "")
         self.name.hide()
         self.edit.show()
@@ -764,7 +826,8 @@ class LedgerRow(QFrame):
         self.edit.selectAll()
 
     def save_name(self):
-        self.owner._rename_canvas_peer(self.peer, self.edit.text().strip()[:64])
+        if not self.remote and not self.read_only:
+            self.owner._rename_canvas_peer(self.peer, self.edit.text().strip()[:64])
         self.cancel_name()
 
     def cancel_name(self):
@@ -800,7 +863,7 @@ class CrossingLedger(QWidget):
         self.owner, self.rows, self.narrow = owner, {}, False
         self.setProperty("ledger_role", "table")
         self.setProperty("vernier", "plain")
-        self.setAccessibleName("How each machine is reached")
+        self.setAccessibleName(tr("How each machine is reached"))
         self.setMinimumWidth(0)
         self.column = QVBoxLayout(self)
         self.column.setContentsMargins(0, 0, 0, 0)
@@ -811,9 +874,9 @@ class CrossingLedger(QWidget):
         head.setContentsMargins(12, 0, 0, 8)
         head.setHorizontalSpacing(16)
         for index, (title, minimum, stretch) in enumerate(COLUMNS):
-            label = widgets.Eyebrow(title)
+            label = widgets.Eyebrow(tr(title))
             label.setProperty("ledger_role", "columnheader")
-            label.setAccessibleName(title)
+            label.setAccessibleName(tr(title))
             head.addWidget(label, 0, index)
             head.setColumnMinimumWidth(index, minimum)
             head.setColumnStretch(index, stretch)
@@ -829,6 +892,19 @@ class CrossingLedger(QWidget):
 
     def reflect(self, settings, layout, labels, chosen, live, trigger, legacy=None, reach=None):
         self.header.setStyleSheet(f"border-bottom: 1px solid {theme.colour('rule')};")
+        remote = bool(getattr(self.owner, "_profile_remote", lambda: False)())
+        if remote and hasattr(self.owner, "_crossing_view_settings"):
+            settings = self.owner._crossing_view_settings()
+        remote_mac = (remote and hasattr(self.owner, "_profile_settings")
+                      and hasattr(self.owner, "_profile_machine")
+                      and profiles.view_platform(self.owner._profile_settings(), self.owner._profile_machine()) == "mac")
+        head = self.header.layout()
+        last_header = head.itemAtPosition(0, 3).widget()
+        last_header.setVisible(not remote or remote_mac)
+        last_header.setText(tr("Notch") if remote_mac else tr("Keys"))
+        last_header.setAccessibleName(tr("Notch") if remote_mac else tr("Keys"))
+        head.setColumnMinimumWidth(3, COLUMNS[3][1] if not remote or remote_mac else 0)
+        head.setColumnStretch(3, COLUMNS[3][2] if not remote or remote_mac else 0)
         entries = {p["id"]: p for p in settings.get("peers", [])}
         order = sorted(entries, key=lambda p: (0, layout[p]["x"], layout[p]["y"]) if p in layout else (1, 0, 0))
         for peer in self.rows.keys() - entries.keys():
@@ -843,14 +919,14 @@ class CrossingLedger(QWidget):
             if row is None:
                 row = LedgerRow(peer, self.owner)
                 self.rows[peer] = row
-                row.reflow(self.narrow)
+            row.reflow(self.narrow, remote, remote_mac)
             if self.column.indexOf(row) != index + 1:
                 self.column.insertWidget(index + 1, row)
             own = layout.get(settings.get("machine_id"))
             tile = layout.get(peer)
             contact = ways._rect_contact(own, tile) if own and tile else None
             side = contact[0] if contact and contact[0] != "corner" else ""
-            row.reflect(settings, entries[peer], labels.get(peer, "Other machine"), side, live(peer), chosen == peer, trigger, labels, (legacy or {}).get(peer, ""), (reach or {}).get(peer))
+            row.reflect(settings, entries[peer], labels.get(peer, tr("Other machine")), side, live(peer), chosen == peer, trigger, labels, (legacy or {}).get(peer, ""), (reach or {}).get(peer))
         self.setVisible(bool(entries))
 
     def resizeEvent(self, event):

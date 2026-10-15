@@ -48,13 +48,16 @@ class TriggerKeyTests(unittest.TestCase):
                 config_from_dict(raw(trigger_key=name))
 
     def test_every_trigger_is_titled_in_windows_words(self):
+        # In this PC's own words: the key Windows calls Windows is Super on Linux.
         self.assertEqual(app_config.TRIGGER_KEYS["cmd_r"], "Right Ctrl")
-        self.assertEqual(app_config.TRIGGER_KEYS["ctrl"], "Left Windows")
+        self.assertEqual(app_config.TRIGGER_KEYS["ctrl"],
+                         "Left Super" if sys.platform.startswith("linux") else "Left Windows")
         self.assertEqual(app_config.TRIGGER_KEYS["f13"], "F13")
 
     def test_a_recorded_trigger_is_what_the_hook_names_it(self):
+        # Against the capture module app_config reads, the one this platform's hook names keys with.
         for name, vk in app_config.TRIGGER_VKS.items():
-            self.assertEqual(capture_win.VK_TO_NAME[vk], name)
+            self.assertEqual(app_config.capture_win.VK_TO_NAME[vk], name)
         trigger = capture_win.Trigger("f13", "double_tap", 300)
         self.assertIsNone(trigger.feed("f13", True, 0.0))
         self.assertIsNone(trigger.feed("f13", False, 0.05))
@@ -73,8 +76,12 @@ class ReviewFixTests(unittest.TestCase):
         self.assertTrue(trigger.claims("alt_r", True, True))
 
     def test_typing_keys_are_never_offered_as_the_trigger(self):
-        for vk in (0x08, 0x09, 0x0D, 0x1B, 0x20, 0x2C):
-            self.assertIn(vk, app_config.UNRECORDABLE_TRIGGER_VKS)
+        typing = ("backspace", "tab", "enter", "esc", "space", "print_screen")
+        names = app_config.capture_win.VK_TO_NAME
+        self.assertEqual({names[vk] for vk in app_config.UNRECORDABLE_TRIGGER_VKS} & set(typing), set(typing))
+        for vk, name in names.items():
+            if name in typing:
+                self.assertIn(vk, app_config.UNRECORDABLE_TRIGGER_VKS)
 
     def test_the_subnet_broadcast_of_a_home_address(self):
         from core import wol

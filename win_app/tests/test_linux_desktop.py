@@ -43,7 +43,9 @@ class CrossingGuidanceTests(unittest.TestCase):
                 layout = QVBoxLayout(host)
                 view = SimpleNamespace(
                     _ways_module=lambda _: QWidget(), _pointer_module=lambda _: QWidget(), _resistance_module=lambda _: QWidget(),
-                    _shortcut_module=lambda _: QWidget(), _reflect_ways=lambda: None, _reflect_other_name=lambda: None,
+                    _shortcut_module=lambda _: QWidget(), _profile_override_module=lambda: QWidget(),
+                    _profile_ledger_module=lambda: QWidget(), _way_home_module=lambda: QWidget(),
+                    _reflect_ways=lambda: None, _reflect_other_name=lambda: None,
                 )
                 bridge.WindowsApplication._crossing_page(view, layout, bridge.default_config())
                 self.assertEqual(not view.linux_tray_note.isHidden(), shown)

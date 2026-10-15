@@ -3,13 +3,14 @@ the pointer's trail into speed lines, arriving as a streak that decelerates into
 """
 
 import math
+from core.i18n import N_
 
 from . import effects
 
 PACKS = {
-    "neon": ("Neon", ["#ff0055", "#00ffcc", "#ffcc00"]),
-    "vaporwave": ("Vaporwave", ["#ff71ce", "#01cdfe", "#05ffa1", "#b967ff", "#fffb96"]),
-    "cyber": ("Cyber", ["#fcee0a", "#00f0ff", "#ff003c"]),
+    "neon": (N_("Neon"), ["#ff0055", "#00ffcc", "#ffcc00"]),
+    "vaporwave": (N_("Vaporwave"), ["#ff71ce", "#01cdfe", "#05ffa1", "#b967ff", "#fffb96"]),
+    "cyber": (N_("Cyber"), ["#fcee0a", "#00f0ff", "#ff003c"]),
 }
 
 
@@ -282,10 +283,10 @@ def _wormhole_arrive(ctx, s):
 
 
 EFFECTS = [
-    effects.Effect("light_slit", "Light slit", "quiet", "A subtle slit opens, pulling in faint trails.",
+    effects.Effect("light_slit", N_("Light slit"), "quiet", N_("A subtle slit opens, pulling in faint trails."),
                     _light_slit_depart, _light_slit_arrive, 0.4, 0.4),
-    effects.Effect("hyperdrive", "Hyperdrive", "medium", "Speed lines accelerate towards the portal.",
+    effects.Effect("hyperdrive", N_("Hyperdrive"), "medium", N_("Speed lines accelerate towards the portal."),
                     _hyperdrive_depart, _hyperdrive_arrive, 0.6, 0.6),
-    effects.Effect("wormhole", "Wormhole", "showpiece", "A dynamic stretching grid of light.",
+    effects.Effect("wormhole", N_("Wormhole"), "showpiece", N_("A dynamic stretching grid of light."),
                     _wormhole_depart, _wormhole_arrive, 0.8, 0.8),
 ]

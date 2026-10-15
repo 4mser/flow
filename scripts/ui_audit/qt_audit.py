@@ -340,6 +340,12 @@ def main():
     kvm.sys = SimpleNamespace(platform=branch_platform, executable=sys.executable, frozen=False)
     kvm.platform_parts.WAYLAND = args.platform == "linux-wayland"
     kvm.OWN_PLATFORM = "windows" if args.platform == "windows" else "linux"
+    if args.platform == "windows" and not sys.platform.startswith("win"):
+        # The Windows page off Windows: the branch passes the Windows hook's seam callback, which
+        # this platform's capture has no use for.
+        native_hooks = kvm.capture_win.Hooks
+        kvm.capture_win = SimpleNamespace(**vars(kvm.capture_win))
+        kvm.capture_win.Hooks = lambda *callbacks, on_seam=None: native_hooks(*callbacks)
     if args.platform != "windows":
         kvm.firewall_win = linux_stand_ins.firewall
     app_config.default_config_path = lambda: settings_path

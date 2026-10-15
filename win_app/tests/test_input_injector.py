@@ -258,6 +258,13 @@ class PlanKeyInputsNamedKeyTests(unittest.TestCase):
         plan = plan_key_inputs("enter", True, set(), {}, fake_vk_lookup, fake_scan_lookup)
         self.assertEqual(plan, [(0x0D, 0x1C, 0)])
 
+    def test_input_method_keys_use_their_non_extended_virtual_keys(self):
+        self.assertFalse({"hangul", "hanja"} & input_injector.MODIFIER_KEYS)
+        for name, vk in (("hangul", 0x15), ("hanja", 0x19)):
+            with self.subTest(name=name):
+                plan = plan_key_inputs(name, True, set(), {}, fake_vk_lookup, fake_scan_lookup)
+                self.assertEqual(plan, [(vk, fake_scan_lookup(vk), 0)])
+
     def test_extended_keys_carry_extended_flag(self):
         for name, vk in (("up", 0x26), ("ctrl_r", 0xA3), ("cmd", 0x5B)):
             with self.subTest(name=name):
@@ -280,8 +287,11 @@ class PlanKeyInputsNamedKeyTests(unittest.TestCase):
         self.assertNotIn("ctrl", mods_down)
 
     def test_unknown_key_name_is_dropped(self):
-        plan = plan_key_inputs("not_a_real_key", True, set(), {}, fake_vk_lookup, fake_scan_lookup)
-        self.assertEqual(plan, [])
+        old_names = {name: vk for name, vk in input_injector.VK_MAP.items() if name not in ("hangul", "hanja")}
+        with mock.patch.object(input_injector, "VK_MAP", old_names):
+            for name in ("hangul", "hanja"):
+                with self.subTest(name=name):
+                    self.assertEqual(plan_key_inputs(name, True, set(), {}, fake_vk_lookup, fake_scan_lookup), [])
 
     def test_release_all_releases_a_held_named_non_modifier_key(self):
         sent = []

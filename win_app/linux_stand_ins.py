@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Optional
 
+from core.i18n import tr
+
 unlock = SimpleNamespace(
     is_locked=lambda: None,
     signal_unlock=lambda: False,
@@ -39,7 +41,7 @@ firewall = SimpleNamespace(
     FirewallStatus=FirewallStatus,
     Advice=Advice,
     status=lambda exe, port: FirewallStatus(port),
-    advise=lambda status: Advice("Beamer's firewall check is not yet on Linux.", "Check again", None),
+    advise=lambda status: Advice(tr("Beamer's firewall check is not yet on Linux."), tr("Check again"), None),
     repair=lambda exe, port, profiles: None,
     trust_network=lambda indexes: None,
     is_elevated=lambda: False,

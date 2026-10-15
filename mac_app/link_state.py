@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from wake import NOT_WOKEN_SUFFIX
+from core.i18n import matches_translation, tr
 
 SIGNAL = "signal"
 AMBER = "amber"
@@ -28,7 +28,7 @@ class LinkState:
 
 
 def peer_name(cfg) -> str:
-    return cfg.pc_name or cfg.host or "the other machine"
+    return cfg.pc_name or cfg.host or tr("the other machine")
 
 
 def describe(controller) -> LinkState:
@@ -44,58 +44,59 @@ def describe(controller) -> LinkState:
     kind = getattr(controller, "status_kind", "none")
     if getattr(controller, "receiving", False):
         return LinkState(
-            "receiving", SIGNAL, f"From {driver}", "Live",
-            f"{driver}'s keyboard and pointer are on this Mac. Push its pointer back through the edge "
-            "it arrived by to send them home.",
+            "receiving", SIGNAL, tr("From {name}").format(name=driver), tr("Live"),
+            tr("{name}'s keyboard and pointer are on this Mac. Push its pointer back through the edge it arrived by to send them home.").format(name=driver),
             SIGNAL,
         )
     if controller.waking:
-        return LinkState("waking", AMBER, "Waking", "Waking", f"Waking {peer}. It connects on its own once it is up.", AMBER, True)
+        return LinkState("waking", AMBER, tr("Waking"), tr("Waking"), tr("Waking {name}. It connects on its own once it is up.").format(name=peer), AMBER, True)
     if controller.connected:
-        linked = "Tunnel" if tunnel else "Linked"
+        linked = tr("Tunnel") if tunnel else tr("Linked")
         if controller.windows_locked:
             return LinkState(
-                "unlocking", AMBER, "Unlocking", "Unlocking",
-                f"{peer} is at its lock screen and is unlocking itself; input follows once the desktop is back.",
+                "unlocking", AMBER, tr("Unlocking"), tr("Unlocking"),
+                tr("{name} is at its lock screen and is unlocking itself; input follows once the desktop is back.").format(name=peer),
                 AMBER, True,
             )
         if controller.redirecting:
             return LinkState(
-                "windows", SIGNAL, f"On {on}", "Live",
-                f"Keyboard and pointer are on {on}. Do the same again to bring them home.", SIGNAL,
+                "windows", SIGNAL, tr("On {name}").format(name=on), tr("Live"),
+                tr("Keyboard and pointer are on {name}. Do the same again to bring them home.").format(name=on), SIGNAL,
             )
         armed = controller.crossing.armed
         if armed and controller.crossing_paused:
             return LinkState(
-                "paused", INK, "Paused", "Held",
-                f"Connected to {peer}. Crossing is held, so you can lean on an edge.", SIGNAL,
+                "paused", INK, tr("Paused"), tr("Held"),
+                tr("Connected to {name}. Crossing is held, so you can lean on an edge.").format(name=peer), SIGNAL,
             )
         if armed and controller.full_screen_app is not None:
             return LinkState(
-                "full_screen", INK, "Held", "Held",
-                "Held: an app is full screen.", SIGNAL,
+                "full_screen", INK, tr("Held"), tr("Held"),
+                tr("Held: an app is full screen."), SIGNAL,
             )
-        via = " through the macOS 27 tunnel" if tunnel else ""
-        return LinkState("mac", INK, "On Mac", linked, f"Connected to {peer}{via}.", SIGNAL)
+        detail = tr("Connected to {name} through the macOS 27 tunnel.").format(name=peer) if tunnel else tr("Connected to {name}.").format(name=peer)
+        return LinkState("mac", INK, tr("On Mac"), linked, detail, SIGNAL)
     if not (cfg.host and cfg.auth_token):
-        return LinkState("unpaired", AMBER, "Not paired", "Setup", "Pair a machine on Overview and Beamer connects on its own.", AMBER)
-    address = f"{cfg.host} port {cfg.port}"
+        return LinkState("unpaired", AMBER, tr("Not paired"), tr("Setup"), tr("Pair a machine on Overview and Beamer connects on its own."), AMBER)
+    # Translators: a machine's address and port, as in "192.0.2.20 port 24820".
+    address = tr("{host} port {port}").format(host=cfg.host, port=cfg.port)
     if kind == "forgotten":
-        return LinkState("forgotten", FAULT, "Pairing removed", "Refused", f"{peer} no longer has this pairing: remove {peer} here and pair the two again.", FAULT)
+        return LinkState("forgotten", FAULT, tr("Pairing removed"), tr("Refused"), tr("{name} no longer has this pairing: remove {name} here and pair the two again.").format(name=peer), FAULT)
     if kind in ("unauthenticated", "wrong_id", "different", "unreadable"):
-        return LinkState("token", FAULT, "Token mismatch", "Refused", f"{peer} refused this Mac's token. Remove it, then pair again to write a fresh one.", FAULT)
+        return LinkState("token", FAULT, tr("Token mismatch"), tr("Refused"), tr("{name} refused this Mac's token. Remove it, then pair again to write a fresh one.").format(name=peer), FAULT)
     if kind in ("older", "newer", "not_beamer"):
-        return LinkState("version", FAULT, "Version mismatch", "Refused", f"{peer} runs a different Beamer from this Mac. Update both to the same version.", FAULT)
-    if status.endswith(NOT_WOKEN_SUFFIX):
-        return LinkState("not_woken", FAULT, "Did not wake", "No reply", f"{peer} did not answer within a minute of the wake-up packet.", FAULT)
+        return LinkState("version", FAULT, tr("Version mismatch"), tr("Refused"), tr("{name} runs a different Beamer from this Mac. Update both to the same version." ).format(name=peer), FAULT)
+    if matches_translation(status, "{name} did not wake"):
+        return LinkState("not_woken", FAULT, tr("Did not wake"), tr("No reply"), tr("{name} did not answer within a minute of the wake-up packet.").format(name=peer), FAULT)
     if kind == "blocked":
-        return LinkState("blocked", FAULT, "Blocked", "Tunnel", "macOS 27 blocked direct LAN access. Open Beamer Tunnel from Applications.", FAULT)
+        return LinkState("blocked", FAULT, tr("Blocked"), tr("Tunnel"), tr("macOS 27 blocked direct LAN access. Open Beamer Tunnel from Applications."), FAULT)
     if kind in ("unreachable", "timeout"):
-        return LinkState("unreachable", FAULT, "Unreachable", "No reply", f"{address} is not answering. {peer} may be asleep or off this network.", FAULT)
+        return LinkState("unreachable", FAULT, tr("Unreachable"), tr("No reply"), tr("{address} is not answering. {name} may be asleep or off this network.").format(address=address, name=peer), FAULT)
     if kind == "refused":
-        return LinkState("not_listening", FAULT, "Not listening", "No receiver", f"{peer} answers, but Beamer is not listening on port {cfg.port}. Open Beamer on {peer}.", FAULT)
+        return LinkState("not_listening", FAULT, tr("Not listening"), tr("No receiver"), tr("{name} answers, but Beamer is not listening on port {port}. Open Beamer on {name}.").format(name=peer, port=cfg.port), FAULT)
     if kind in ("stopped", "closed"):
-        return LinkState("stopped", FAULT, "No reply", "Dropped", f"{peer} stopped responding. Beamer keeps trying to reconnect.", FAULT)
-    if status.startswith("Connecting to") or status in ("Waiting to connect", "Settings saved; reconnecting"):
-        return LinkState("waiting", AMBER, "Waiting", "Looking", f"Looking for {peer}. It connects on its own once Beamer is open there.", AMBER, True)
-    return LinkState("dropped", FAULT, "Disconnected", "Dropped", (status.rstrip(".") + ". Beamer keeps trying to reconnect.") if status else "Beamer keeps trying to reconnect.", FAULT)
+        return LinkState("stopped", FAULT, tr("No reply"), tr("Dropped"), tr("{name} stopped responding. Beamer keeps trying to reconnect.").format(name=peer), FAULT)
+    if matches_translation(status, "Connecting to {host}:{port}", "Waiting to connect", "Settings saved; reconnecting"):
+        return LinkState("waiting", AMBER, tr("Waiting"), tr("Looking"), tr("Looking for {name}. It connects on its own once Beamer is open there.").format(name=peer), AMBER, True)
+    detail = tr("{status}. Beamer keeps trying to reconnect.").format(status=status.rstrip(".")) if status else tr("Beamer keeps trying to reconnect.")
+    return LinkState("dropped", FAULT, tr("Disconnected"), tr("Dropped"), detail, FAULT)

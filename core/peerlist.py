@@ -10,6 +10,7 @@ import time
 from typing import Optional
 
 from core import pairing, protocol
+from core.i18n import tr
 
 
 class RefusalThrottle:
@@ -135,9 +136,9 @@ def dormant_reason(entry: dict) -> Optional[str]:
         return None
     reason = entry.get("dormant_reason")
     return {
-        "wrong_id": "The saved pairing now identifies a different machine.",
-        "forgotten": "The other machine no longer has this pairing.",
-    }.get(reason, "This pairing needs to be set up again.")
+        "wrong_id": tr("The saved pairing now identifies a different machine."),
+        "forgotten": tr("The other machine no longer has this pairing."),
+    }.get(reason, tr("This pairing needs to be set up again."))
 
 
 def paired_ids(peers: list, exclude: Optional[str] = None) -> list:
@@ -216,49 +217,46 @@ def day(paired_at) -> str:
     return time.strftime("%d-%m-%Y", time.localtime(paired_at))
 
 
-def _since(entry: dict) -> str:
-    when = day(entry.get("paired_at"))
-    return f", since {when}" if when else ""
-
-
 def pairing_error_text(error: Exception, name: str) -> str:
     """A requester's failure, said to its user; `name` is how the machine is shown (its label, or
     "That machine" when it is not known yet, which starts a sentence)."""
     if isinstance(error, pairing.AlreadyPaired):
         entry = error.entry
         if entry is None:
-            return "That is this machine, not another one."
+            return tr("That is this machine, not another one.")
         label = _name(entry) or name
-        return f"{label} is already paired with this machine{_since(entry)}. Remove it from the list first to pair again."
+        when = day(entry.get("paired_at"))
+        if when:
+            return tr("{name} is already paired with this machine, since {when}. Remove it from the list first to pair again.").format(name=label, when=when)
+        return tr("{name} is already paired with this machine. Remove it from the list first to pair again.").format(name=label)
     reason = str(error)
     if reason == pairing.ERROR_NOT_PAIRING:
-        return f"{name} is not showing a code. Show one in Beamer on it, then try again."
+        return tr("{name} is not showing a code. Show one in Beamer on it, then try again.").format(name=name)
     if reason == pairing.ERROR_REFUSED:
-        return f"That code was not accepted, and {name} has cancelled it. Show a new one there to try again."
+        return tr("That code was not accepted, and {name} has cancelled it. Show a new one there to try again.").format(name=name)
     if reason == pairing.ERROR_VERSION:
-        return f"{name} runs an older Beamer. Update Beamer on it to 1.5.0, then pair again."
+        return tr("{name} runs an older Beamer. Update Beamer on it to 1.5.0, then pair again.").format(name=name)
     if reason == "no_answer":
-        return f"{name} did not answer. Check both machines are on the same network, then try again."
+        return tr("{name} did not answer. Check both machines are on the same network, then try again.").format(name=name)
     if reason == pairing.ERROR_FULL:
-        return (f"Either this machine or {name} already has {pairing.MAX_PEERS} machines paired, the most "
-                "Beamer keeps. Remove one, then try again.")
+        return tr("Either this machine or {name} already has {n} machines paired, the most Beamer keeps. Remove one, then try again.").format(name=name, n=pairing.MAX_PEERS)
     if reason == pairing.ERROR_KNOWN:
-        return f"{name} already has this machine paired. Remove this machine from its list there, then pair again."
+        return tr("{name} already has this machine paired. Remove this machine from its list there, then pair again.").format(name=name)
     if reason == "not_saved":
-        return "Pairing finished, but Beamer could not save it on this machine. Try again in a moment."
+        return tr("Pairing finished, but Beamer could not save it on this machine. Try again in a moment.")
     if reason == "busy":
-        return "Another pairing is still finishing. Try again in a moment."
-    return f"Pairing failed: {reason}."
+        return tr("Another pairing is still finishing. Try again in a moment.")
+    return tr("Pairing failed: {reason}.").format(reason=reason)
 
 
 def refusal_text(why: str, name: str, other: Optional[str]) -> Optional[str]:
     """The alert for an `owned` or `busy` refusal, naming the machine in the way when known."""
     if why == "owned":
-        return (f"Can't cross to {name}: it is being driven from {other}." if other else
-                f"Can't cross to {name}: another machine is driving it.")
+        return (tr("Can't cross to {name}: it is being driven from {other}.").format(name=name, other=other) if other else
+                tr("Can't cross to {name}: another machine is driving it.").format(name=name))
     if why == "busy":
-        return (f"Can't cross to {name}: it is driving {other}." if other else
-                f"Can't cross to {name}: it is driving another machine.")
+        return (tr("Can't cross to {name}: it is driving {other}.").format(name=name, other=other) if other else
+                tr("Can't cross to {name}: it is driving another machine.").format(name=name))
     return None
 
 
@@ -268,21 +266,23 @@ def host_outcome_text(outcome: Optional[str], entry: Optional[dict]) -> str:
     a code is live or after a deliberate cancel."""
     name = _name(entry or {}) or "A machine"
     if outcome == "paired":
-        return f"Paired with {name}."
+        return tr("Paired with {name}.").format(name=name)
     if outcome == "refused":
-        return "A wrong code was tried, so this code was cancelled. Show a new one to try again."
+        return tr("A wrong code was tried, so this code was cancelled. Show a new one to try again.")
     if outcome == "version":
-        return "A machine on an older Beamer tried to pair. Update Beamer on it to 1.5.0, then show a new code."
+        return tr("A machine on an older Beamer tried to pair. Update Beamer on it to 1.5.0, then show a new code.")
     if outcome == "expired":
-        return "The code expired. Show a new one."
+        return tr("The code expired. Show a new one.")
     if outcome == "known":
         if entry is None:
-            return "That machine gave this machine's own identity, so nothing was paired. Show a new code to try again."
-        return f"{name} is already paired here{_since(entry)}. Remove it from the list first to pair again."
+            return tr("That machine gave this machine's own identity, so nothing was paired. Show a new code to try again.")
+        if day(entry.get("paired_at")):
+            return tr("{name} is already paired here, since {when}. Remove it from the list first to pair again.").format(name=name, when=day(entry.get("paired_at")))
+        return tr("{name} is already paired here. Remove it from the list first to pair again.").format(name=name)
     if outcome == "known_there":
-        return "That machine may already be paired here, or the code was wrong. Show a new code to try again."
+        return tr("That machine may already be paired here, or the code was wrong. Show a new code to try again.")
     if outcome == "full":
-        return f"This machine already has {pairing.MAX_PEERS} machines paired, the most Beamer keeps. Remove one, then show a new code."
+        return tr("This machine already has {n} machines paired, the most Beamer keeps. Remove one, then show a new code.").format(n=pairing.MAX_PEERS)
     if outcome == "not_saved":
-        return "Beamer could not save the pairing on this machine, so it did not complete. Show a new code to try again."
+        return tr("Beamer could not save the pairing on this machine, so it did not complete. Show a new code to try again.")
     return ""

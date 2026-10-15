@@ -104,6 +104,18 @@ def _open_frame(session, frame):
     return session.open(frame[protocol.HEADER_SIZE:])
 
 
+class InputMethodKeyFrames(unittest.TestCase):
+    def test_hangul_and_hanja_key_events_round_trip_through_authenticated_frames(self):
+        initiator, responder, _, _ = _pair()
+        for name in ("hangul", "hanja"):
+            for kind in (protocol.MSG_KEYDOWN, protocol.MSG_KEYUP):
+                message = protocol.key_msg(kind, name)
+                encoded = protocol.dumps_message(message)
+                opened = _open_frame(responder, initiator.seal(message))
+                self.assertEqual(opened, message)
+                self.assertEqual(protocol.dumps_message(opened), encoded)
+
+
 class Tokens(unittest.TestCase):
     def test_a_paired_token_is_43_characters_of_one_spelling(self):
         self.assertTrue(protocol.is_paired_token(TOKEN))

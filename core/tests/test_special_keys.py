@@ -4,6 +4,12 @@ from core import special_keys
 
 
 class SpecialKeyWireTests(unittest.TestCase):
+    def test_hangul_and_hanja_names_survive_special_key_translation(self):
+        for key in ("hangul", "hanja"):
+            for own in ("macos", "windows", "linux"):
+                for peer in ("macos", "windows", "linux"):
+                    self.assertEqual(special_keys.wire_name(key, own, peer), key)
+
     def test_window_switcher_chord_rules(self):
         cases = (
             ("macos", "windows", "tab", {"cmd"}, (("cmd",), "alt")),

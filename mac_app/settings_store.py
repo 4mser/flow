@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import tempfile
 import threading
 import time
@@ -28,6 +29,7 @@ from core import protocol
 from core import receiver
 from core import return_edge
 from core import ways
+from core import profiles
 
 from crossing import CORNERS, EDGES, GLOW_COLOURS, GLOW_STYLES, HAPTIC_FEELS, HAPTIC_STEPS, METHODS, NOTCH_STYLES
 import dock_visibility
@@ -36,6 +38,12 @@ from wake import parse_mac
 
 
 LOGGER = logging.getLogger(__name__)
+
+try:
+    PROFILE_APP_VERSION = (Path(os.environ.get("RESOURCEPATH") or Path(__file__).resolve().parent.parent)
+                           / "VERSION").read_text().strip()
+except OSError:
+    PROFILE_APP_VERSION = profiles.APP_VERSION
 
 APP_SUPPORT_DIRECTORY = Path.home() / "Library" / "Application Support" / "Beamer"
 DEFAULT_SETTINGS_PATH = APP_SUPPORT_DIRECTORY / "settings.json"
@@ -109,6 +117,7 @@ def editable_default_config():
         allow_windows_to_drive=True,
         check_updates=True,
         hide_addresses=False,
+        language="auto",
         hide_idle_pointer=True,
         same_on_both=False,
         same_set_at=0,
@@ -147,6 +156,7 @@ def config_to_raw(cfg):
         "allow_windows_to_drive": cfg.allow_windows_to_drive,
         "check_updates": cfg.check_updates,
         "hide_addresses": cfg.hide_addresses,
+        "language": cfg.language,
         "hide_idle_pointer": cfg.hide_idle_pointer,
         "same_on_both": cfg.same_on_both,
         "same_set_at": cfg.same_set_at,
@@ -320,6 +330,8 @@ class SettingsStore:
         # an id learnt on a link thread and a save from the window cannot cross.
         self.lock = threading.RLock()
         self._cache = None
+        self.profile_load_notes = set()
+        self._profile_load_notes_seen = set()
         # The token of the first machine in the flat settings last handed out by load() or save(),
         # which is what a window holds until it reads them again.
         self._handed_token = ""
@@ -338,6 +350,14 @@ class SettingsStore:
 
     def load(self):
         return self._config(self.load_settings())
+
+    def take_profile_load_note(self, note):
+        with self.lock:
+            if note not in self.profile_load_notes:
+                return False
+            self.profile_load_notes.remove(note)
+            self._profile_load_notes_seen.add(note)
+            return True
 
     def add_peer(self, entry, replaced=None):
         """Stores a pairing (`PairingService`'s `store`): `entry` joins the peers, taking the place
@@ -543,6 +563,11 @@ class SettingsStore:
                     settings["zones"].extend(copy.deepcopy(zone) for zone in before["zones"] if zone.get("peer") == "")
         settings = self._complete(settings)
         self._ensure_zones(settings)
+        if settings.get("_crossing_profiles_upgrade_pending"):
+            settings, _ = profiles.after_load(
+                settings, platform="mac", capable=getattr(self, "_crossing_capable", ()), now=time.time(),
+                app=PROFILE_APP_VERSION
+            )
         self._check(settings)
         self._write(settings)
         return settings
@@ -583,10 +608,19 @@ class SettingsStore:
         if not isinstance(settings, dict) or settings.get("schema") != SCHEMA:
             raise SettingsError(f"{self.path.name} is not a schema {SCHEMA} settings file")
         original = copy.deepcopy(settings)
+        settings, notes = profiles.before_load(settings)
+        self.profile_load_notes.update(set(notes) - self._profile_load_notes_seen)
         settings = self._complete(settings)
         self._ensure_zones(settings)
+        settings, _ = profiles.after_load(
+            settings, platform="mac", capable=getattr(self, "_crossing_capable", ()), now=time.time(),
+            app=PROFILE_APP_VERSION
+        )
         self._check(settings)
-        self._read_migrated = settings != original
+        # Once the file holds profile state, a load's reconcile (its status, an older Beamer's edit
+        # folded in) is saved; only an upgrade waits for the first real save.
+        self._read_migrated = (_without_profile_state(settings) != _without_profile_state(original)
+                               or "crossing_own" in original and settings != original)
         return settings
 
     def _complete(self, settings):
@@ -692,6 +726,7 @@ class SettingsStore:
             raise SettingsError("a zone names a peer that is not in the list")
 
     def _write(self, settings):
+        _backup_before_profile_upgrade(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
             os.chmod(self.path.parent, 0o700)
@@ -746,6 +781,7 @@ class SettingsStore:
         settings = _merge_config(self._fresh(), cfg)
         settings["migrated_token_sha256"] = _sha256(cfg.auth_token)
         settings["port"] = cfg.port
+        settings, _ = profiles.before_load(settings)
         return self.save_settings(settings)
 
     def _reimport(self, settings):
@@ -852,3 +888,43 @@ class SettingsStore:
             raise SettingsError(str(exc)) from exc
         if cfg.mac_address and parse_mac(cfg.mac_address) is None:
             raise SettingsError("mac_address must be six hex pairs, such as 02:1A:2B:3C:0D:4E")
+
+
+def _without_profile_state(settings):
+    result = copy.deepcopy(settings)
+    for name in ("crossing_own", "crossing_desk", "crossing_own_unreadable", "crossing_desk_unreadable",
+                 "_crossing_profiles_upgrade_pending"):
+        result.pop(name, None)
+    return result
+
+
+def _backup_before_profile_upgrade(path):
+    """Keep the exact schema-6 source before the first save of a profile-migrated file."""
+    backup = path.with_name("settings.json.before-1.5.5")
+    if backup.exists():
+        return
+    try:
+        source = path.read_bytes()
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise
+    raw = json.loads(source)
+    if not isinstance(raw, dict) or raw.get("schema") != SCHEMA:
+        return
+    own, desk = raw.get("crossing_own"), raw.get("crossing_desk")
+    if profiles._local_shape(own, desk):
+        return
+    temporary_path = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{backup.name}.", dir=path.parent)
+        os.close(descriptor)
+        temporary_path = Path(temporary_name)
+        shutil.copyfile(path, temporary_path)
+        try:
+            os.link(temporary_path, backup)
+        except FileExistsError:
+            pass
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)

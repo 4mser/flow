@@ -27,6 +27,20 @@ class SettingsLayoutAcceptanceTests(unittest.TestCase):
         kvm_bridge_app.theme.init_fonts()
         cls.control = offscreen_control_window()
 
+    def test_capped_profile_buttons_do_not_narrow_the_ledger_when_stacked(self):
+        control = self.control
+        control._select_page("crossing")
+        for width in (320, 426, 512, 900, 426):
+            control.window.setFrame_display_(((100000, 100000), (width, 900)), False)
+            settle(control.window)
+            body = control.pages["crossing"].documentView().subviews()[0]
+            module = control.ways_ledger_module.view
+            with self.subTest(width=width):
+                self.assertAlmostEqual(module.frame().size.width, body.frame().size.width, delta=1)
+                self.assertFalse(module.hasAmbiguousLayout())
+                self.assertLessEqual(control.own_ways_button.view.frame().size.width, 240 + 1)
+        self.assertFalse(control.window.isVisible())
+
     def test_all_six_pages_share_the_centred_column_at_every_width_and_density(self):
         from mac_app.tests.settings_layout_offscreen import render
         control = self.control

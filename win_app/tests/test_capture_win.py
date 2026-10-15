@@ -27,6 +27,16 @@ class HookPoint(ctypes.Structure):
 
 
 class NameTests(unittest.TestCase):
+    def test_input_method_keys_are_captured_and_not_offered_as_triggers(self):
+        state = KeyboardState()
+        self.assertEqual(key_name(0x15, 0, state, names_only), "hangul")
+        self.assertEqual(key_name(0x19, 0, state, names_only), "hanja")
+        self.assertTrue({0x15, 0x19} <= capture_win.NOT_TRIGGER_VKS)
+
+    def test_every_named_key_but_the_undifferentiated_modifiers_has_a_title(self):
+        # 1.4.3's loader, kept as a fixture, titles every named key but these three.
+        self.assertEqual(set(capture_win.VK_TO_NAME) - set(capture_win.VK_TITLES), {0x10, 0x11, 0x12})
+
     def test_browser_search_and_app_launch_keys_are_captured(self):
         state = KeyboardState()
         self.assertEqual(key_name(0xAA, 0, state, names_only), "browser_search")

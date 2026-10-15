@@ -81,6 +81,65 @@ class ShortcutMachineTests(unittest.TestCase):
         rig.sender.toggle_shortcut()
         self.assertIsNone(rig.sender.owner)
 
+    def test_shortcut_at_home_asks_to_push_to_its_target_then_moves_when_captured(self):
+        rig = self.rig(up=(B, C))
+        rig.sender.input_held = lambda: False
+        requested = []
+
+        def push_out(peer, on_captured, on_failed):
+            requested.append((peer, on_captured, on_failed))
+            return True
+
+        rig.sender.push_out = push_out
+        rig.sender.toggle_shortcut()
+
+        self.assertEqual(len(requested), 1)
+        peer, captured, _failed = requested[0]
+        self.assertEqual(peer, rig.sender.shortcut_target())
+        self.assertEqual(rig.sender.owner, None)
+        self.assertEqual(rig.alerts, [])
+        rig.sender.input_held = lambda: True
+        captured()
+        self.assertEqual(rig.sender.owner, peer)
+
+    def test_failed_push_out_alerts_with_the_target_name(self):
+        rig = self.rig(up=(B, C))
+        rig.sender.input_held = lambda: False
+        requests = []
+        rig.sender.push_out = lambda peer, on_captured, on_failed: requests.append((peer, on_failed)) or True
+        rig.sender.toggle_shortcut()
+
+        requests[0][1]()
+
+        self.assertEqual(rig.alerts, ["Cannot switch — the desktop did not let Beamer send input to Bee"])
+
+    def test_no_push_out_keeps_the_existing_wayland_alert(self):
+        rig = self.rig(up=(B, C))
+        rig.sender.input_held = lambda: False
+
+        rig.sender.toggle_shortcut()
+
+        self.assertEqual(rig.alerts, ["Cannot switch — on this desktop input goes to another machine only by pushing the pointer through an edge"])
+
+    def test_push_out_refusal_falls_back_to_the_existing_wayland_alert(self):
+        rig = self.rig(up=(B, C))
+        rig.sender.input_held = lambda: False
+        rig.sender.push_out = lambda peer, on_captured, on_failed: False
+
+        rig.sender.toggle_shortcut()
+
+        self.assertEqual(rig.alerts, ["Cannot switch — on this desktop input goes to another machine only by pushing the pointer through an edge"])
+
+    def test_models_toward_returns_only_that_peers_models_and_none_while_edges_are_held(self):
+        rig = self.rig(up=(B, C))
+
+        models = rig.sender.models_toward(B)
+
+        self.assertTrue(models)
+        self.assertEqual(models, [model for peer, model in rig.sender._models if peer == B])
+        rig.sender.crossing_paused = True
+        self.assertEqual(rig.sender.models_toward(B), [])
+
     def test_next_shortcut_passes_over_a_machine_that_just_refused_and_comes_home(self):
         # The owner ignores a move to a machine it holds back, so choosing it left input where it was.
         rig = self.rig(up=(B, C), shortcut_goes_to="next")

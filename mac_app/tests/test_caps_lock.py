@@ -40,6 +40,8 @@ from bridge_fakes import (
 from fake_link import FakeLink
 import keyboard_layout
 
+HID = FakeQuartz.kCGEventSourceStateHIDSystemState
+
 
 class CapsLockEventTapTests(unittest.TestCase):
     def setUp(self):
@@ -93,6 +95,40 @@ class CapsLockEventTapTests(unittest.TestCase):
         returned = self.tap(FakeQuartz.kCGEventFlagsChanged, event)
         self.assertIs(returned, event)
         self.assertEqual(self.sent(), [])
+
+    def test_hangul_and_hanja_are_taps_without_a_release_message(self):
+        translator = QuartzEventTranslator(FakeQuartz)
+        for name, keycode in (("hangul", 0x68), ("hanja", 0x66)):
+            with self.subTest(name=name):
+                key = {FakeQuartz.kCGKeyboardEventKeycode: keycode, FakeQuartz.kCGEventSourceStateID: HID}
+                down = translator.key_result(FakeQuartz.kCGEventKeyDown, key, 0x3D, {})
+                up = translator.key_result(FakeQuartz.kCGEventKeyUp, key, 0x3D, {})
+                self.assertEqual(down.messages, [
+                    {"type": protocol.MSG_KEYDOWN, "data": {"key": name}},
+                    {"type": protocol.MSG_KEYUP, "data": {"key": name}},
+                ])
+                self.assertEqual(up.messages, [])
+                repeat = translator.key_result(FakeQuartz.kCGEventKeyDown,
+                                               {**key, FakeQuartz.kCGKeyboardEventAutorepeat: 1}, 0x3D, {})
+                self.assertEqual(repeat.messages, [])
+
+    def test_hangul_at_home_stays_here_and_a_letter_still_passes(self):
+        for keycode in (0x68, 0x00):
+            for event_type in (FakeQuartz.kCGEventKeyDown, FakeQuartz.kCGEventKeyUp):
+                event = {FakeQuartz.kCGKeyboardEventKeycode: keycode, FakeQuartz.kCGEventSourceStateID: HID}
+                self.assertIs(self.tap(event_type, event), event)
+
+    def test_hangul_while_away_is_one_tap_and_its_release_stays_here(self):
+        redirect_to(self.controller)
+        self.sent()
+        down = {FakeQuartz.kCGKeyboardEventKeycode: 0x68, FakeQuartz.kCGEventSourceStateID: HID}
+        up = dict(down)
+        self.assertIsNone(self.tap(FakeQuartz.kCGEventKeyDown, down))
+        self.assertIs(self.tap(FakeQuartz.kCGEventKeyUp, up), up)
+        self.assertEqual(self.sent(), [
+            (protocol.MSG_KEYDOWN, {"key": "hangul"}),
+            (protocol.MSG_KEYUP, {"key": "hangul"}),
+        ])
 
     def test_flags_changed_caps_lock_never_calls_event_converters_on_tap_thread(self):
         event = {FakeQuartz.kCGKeyboardEventKeycode: CAPS_LOCK_KEY_CODE, "flags": 0}

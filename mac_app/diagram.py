@@ -16,6 +16,11 @@ import pages
 import theme
 from core.resistance_strip import MAX_RESISTANCE, resistance_x
 from core import ways as core_ways
+from core.i18n import N_, tr
+
+POSITION_WORDS = {"right of": N_("right of"), "left of": N_("left of"),
+                  "below": N_("below"), "above": N_("above")}
+THIRD_WORDS = {"start": N_("start"), "middle": N_("middle"), "end": N_("end")}
 
 
 def _rect(frame):
@@ -85,6 +90,7 @@ def _collapsed(frame, side):
 # The clear space centred on each third boundary of the selected machine's seam and tracks.
 THIRD_GAP = 2.0
 CYCLE_BOX = 16.0
+RESIZE_GRIP = 12.0
 
 
 def _at_break(value, breaks):
@@ -219,7 +225,7 @@ class ArrangementDiagram(AppKit.NSView):
         self.this.setFrame_(_rect(this))
         line = theme.TYPE["small"] + 4
         x, y, w, h = this
-        _fit_text(self.this_label, "This Mac", (x + 6, y + (4 if has_notch else 0), w - 12, h))
+        _fit_text(self.this_label, tr("This Mac"), (x + 6, y + (4 if has_notch else 0), w - 12, h))
         keys = {machine["key"] for machine in machines}
         for key in [key for key in self.screens if key not in keys]:
             for layer in self.screens.pop(key):
@@ -317,12 +323,12 @@ def outcome_for_tile(state, crosses, is_own=False):
     if is_own:
         return ""
     if state == "overlap":
-        return "Overlaps"
+        return tr("Overlaps")
     if state in ("gap", "between", "set-elsewhere", "set_elsewhere"):
-        return "Drag to connect"
+        return tr("Drag to connect")
     if not crosses:
-        return "Edge off"
-    return "Crosses"
+        return tr("Edge off")
+    return tr("Crosses")
 
 
 class AtlasAccessibleElement(AppKit.NSObject):
@@ -338,15 +344,23 @@ class AtlasAccessibleElement(AppKit.NSObject):
 
     def accessibilityLabel(self):
         if self.kind == "recentre":
-            name = self.canvas.labels.get(self.canvas.selected, "machine")
-            return f"Recentre {name}"
-        name = self.canvas.labels.get(self.key, f"Machine · {self.key[-6:]}")
-        return f"{name}, In the shortcut's cycle" if self.kind == "cycle" else name
+            name = self.canvas.labels.get(self.canvas.selected, tr("machine"))
+            return tr("Recentre {name}").format(name=name)
+        name = self.canvas.labels.get(self.key, tr("Machine · {id}").format(id=self.key[-6:]))
+        if self.kind == "cycle":
+            return tr("{name}, In the shortcut's cycle").format(name=name)
+        word = self.canvas.tile_words.get(self.key)
+        return tr("{name}, {status}").format(name=name, status=word) if word else name
 
     def accessibilityValue(self):
         if self.kind == "cycle":
             return self.canvas.cycle.get(self.key, True) is True
-        return "Selected" if self.canvas.selected == self.key else ""
+        return tr("Selected") if self.canvas.selected == self.key else ""
+
+    def accessibilityHelp(self):
+        if self.kind == "tile" and self.canvas._can_resize(self.key):
+            return tr("Drag a corner to resize, or use Option and the arrow keys.")
+        return ""
 
     def accessibilityParent(self):
         return self.canvas
@@ -401,6 +415,10 @@ class AtlasCanvas(AppKit.NSView):
         self.tiles = {}
         self.states = {}
         self.labels = {}
+        self.tile_words = {}
+        self.machine_picker = False
+        self.read_only = False
+        self.fixed_machine_id = ""
         self.older = set()
         self.selected = None
         self.own_id = ""
@@ -419,6 +437,7 @@ class AtlasCanvas(AppKit.NSView):
         self.outcome_for_tile = {}
         self.dot_for_tile = {}
         self.cycle_for_tile = {}
+        self.resize_layers = {}
         self.accessible_elements = {}
         self.contact_layers = {}
         self.seam_segments = []
@@ -464,7 +483,7 @@ class AtlasCanvas(AppKit.NSView):
         self.last_announcement = ""
         self.setAccessibilityElement_(True)
         self.setAccessibilityRole_(AppKit.NSAccessibilityGroupRole)
-        self.setAccessibilityLabel_("Whole desk layout")
+        self.setAccessibilityLabel_(tr("Whole desk layout"))
         return self
 
     def acceptsFirstResponder(self):
@@ -484,13 +503,19 @@ class AtlasCanvas(AppKit.NSView):
 
     @objc.python_method
     def show_layout(self, tiles, states, labels, own_id, selected, cycle=None, cycle_enabled=False,
-                    older=(), animate=False):
+                    older=(), animate=False, tile_words=None, machine_picker=False, read_only=False,
+                    fixed_machine_id=None):
+        """`own_id` anchors the viewed machine's seams; picker mode includes it in selection."""
         cycle = dict(cycle or {})
         older = set(older)
+        tile_words = dict(tile_words or {})
+        fixed_machine_id = own_id if fixed_machine_id is None else fixed_machine_id
         if (tiles == self.tiles and states == self.states and labels == self.labels
                 and own_id == self.own_id and selected == self.selected
                 and cycle == self.cycle and bool(cycle_enabled) == self.cycle_enabled
-                and older == self.older):
+                and older == self.older and tile_words == self.tile_words
+                and bool(machine_picker) == self.machine_picker and bool(read_only) == self.read_only
+                and fixed_machine_id == self.fixed_machine_id):
             return
         self.tiles = copy.deepcopy(tiles)
         self.states = copy.deepcopy(states)
@@ -500,13 +525,20 @@ class AtlasCanvas(AppKit.NSView):
         self.cycle = cycle
         self.cycle_enabled = bool(cycle_enabled)
         self.older = older
+        self.tile_words = tile_words
+        self.machine_picker = bool(machine_picker)
+        self.read_only = bool(read_only)
+        self.fixed_machine_id = fixed_machine_id
+        if self.read_only:
+            self.dragging = self.third_pressed = None
         for key in list(self.layer_for_tile):
             if key not in self.tiles:
                 for layer in self.display_layers.pop(key, []):
                     layer.removeFromSuperlayer()
                 for layer in (self.layer_for_tile.pop(key), self.label_for_tile.pop(key),
                               self.state_for_tile.pop(key), self.outcome_for_tile.pop(key),
-                              self.dot_for_tile.pop(key), self.cycle_for_tile.pop(key)):
+                              self.dot_for_tile.pop(key), self.cycle_for_tile.pop(key),
+                              self.resize_layers.pop(key)):
                     layer.removeFromSuperlayer()
         self.setAccessibilityLabel_(self.last_announcement or self._description())
         self.setNeedsLayout_(True)
@@ -519,24 +551,33 @@ class AtlasCanvas(AppKit.NSView):
     def _description(self):
         parts = []
         for key, tile in self.tiles.items():
-            label = self.labels.get(key, f"Machine · {key[-6:]}")
+            label = self.labels.get(key, tr("Machine · {id}").format(id=key[-6:]))
             state = self.states.get(key, {}).get("state")
             sentence = self.states.get(key, {}).get("sentence", "")
             if sentence:
                 parts.append(sentence)
+            elif self.machine_picker and key == self.own_id:
+                parts.append(label)
             elif key == self.own_id:
                 name = self.states.get(key, {}).get("machine_name")
-                parts.append(f"{label}, {name}, this Mac." if name else f"{label}, this Mac.")
+                parts.append(tr("{label}, {name}, this Mac.").format(label=label, name=name) if name else
+                             tr("{label}, this Mac.").format(label=label))
             else:
                 status = self.states.get(key, {})
-                outcome = ("Offline" if not status.get("linked") else
-                           "Crosses" if status.get("crosses") else
-                           "Edge off" if status.get("edge_off") else
+                outcome = (tr("Offline") if not status.get("linked") else
+                           tr("Crosses") if status.get("crosses") else
+                           tr("Edge off") if status.get("edge_off") else
                            outcome_for_tile(state, False))
-                parts.append(f"{label}, {outcome}.")
+                parts.append(tr("{label}, {outcome}.").format(label=label, outcome=outcome))
+            if self.tile_words.get(key):
+                parts.append(self.tile_words[key])
+            if self._can_resize(key):
+                parts.append(tr("{name}: drag a corner to resize, or use Option and the arrow keys.").format(name=label))
             if self.cycle_enabled and key != self.own_id:
-                parts.append(f"{label} is {'in' if self.cycle.get(key, True) else 'out of'} the shortcut's cycle.")
-        return " ".join(parts) or "No machines paired."
+                sentence = (tr("{name} is in the shortcut's cycle.") if self.cycle.get(key, True) else
+                            tr("{name} is out of the shortcut's cycle."))
+                parts.append(sentence.format(name=label))
+        return " ".join(parts) or tr("No machines paired.")
 
     def accessibilityChildren(self):
         children = []
@@ -553,7 +594,7 @@ class AtlasCanvas(AppKit.NSView):
 
     @objc.python_method
     def select_tile(self, key):
-        if key not in self.tiles or key == self.own_id:
+        if key not in self.tiles or (key == self.own_id and not self.machine_picker):
             return
         self.selected = key
         if self.on_select:
@@ -563,7 +604,8 @@ class AtlasCanvas(AppKit.NSView):
     @objc.python_method
     def reading_order(self):
         placed = sorted(((tile["y"] + tile["h"] / 2, tile["x"] + tile["w"] / 2,
-                          tile["h"], key) for key, tile in self.tiles.items() if key != self.own_id))
+                          tile["h"], key) for key, tile in self.tiles.items()
+                         if self.machine_picker or key != self.own_id))
         rows = []
         for item in placed:
             if not rows or item[0] - rows[-1][0][0] > min(item[2], rows[-1][0][2]) / 2:
@@ -589,12 +631,32 @@ class AtlasCanvas(AppKit.NSView):
             "left of" if tile["x"] + tile["w"] <= own.get("x", 0) else \
             "below" if tile["y"] >= own.get("y", 0) + own.get("h", 0) else "above"
         thirds = state.get("thirds", [])
-        third = f", {thirds[0]} third" if len(thirds) == 1 else ""
         map_state = state.get("state")
         if not state.get("crosses") and core_ways._rect_contact(own, tile) is None:
             map_state = "gap"
-        crosses = outcome_for_tile(map_state, state.get("crosses")) + "."
-        self.announce(f"{name}, {side} This Mac{third}. {crosses}")
+        outcome = outcome_for_tile(map_state, state.get("crosses"))
+        if len(thirds) == 1:
+            # Translators: {third} is one of the three sections along an edge.
+            sentence = tr("{name}, {side} This Mac, {third} third. {outcome}.")
+            position = tr(POSITION_WORDS[side])
+            third = tr(THIRD_WORDS[thirds[0]])
+            self.announce(sentence.format(name=name, side=position, third=third, outcome=outcome))
+        else:
+            sentence = tr("{name}, {side} This Mac. {outcome}.")
+            position = tr(POSITION_WORDS[side])
+            self.announce(sentence.format(name=name, side=position, outcome=outcome))
+
+    @objc.python_method
+    def announce_resize(self, key):
+        name = self.labels.get(key, tr("Machine · {id}").format(id=key[-6:]))
+        self.announce(tr("{name} resized.").format(name=name))
+
+    @objc.python_method
+    def _commit_resize(self, key):
+        if self.on_layout_change:
+            self.on_layout_change(self.tiles, key, snap=False)
+        else:
+            self.announce_resize(key)
 
     @objc.python_method
     def _layer(self, key):
@@ -621,18 +683,26 @@ class AtlasCanvas(AppKit.NSView):
             check.setFrame_(((0, 0), (CYCLE_BOX, CYCLE_BOX)))
             check.setHidden_(True)
             cycle.addSublayer_(check)
+            grip = Quartz.CAShapeLayer.layer()
+            grip.setFillColor_(AppKit.NSColor.clearColor().CGColor())
+            grip.setLineWidth_(1.5)
+            grip.setLineCap_(Quartz.kCALineCapRound)
+            grip.setZPosition_(23)
+            grip.setHidden_(True)
             self.layer().addSublayer_(tile)
             self.layer().addSublayer_(title)
             self.layer().addSublayer_(state)
             self.layer().addSublayer_(outcome)
             self.layer().addSublayer_(dot)
             self.layer().addSublayer_(cycle)
+            self.layer().addSublayer_(grip)
             self.layer_for_tile[key] = tile
             self.label_for_tile[key] = title
             self.state_for_tile[key] = state
             self.outcome_for_tile[key] = outcome
             self.dot_for_tile[key] = dot
             self.cycle_for_tile[key] = cycle
+            self.resize_layers[key] = grip
         return (self.layer_for_tile[key], self.label_for_tile[key], self.state_for_tile[key],
                 self.outcome_for_tile[key], self.dot_for_tile[key], self.cycle_for_tile[key])
 
@@ -673,6 +743,42 @@ class AtlasCanvas(AppKit.NSView):
     def _cycle_hit_rect(frame):
         x, y, width, height = AtlasCanvas._cycle_box(frame)
         return x - 4, y - 4, width + 8, height + 8
+
+    @objc.python_method
+    def _can_resize(self, key):
+        tile = self.tiles.get(key)
+        state = self.states.get(key, {})
+        return (tile is not None and not self.read_only
+                and not any(tile.get(flag) or state.get(flag) for flag in ("left_out", "shelved", "dormant"))
+                and tile.get("in_use") is not False and state.get("in_use") is not False
+                and (key == self.fixed_machine_id or not tile.get("display_offsets")))
+
+    @staticmethod
+    def _resize_rect(frame):
+        x, y, width, height = frame
+        size = min(RESIZE_GRIP, width, height)
+        return x + width - size, y + height - size, size, size
+
+    @objc.python_method
+    def _resize_hit(self, point):
+        # An edge third's 5 px band wins over a grip it overlaps, as on the PC map.
+        if self._third_hit(point):
+            return None
+        frames, _scale = self._map()
+        for key, frame in reversed(list(frames.items())):
+            if not self._can_resize(key):
+                continue
+            x, y, width, height = self._resize_rect(frame)
+            # A tile drawn smaller than the grip has its whole grip inside the band of the side it
+            # shares; the hit area keeps the full grip size, reaching out past the corner.
+            if x <= point.x <= x + max(width, RESIZE_GRIP) and y <= point.y <= y + max(height, RESIZE_GRIP):
+                return key
+        return None
+
+    @staticmethod
+    def _resize_cursor():
+        cursor = getattr(AppKit.NSCursor, "resizeNorthWestSouthEastCursor", None)
+        return cursor() if cursor is not None else AppKit.NSCursor.crosshairCursor()
 
     @objc.python_method
     def _map(self):
@@ -721,12 +827,14 @@ class AtlasCanvas(AppKit.NSView):
             is_own = key == self.own_id
             inactive = self.states.get(key, {}).get("in_use") is False
             selected = key == self.selected
-            gap = state in ("gap", "set-elsewhere", "between", "overlap")
+            elsewhere = (self.machine_picker and self.own_id != self.fixed_machine_id
+                         and state in ("gap", "between", "set-elsewhere", "set_elsewhere"))
+            gap = not elsewhere and state in ("gap", "set-elsewhere", "set_elsewhere", "between", "overlap")
             hover = key == self.hovered and not self.keyboard_focus
             _set_layer_frame_if_changed(tile, _rect(frame))
-            tile.setBorderWidth_(1 if is_own else 2 if selected or gap else 1)
+            tile.setBorderWidth_(2 if selected and self.machine_picker else 1 if is_own else 2 if selected or gap else 1)
             theme.tint(tile, background="well" if is_own else "panel",
-                       border="edge" if is_own else "ink_2" if selected else
+                       border="ink_2" if selected and self.machine_picker else "edge" if is_own else "ink_2" if selected else
                        "ink_3" if hover else "amber" if gap else "edge")
             tile.setOpacity_(0.42 if inactive else 1.0)
             screens = core_ways._display_frames(self.tiles[key]) if self.tiles[key].get("displays") else []
@@ -752,16 +860,20 @@ class AtlasCanvas(AppKit.NSView):
                             (screen["w"] * scale_x, screen["h"] * scale_y)))
                 layer.setHidden_(False)
                 theme.tint(layer, background="well", border="edge")
-            title.setString_(self.labels.get(key, f"Machine · {key[-6:]}"))
+            title.setString_(self.labels.get(key, tr("Machine · {id}").format(id=key[-6:])))
+            title.setWrapped_(False)
+            title.setTruncationMode_(Quartz.kCATruncationEnd)
             _set_layer_frame_if_changed(title, _rect(self._title_rect(key, frame)))
             status_info = self.states.get(key, {})
-            status = (f"{status_info.get('machine_name') or platform.node().split('.')[0] or 'This Mac'} · macOS"
+            status = (tr("{name} · macOS").format(name=status_info.get('machine_name') or platform.node().split('.')[0] or tr("This Mac"))
                       if is_own else
-                      f"{status_info.get('platform', 'Computer')} · {'Linked' if status_info.get('linked') else 'Offline'}")
+                      tr("{platform} · {status}").format(platform=status_info.get('platform', tr("Computer")),
+                                                          status=tr("Linked") if status_info.get('linked') else tr("Offline")))
             if key in self.older:
-                status = f"Beamer {status_info.get('version') or '1.5.2'} · only sees which side"
+                status = tr("Beamer {version} · only sees which side").format(version=status_info.get('version') or '1.5.2')
             if inactive:
-                status = "Not in use"
+                status = tr("Not in use")
+            status = self.tile_words.get(key) or status
             state_layer.setString_(status)
             state_layer.setAlignmentMode_(Quartz.kCAAlignmentLeft)
             _set_layer_frame_if_changed(state_layer, ((frame[0] + 24, frame[1] + 35),
@@ -769,25 +881,28 @@ class AtlasCanvas(AppKit.NSView):
             state_layer.setHidden_(frame[3] < 72)
             theme.tint(state_layer, foreground="amber" if gap else "ink_3")
             crosses = status_info.get("crosses", is_own)
-            outcome = ("Offline" if not is_own and not status_info.get("linked") else
-                       "Crosses" if crosses and (status_info.get("corner_ways") or status_info.get("wrap_sides")
-                                                 or status_info.get("notch_way")) else
-                       "Edge off" if status_info.get("edge_off") or status_info.get("unpicked") else
-                       outcome_for_tile(state, crosses, is_own))
+            outcome_kind = ("offline" if not is_own and not status_info.get("linked") else
+                            "crosses" if crosses and (status_info.get("corner_ways") or status_info.get("wrap_sides")
+                                                       or status_info.get("notch_way")) else
+                            "edge_off" if status_info.get("edge_off") or status_info.get("unpicked") else
+                            "tile")
+            outcome = {"offline": tr("Offline"), "crosses": tr("Crosses"), "edge_off": tr("Edge off")}.get(
+                outcome_kind, outcome_for_tile(state, crosses, is_own))
             if is_own:
                 outcome = ""
-            outcome_layer.setString_(outcome)
+            outcome_layer.setString_(tr("Set elsewhere") if elsewhere and not is_own else outcome)
             _set_layer_frame_if_changed(
                 outcome_layer, ((frame[0] + 8, frame[1] + frame[3] - 22),
                                 (max(1, frame[2] - 16), 14)))
             outcome_layer.setHidden_(frame[3] < 56)
-            theme.tint(outcome_layer, foreground="signal" if outcome == "Crosses" else
-                       "amber" if outcome in ("Drag to connect", "Overlaps") else "ink_3")
+            theme.tint(outcome_layer, foreground="ink_3" if elsewhere else "signal" if outcome_kind == "crosses" else
+                       "amber" if state in ("gap", "between", "set-elsewhere", "set_elsewhere", "overlap") else "ink_3")
             _set_layer_frame_if_changed(dot, ((frame[0] + 12, frame[1] + 40), (6, 6)))
             dot.setCornerRadius_(3)
             dot.setHidden_(frame[3] < 72)
-            theme.tint(dot, background="amber" if key in self.older else
-                       "signal" if status_info.get("linked") else "ink_3")
+            word = self.tile_words.get(key)
+            theme.tint(dot, background=("signal" if word in (tr("Desk"), tr("Own")) else "ink_3") if word else
+                       "ink_3" if key in self.older else "signal" if status_info.get("linked") else "ink_3")
             cycle_layer.setHidden_(not self._shows_cycle(key))
             _set_layer_frame_if_changed(cycle_layer, _rect(self._cycle_box(frame)))
             ticked = self.cycle.get(key, True) is True
@@ -798,6 +913,15 @@ class AtlasCanvas(AppKit.NSView):
                 z_position = max(layer.zPosition() for layer in self.display_layers[key]) + 1.0
                 for layer in (title, state_layer, outcome_layer, dot, cycle_layer):
                     layer.setZPosition_(z_position)
+            grip = self.resize_layers[key]
+            grip.setHidden_(not (self._can_resize(key) and (selected or key == self.hovered)))
+            gx, gy, gw, gh = self._resize_rect(frame)
+            path = Quartz.CGPathCreateMutable()
+            for inset in (4, 8):
+                Quartz.CGPathMoveToPoint(path, None, gx + gw - inset, gy + gh - 3)
+                Quartz.CGPathAddLineToPoint(path, None, gx + gw - 3, gy + gh - inset)
+            grip.setPath_(path)
+            theme.tint(grip, stroke="ink_2" if selected else "ink_3")
         focus = frames.get(self.selected) if self.keyboard_focus else None
         self.focus_layer.setHidden_(focus is None)
         if focus is not None:
@@ -815,17 +939,23 @@ class AtlasCanvas(AppKit.NSView):
             self.recentre_layer.setBorderWidth_(1 if self.keyboard_focus or self.recentre_hovered else 0)
             theme.tint(self.recentre_layer, background="panel",
                        border="ink_2" if self.keyboard_focus or self.recentre_hovered else "rule")
-            self.recentre_label.setString_("Recentre")
+            self.recentre_label.setString_(tr("Recentre"))
             self.recentre_label.setAlignmentMode_(Quartz.kCAAlignmentCenter)
             _set_layer_frame_if_changed(self.recentre_label, ((4, 2), (button[2] - 8, button[3] - 4)))
             theme.tint(self.recentre_label, foreground="ink_2" if self.recentre_hovered or self.keyboard_focus else "ink_3")
         self.removeAllToolTips()
         for _peer, _third, _side, start, end in self._third_segments(frames):
+            if self.read_only:
+                continue
             rect = (AppKit.NSMakeRect(start[0] - 5, start[1], 10, end[1] - start[1])
                     if start[0] == end[0] else
                     AppKit.NSMakeRect(start[0], start[1] - 5, end[0] - start[0], 10))
             self.addToolTipRect_owner_userData_(rect, self, 1)
         for key, frame in frames.items():
+            title_rect = self._title_rect(key, frame)
+            name = self.labels.get(key, tr("Machine · {id}").format(id=key[-6:]))
+            if _text_width(name, self.label_for_tile[key].font()) > title_rect[2]:
+                self.addToolTipRect_owner_userData_(AppKit.NSMakeRect(*title_rect), self, 2)
             if self._shows_cycle(key):
                 self.addToolTipRect_owner_userData_(AppKit.NSMakeRect(*self._cycle_hit_rect(frame)), self, 0)
         Quartz.CATransaction.commit()
@@ -839,7 +969,7 @@ class AtlasCanvas(AppKit.NSView):
             if (peer != own and own in frames and peer in frames
                     and state.get("state") in ("edge", "part", "corner") and state.get("crosses")
                     and state.get("picked_thirds", ["start"])):
-                found = [(screen, stretch, self._third_breaks(contact, screen) if peer == self.selected else set())
+                found = [(screen, stretch, self._third_breaks(contact, screen) if self.machine_picker or peer == self.selected else set())
                          for screen, contact in self._side_contacts(peer)
                          for stretch in core_ways.crossing_stretches(contact, screen, state.get("lit_thirds", []))]
                 if found:
@@ -924,7 +1054,7 @@ class AtlasCanvas(AppKit.NSView):
             for peer, state in self.states.items():
                 if peer == self.own_id or peer not in frames or state.get("in_use") is False:
                     continue
-                opacity = (1.0 if state.get("linked", True) else 0.55) * (1.0 if peer == self.selected else 0.7)
+                opacity = (1.0 if state.get("linked", True) else 0.55) * (1.0 if self.machine_picker or peer == self.selected else 0.7)
                 for kept, sides in ((False, state.get("wrap_sides", [])), (True, state.get("kept_sides", []))):
                     for side in sides:
                         wanted[(peer, side)] = (kept, opacity)
@@ -1101,8 +1231,11 @@ class AtlasCanvas(AppKit.NSView):
         return (max(start[0], low), start[1]), (min(end[0], high), end[1])
 
     @objc.python_method
-    def _third_segments(self, frames):
-        peer, own = self.selected, self.own_id
+    def _third_segments(self, frames, peer=None):
+        if peer is None and self.machine_picker:
+            return [segment for key in self.tiles if key != self.own_id
+                    for segment in self._third_segments(frames, key)]
+        peer, own = self.selected if peer is None else peer, self.own_id
         state = self.states.get(peer, {})
         if (peer == own or peer not in frames or own not in frames
                 or state.get("in_use") is False):
@@ -1125,9 +1258,10 @@ class AtlasCanvas(AppKit.NSView):
     def _draw_thirds(self, frames):
         marks = {}
         segments = self._third_segments(frames)
-        peer = segments[0][0] if segments else None
-        state = self.states.get(peer, {})
-        if segments and not state.get("edge_off") and state.get("picked_thirds"):
+        for peer in dict.fromkeys(segment[0] for segment in segments):
+            state = self.states.get(peer, {})
+            if state.get("edge_off") or not state.get("picked_thirds"):
+                continue
             contacts = self._side_contacts(peer)
             for index, (screen, contact) in enumerate(contacts):
                 breaks = self._third_breaks(contact, screen)
@@ -1173,6 +1307,8 @@ class AtlasCanvas(AppKit.NSView):
 
     @objc.python_method
     def _third_hit(self, point):
+        if self.read_only:
+            return None
         hit = self._third_hit_segment(point)
         return hit[:2] if hit else None
 
@@ -1181,8 +1317,9 @@ class AtlasCanvas(AppKit.NSView):
         side = side or core_ways._rect_contact(self.tiles[self.own_id], self.tiles[peer])[0]
         name = core_ways.part_names(side)[third]
         picked = self.states.get(peer, {}).get("picked_thirds", [])
-        detail = f"click to turn it {'off' if third in picked else 'on'}"
-        return f"{name} third: {detail}"
+        # Translators: third names are one of the three sections of a screen edge.
+        detail = tr("click to turn it off") if third in picked else tr("click to turn it on")
+        return tr("{name} third: {detail}").format(name=name, detail=detail)
 
     @objc.python_method
     def _draw_marks(self, frames):
@@ -1242,11 +1379,12 @@ class AtlasCanvas(AppKit.NSView):
                 dx = 1 if key[2].endswith("left") else -1
                 dy = 1 if key[2].startswith("top") else -1
                 chevron_path = Quartz.CGPathCreateMutable()
-                Quartz.CGPathMoveToPoint(chevron_path, None, px - 4 * dx, py + 3 * dy)
-                Quartz.CGPathAddLineToPoint(chevron_path, None, px - 4 * dx, py - 4 * dy)
-                Quartz.CGPathAddLineToPoint(chevron_path, None, px + 3 * dx, py - 4 * dy)
+                # The 7 pt bracket centred on the vertex, as in the 16 pt pad around it.
+                Quartz.CGPathMoveToPoint(chevron_path, None, px - 3.5 * dx, py + 3.5 * dy)
+                Quartz.CGPathAddLineToPoint(chevron_path, None, px - 3.5 * dx, py - 3.5 * dy)
+                Quartz.CGPathAddLineToPoint(chevron_path, None, px + 3.5 * dx, py - 3.5 * dy)
                 chevron.setPath_(chevron_path)
-            selected = key[0] == self.selected
+            selected = self.machine_picker or key[0] == self.selected
             layer.setOpacity_(1.0 if selected else 0.55)
             layer.setZPosition_(21 if selected else 20)
             if vertex is not None:
@@ -1272,7 +1410,7 @@ class AtlasCanvas(AppKit.NSView):
 
     @objc.python_method
     def snap_preview(self):
-        if self.dragging is None or self.dragging.get("display") is not None:
+        if self.dragging is None or self.dragging.get("display") is not None or self.dragging.get("resize"):
             return None
         key = self.dragging.get("key")
         if key in (None, self.own_id) or key not in self.tiles or self.own_id not in self.tiles:
@@ -1415,12 +1553,12 @@ class AtlasCanvas(AppKit.NSView):
 
     @objc.python_method
     def _show_recentre(self):
-        return (self.selected not in (None, self.own_id) and self.selected in self.tiles
+        return (not self.read_only and self.selected not in (None, self.own_id, self.fixed_machine_id) and self.selected in self.tiles
                 and self.own_id in self.tiles and not self._is_centred(self.selected))
 
     @objc.python_method
     def recentre_selected(self):
-        if self.dragging is not None:
+        if self.read_only or self.selected == self.fixed_machine_id or self.dragging is not None:
             return False
         peer = self.selected
         side = self._recentre_side(peer) if peer not in (None, self.own_id) else None
@@ -1472,7 +1610,8 @@ class AtlasCanvas(AppKit.NSView):
     def _stop_tile_animations(self, key):
         layers = [self.layer_for_tile.get(key), self.label_for_tile.get(key),
                   self.state_for_tile.get(key), self.outcome_for_tile.get(key),
-                  self.dot_for_tile.get(key), self.cycle_for_tile.get(key), self.focus_layer]
+                  self.dot_for_tile.get(key), self.cycle_for_tile.get(key),
+                  self.resize_layers.get(key), self.focus_layer]
         layers.extend(self.display_layers.get(key, ()))
         for layer in layers:
             if layer is not None:
@@ -1480,7 +1619,7 @@ class AtlasCanvas(AppKit.NSView):
 
     @objc.python_method
     def toggle_cycle(self, key):
-        if not self.cycle_enabled or key == self.own_id or key not in self.tiles:
+        if self.read_only or not self.cycle_enabled or key == self.own_id or key not in self.tiles:
             return
         self.cycle[key] = not self.cycle.get(key, True)
         if self.on_cycle_change:
@@ -1504,9 +1643,13 @@ class AtlasCanvas(AppKit.NSView):
         point = self.convertPoint_fromView_(event.locationInWindow(), None)
         recentre_hovered = self._recentre_hit(point)
         hovered = self.tile_at(point)
-        if self._third_hit(point):
+        if self._resize_hit(point) is not None:
+            self._resize_cursor().set()
+        elif self._third_hit(point):
             AppKit.NSCursor.pointingHandCursor().set()
-        elif hovered is not None and hovered != self.own_id:
+        elif hovered is not None and self.machine_picker:
+            AppKit.NSCursor.pointingHandCursor().set()
+        elif hovered is not None and hovered != self.fixed_machine_id and not self.read_only:
             AppKit.NSCursor.openHandCursor().set()
         else:
             AppKit.NSCursor.arrowCursor().set()
@@ -1523,12 +1666,18 @@ class AtlasCanvas(AppKit.NSView):
         self._draw(False)
 
     def view_stringForToolTip_point_userData_(self, _view, _tag, point, _data):
+        if _data == 2:
+            key = self.tile_at(point)
+            return self.labels.get(key, tr("Machine · {id}").format(id=(key or "")[-6:]))
         hit = self._third_hit_segment(point)
         if hit:
             return self._third_tooltip(*hit)
-        return "In the shortcut's cycle"
+        return tr("In the shortcut's cycle")
 
     def accessibilityPerformPress(self):
+        if self.machine_picker and self.selected in self.tiles:
+            self.select_tile(self.selected)
+            return True
         if self.selected in self.tiles and self.selected != self.own_id:
             self.toggle_cycle(self.selected)
             return True
@@ -1537,7 +1686,30 @@ class AtlasCanvas(AppKit.NSView):
     def mouseDown_(self, event):
         self.window().makeFirstResponder_(self)
         point = self.convertPoint_fromView_(event.locationInWindow(), None)
-        self.third_pressed = self._third_hit(point)
+        resize_key = self._resize_hit(point)
+        if resize_key is not None:
+            frames, scale = self._map()
+            original = copy.deepcopy(self.tiles[resize_key])
+            frame = frames[resize_key]
+            self._stop_tile_animations(resize_key)
+            self.keyboard_focus = False
+            self.selected = resize_key
+            self.last_announcement = ""
+            self.third_pressed = None
+            self.dragging = {"key": resize_key, "resize": True, "original": original,
+                             "pointer_x": point.x, "pointer_y": point.y, "scale": scale,
+                             "map_x": frame[0] - original["x"] * scale,
+                             "map_y": frame[1] - original["y"] * scale, "moved": False}
+            # Picking a machine in profiles mode switches the viewed layout. A grip edits the
+            # current picture instead; This Mac's move-selection handler also resets selection.
+            if self.on_select and not self.machine_picker and resize_key != self.fixed_machine_id:
+                self.on_select(resize_key)
+            self._resize_cursor().set()
+            self._draw(False)
+            return
+        hit_key = self.tile_at(point)
+        picking = self.machine_picker and hit_key is not None and hit_key != self.own_id
+        self.third_pressed = None if self.read_only or picking else self._third_hit(point)
         if self.third_pressed:
             return
         if self._recentre_hit(point):
@@ -1548,20 +1720,19 @@ class AtlasCanvas(AppKit.NSView):
             key = self.tile_at(point)
         if key is None:
             return
-        if event.clickCount() > 1 and key != self.own_id and self.on_rename:
+        if event.clickCount() > 1 and not self.machine_picker and not self.read_only and key != self.own_id and self.on_rename:
             self.selected = key
             self.on_rename(key)
             return
-        if event.clickCount() > 1 and key == self.own_id:
-            self.announce("Rename this Mac on Overview.")
+        if event.clickCount() > 1 and not self.machine_picker and key == self.own_id:
+            self.announce(tr("Rename this Mac on Overview."))
             return
         if self._cycle_hit(key, point):
-            self.cycle[key] = not self.cycle.get(key, True)
-            if self.on_cycle_change:
-                self.on_cycle_change(key, self.cycle[key])
-            self._draw(False)
+            self.toggle_cycle(key)
             return
-        if key == self.own_id:
+        if key == self.fixed_machine_id:
+            if self.machine_picker:
+                self.select_tile(key)
             return
         self._stop_tile_animations(key)
         self.keyboard_focus = False
@@ -1574,6 +1745,9 @@ class AtlasCanvas(AppKit.NSView):
         map_y = frames[origin_id][1] - origin["y"] * scale
         if self.on_select:
             self.on_select(key)
+        if self.read_only:
+            self._draw(False)
+            return
         offsets = self.tiles[key].get("display_offsets", {})
         split = display is not None and display in offsets
         option = bool(event.modifierFlags() & AppKit.NSEventModifierFlagOption)
@@ -1600,6 +1774,14 @@ class AtlasCanvas(AppKit.NSView):
         point = self.convertPoint_fromView_(event.locationInWindow(), None)
         scale = self.dragging["scale"]
         key = self.dragging["key"]
+        if self.dragging.get("resize"):
+            original = self.dragging["original"]
+            self.tiles[key] = core_ways.resize_from_drag(
+                original, (point.x - self.dragging["pointer_x"]) / scale,
+                (point.y - self.dragging["pointer_y"]) / scale)
+            self.dragging["moved"] = self.tiles[key] != original
+            self._draw(False)
+            return
         if self.dragging.get("display") is not None:
             display = self.dragging["display"]
             dx = round((point.x - self.dragging["pointer_x"]) / scale)
@@ -1630,6 +1812,13 @@ class AtlasCanvas(AppKit.NSView):
         if self.dragging is None:
             return
         key, moved = self.dragging["key"], self.dragging["moved"]
+        if self.dragging.get("resize"):
+            self.dragging = None
+            AppKit.NSCursor.arrowCursor().set()
+            self._draw(False)
+            if moved:
+                self._commit_resize(key)
+            return
         display = self.dragging.get("display")
         split_toggle = self.dragging.get("split_toggle", False)
         group_toggle = self.dragging.get("group_toggle", False)
@@ -1640,7 +1829,7 @@ class AtlasCanvas(AppKit.NSView):
         if preview is not None:
             self._draw(True)
         AppKit.NSCursor.arrowCursor().set()
-        if key != self.own_id and self.on_layout_change and (moved or (display is not None and (split_toggle or group_toggle))):
+        if key != self.fixed_machine_id and self.on_layout_change and (moved or (display is not None and (split_toggle or group_toggle))):
             point = self.convertPoint_fromView_(event.locationInWindow(), None)
             if display is not None and not moved and (split_toggle or group_toggle):
                 tile = dict(self.tiles[key])
@@ -1664,12 +1853,16 @@ class AtlasCanvas(AppKit.NSView):
 
     def keyDown_(self, event):
         self.keyboard_focus = True
+        if self.machine_picker and event.keyCode() in (36, 49):
+            self.select_tile(self.selected)
+            return
         if event.keyCode() == 8 and self._show_recentre():
             self.recentre_selected()
             return
         vectors = {123: (-1, 0), 124: (1, 0), 125: (0, 1), 126: (0, -1)}
         vector = vectors.get(event.keyCode())
-        if event.keyCode() in (36, 120) and self.selected not in (None, self.own_id) and self.on_rename:
+        if (not self.read_only and not self.machine_picker and event.keyCode() in (36, 120)
+                and self.selected not in (None, self.own_id) and self.on_rename):
             self.on_rename(self.selected)
             return
         if event.keyCode() == 49 and self.cycle_enabled and self.selected not in (None, self.own_id):
@@ -1680,13 +1873,30 @@ class AtlasCanvas(AppKit.NSView):
             backwards = bool(event.modifierFlags() & AppKit.NSEventModifierFlagShift)
             next_index = ordered.index(self.selected) + (-1 if backwards else 1) if self.selected in ordered else 0
             if 0 <= next_index < len(ordered):
-                self.select_tile(ordered[next_index])
+                if self.machine_picker:
+                    self.selected = ordered[next_index]
+                    self._draw(False)
+                else:
+                    self.select_tile(ordered[next_index])
                 return
             self.keyboard_focus = False
             self._draw(False)
         if vector is not None and self.selected not in self.tiles:
             return
-        if vector is None or self.selected is None or self.selected == self.own_id:
+        if self.read_only and vector is not None:
+            return
+        if vector is not None and event.modifierFlags() & AppKit.NSEventModifierFlagOption:
+            if not self._can_resize(self.selected):
+                return
+            tile = self.tiles[self.selected]
+            long_side = max(tile["w"], tile["h"])
+            resized = core_ways.resize_tile(tile, long_side + (vector[0] + vector[1]) * long_side / 8)
+            if resized != tile:
+                self.tiles[self.selected] = resized
+                self._draw(True)
+                self._commit_resize(self.selected)
+            return
+        if vector is None or self.selected is None or self.selected == self.fixed_machine_id:
             objc.super(AtlasCanvas, self).keyDown_(event)
             return
         tile = dict(self.tiles[self.selected])
@@ -1731,10 +1941,10 @@ class PushStrip(AppKit.NSView):
         self._crossing = False
         self._flash_timer = None
         self.on_change = None
-        self.other_name = "Other machine"
+        self.other_name = tr("Other machine")
         self.setAccessibilityElement_(True)
         self.setAccessibilityRole_(AppKit.NSAccessibilitySliderRole)
-        self.setAccessibilityLabel_("Resistance")
+        self.setAccessibilityLabel_(tr("Resistance"))
         self.setAccessibilityValue_(self._value)
         self._update_accessibility_description()
         return self
@@ -1771,7 +1981,7 @@ class PushStrip(AppKit.NSView):
 
     @objc.python_method
     def set_other_name(self, name):
-        name = name or "Other machine"
+        name = name or tr("Other machine")
         if name != self.other_name:
             self.other_name = name
             self.setNeedsDisplay_(True)
@@ -1791,7 +2001,8 @@ class PushStrip(AppKit.NSView):
         return value + "…" if value != self.other_name.upper() else self.other_name.upper()
 
     @objc.python_method
-    def show(self, fraction, other_name="Other machine"):
+    def show(self, fraction, other_name=None):
+        other_name = other_name or tr("Other machine")
         self.set_value(float(fraction) * self.MAXIMUM)
         self.set_other_name(other_name)
 
@@ -1834,10 +2045,13 @@ class PushStrip(AppKit.NSView):
     @objc.python_method
     def _update_accessibility_description(self):
         pressure = int(round(self._pressure))
-        self._accessibility_description = (
-            f"Current pressure {pressure} of {self._value} pointer units at the {self._active_edge} edge."
-            if pressure > 0 else f"No push. Current pressure is 0 of {self._value} pointer units."
-        )
+        if pressure > 0:
+            sentence = tr("Current pressure {pressure} of {value} pointer units at the {edge} edge.")
+            self._accessibility_description = sentence.format(
+                pressure=pressure, value=self._value, edge=tr(core_ways.EDGE_NAMES[self._active_edge]))
+        else:
+            self._accessibility_description = tr("No push. Current pressure is 0 of {value} pointer units.").format(
+                value=self._value)
         self.setAccessibilityHelp_(self._accessibility_description)
 
     @objc.python_method
@@ -1948,7 +2162,7 @@ class PushStrip(AppKit.NSView):
         path.stroke()
 
         top_font = theme.font(theme.TYPE["eyebrow"], 600)
-        local_label = "THIS MAC"
+        local_label = tr("This Mac").upper()
         peer_label = self.peer_label_text(width)
         text(local_label, 8, 2, width / 2 - 8, 15, top_font, "ink_3", align="left", kern=1.45)
         text(peer_label, width / 2, 2, width / 2 - 8, 15, top_font, "ink_3", align="right", kern=1.45)

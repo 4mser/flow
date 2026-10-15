@@ -285,6 +285,8 @@ class ArrangementHeldByBothTests(unittest.TestCase):
             server=types.SimpleNamespace(peers_changed=lambda: self.refreshed.append("server"),
                                          rearm=lambda: self.refreshed.append("rearmed")),
             _tell=lambda peer: self.refreshed.append("answered"),
+            _configure_shake=lambda settings=None: self.refreshed.append("shake"),
+            _carry_desk=lambda outcome, source=None: None,
             _live=lambda peer: True,
             _gone=lambda peer: False,
             _design_peer_caps=lambda: {},
@@ -302,6 +304,7 @@ class ArrangementHeldByBothTests(unittest.TestCase):
         self.page._carry_crossing = types.MethodType(kvm_bridge_win.WindowsApplication._carry_crossing, self.page)
         self.page._reflect_ways = lambda: None
         self.page._reflect_look = lambda: None
+        self.page._refresh_tray_profiles = lambda settings: None
 
     def arrive(self, edge, stamp, by=None):
         kvm_bridge_win.WindowsApplication._on_arrangement(self.page, self.peer, edge, stamp, by or self.peer)
@@ -312,7 +315,7 @@ class ArrangementHeldByBothTests(unittest.TestCase):
     def test_a_newer_arrangement_is_applied_as_this_pcs_opposite_edge(self):
         self.arrive("top", 200)
         self.assertEqual(self.side(), "bottom")
-        self.assertEqual(self.refreshed, ["updated", "sender", "server", "rearmed", "answered"])
+        self.assertEqual(self.refreshed, ["updated", "sender", "server", "rearmed", "shake", "answered"])
 
     def test_an_older_arrangement_is_ignored(self):
         self.arrive("top", 50)

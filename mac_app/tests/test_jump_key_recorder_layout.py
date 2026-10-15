@@ -13,6 +13,9 @@ import widgets
 
 
 class JumpKeyRecorderLayoutTests(unittest.TestCase):
+    def test_input_method_toggles_are_not_shortcut_triggers(self):
+        self.assertTrue({"hangul", "hanja"} <= widgets.UNRECORDABLE_TRIGGERS)
+
     def test_empty_key_uses_body_type_and_the_hint_sits_below(self):
         recorder = widgets.JumpKeyRecorder()
         font = recorder.key.view.attributedStringValue().attribute_atIndex_effectiveRange_(

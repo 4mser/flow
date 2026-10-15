@@ -48,7 +48,10 @@ class CrossingPageParityTests(unittest.TestCase):
         self.app = QApplication.instance() or QApplication([])
         theme.init_fonts()
         self.app.setFont(theme.font(theme.TYPE["body"]))
-        self.patches = []
+        # The PC page as Windows and X11 draw it, whatever session runs the suite: Wayland hides the
+        # pointer module.
+        self.patches = [patch.object(kvm.platform_parts, "WAYLAND", False)]
+        self.patches[0].start()
         for name, value in (("installed_exe", lambda: Path("Beamer.exe")),
                             ("is_enabled", lambda: False),
                             ("can_run_for_current_user", lambda: False)):

@@ -2,6 +2,7 @@ import sys
 import unittest
 import logging
 import threading
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -9,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import kvm_bridge_app
 import settings_store
+from core import profiles
 
 
 def offscreen_control_window():
@@ -23,7 +25,12 @@ def offscreen_control_window():
     store = object.__new__(settings_store.SettingsStore)
     store.lock = threading.RLock()
     store._handed_token = token
-    store._cache = store._complete({**store._fresh(), "peers": []})
+    store.profile_load_notes = set()
+    store._profile_load_notes_seen = set()
+    # The profile state a real read adds (SettingsStore._read), which the Crossing page needs.
+    settings, _notes = profiles.before_load({**store._fresh(), "peers": []})
+    store._cache, _changes = profiles.after_load(
+        store._complete(settings), platform="mac", capable=(), now=time.time(), app=settings_store.PROFILE_APP_VERSION)
     store.save = mock.Mock(return_value=cfg)
     logger = logging.getLogger("test-window-geometry")
     from wake import WakingController

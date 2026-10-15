@@ -22,11 +22,13 @@ screen, whether a full-screen app holds the edges, appearance, and per-system ke
 """
 
 import base64
+import copy
 import binascii
 import re
 import time
 
 from . import effects
+from .i18n import N_, tr, trc
 from .protocol import MACHINE_ID_SIZE, MAX_PEERS
 
 TRIGGER_STYLES = ("double_tap", "hold")
@@ -43,10 +45,13 @@ DESIGN_KEYS = ("glow_style", "glow_colour", "effect_length", "effect_size", "eff
                "effect_size_fraction", "frame_rate", "shortcut_arrival", "shortcut_arrival_style")
 GROUP_KEYS = {"crossing": CROSSING_GROUP_KEYS, "design": DESIGN_KEYS, "shortcut": SHORTCUT_KEYS, "names": ()}
 ALL_GROUPS = tuple(GROUP_KEYS)
-DESIGN_UNAVAILABLE = "Design not available yet: connect to this machine with Beamer 1.5.0 beta.6 or later."
-NEEDS_DESIGN_SYNC = "Needs beta.6 or later"
-OLD_PEER_NOTE = "A connected machine is unavailable until it has beta.6 or later."
-NO_MACHINE_CONNECTED = "No paired machine is connected."
+DESIGN_UNAVAILABLE = N_("Design not available yet: connect to this machine with Beamer 1.5.0 beta.6 or later.")
+NEEDS_DESIGN_SYNC = N_("Needs beta.6 or later")
+OLD_PEER_NOTE = N_("A connected machine is unavailable until it has beta.6 or later.")
+NO_MACHINE_CONNECTED = N_("No paired machine is connected.")
+GROUP_LABELS = {"crossing": N_("Crossing"), "design": N_("Design"), "shortcut": N_("Shortcut"), "names": N_("Names")}
+SHARED_LABELS = {"Resistance": N_("Resistance"), "drag protection": N_("drag protection"),
+                 "Shortcut": N_("Shortcut")}
 
 MAX_STAMP = 2 ** 53 - 2
 DAY = 24 * 60 * 60
@@ -406,6 +411,8 @@ def layout_recipients(peers, source=None):
 def for_capabilities(data, capabilities):
     """Drop optional settings members a peer did not advertise support for."""
     result = dict(data)
+    if "profiles" not in capabilities:
+        result.pop("desk", None)
     if "layout" not in capabilities:
         result.pop("layout", None)
     elif "displays" not in capabilities and isinstance(result.get("layout"), dict):
@@ -416,6 +423,14 @@ def for_capabilities(data, capabilities):
                                          if key not in ("displays", "display_offsets")}
                                if isinstance(tile, dict) else tile for machine, tile in tiles.items()}
         result["layout"] = layout
+    return result
+
+
+def desk_message_data(envelope_data, desk):
+    """Repeat only the settings envelope, keeping the bounded desk in its own frame."""
+    result = {key: copy.deepcopy(envelope_data[key]) for key in ("on", "set_at", "by", "groups")
+              if key in envelope_data}
+    result["desk"] = copy.deepcopy(desk)
     return result
 
 
@@ -510,10 +525,10 @@ def follow_note(rows):
     or None when one can. Offline machines are not listed, so they never set it."""
     reasons = [why_not for _entry, why_not in rows]
     if not reasons:
-        return NO_MACHINE_CONNECTED
+        return tr(NO_MACHINE_CONNECTED)
     if None in reasons:
         return None
-    return OLD_PEER_NOTE if NEEDS_DESIGN_SYNC in reasons else DESIGN_UNAVAILABLE
+    return tr(OLD_PEER_NOTE if NEEDS_DESIGN_SYNC in reasons else DESIGN_UNAVAILABLE)
 
 
 STOP_FOLLOWING = "Stop following"
@@ -530,7 +545,7 @@ def follow_lock(following, same_on, desktops):
 
 
 def following_banner(name):
-    return f"Following {name}'s design"
+    return tr("Following {name}'s design").format(name=name)
 
 
 def design_change_stamp(current, incoming, set_at_here, source_state, own_id, now=None):
@@ -847,9 +862,10 @@ SHARED_PAGES = ("crossing", "design")
 
 def group_note(groups, on):
     if not on:
-        return "Off: each machine keeps its current values."
+        return tr("Off: each machine keeps its current values.")
     selected = normalise_groups(groups)
-    return "Shares " + ", ".join(group.capitalize() for group in selected) + " with compatible paired machines."
+    names = trc("list", ", ").join(tr(GROUP_LABELS[group]) for group in selected)
+    return tr("Shares {groups} with compatible paired machines.").format(groups=names)
 
 
 def who(labels):
@@ -871,30 +887,29 @@ def scope(page, who, on, own, platform="", groups=None):
                 if "shortcut" in selected:
                     shared.append("Shortcut")
                 if not shared:
-                    return own
-                return ", ".join(shared) + " stay in step. Ways and jump keys below are local; each side is shared with its paired machine."
-            return "Resistance, drag protection and Shortcut stay in step. Ways and jump keys below are local; each side is shared with its paired machine."
+                    return tr(own)
+                return tr("{shared} stay in step. Ways and jump keys below are local; each side is shared with its paired machine.").format(
+                    shared=trc("list", ", ").join(tr(SHARED_LABELS[item]) for item in shared))
+            return tr("Resistance, drag protection and Shortcut stay in step. Ways and jump keys below are local; each side is shared with its paired machine.")
         if "design" not in selected:
-            return own
-        text = "Style, colour, length, size and landing animation stay in step. Animation enable and window appearance stay local."
+            return tr(own)
         if platform == "mac":
-            text += " Notch and trackpad controls stay local."
-        return text
-    return own
+            return tr("Style, colour, length, size and landing animation stay in step. Animation enable and window appearance stay local. Notch and trackpad controls stay local.")
+        return tr("Style, colour, length, size and landing animation stay in step. Animation enable and window appearance stay local.")
+    return tr(own)
 
 
 def switch_note(who, on, peer_too_old):
     """The note under Overview's Same on all machines switch; `who` names the machines it keeps in step with."""
     if peer_too_old:
-        return f"{who}'s Beamer is too old to keep settings in step. Update it to turn this on."
+        return tr("{name}'s Beamer is too old to keep settings in step. Update it to turn this on.").format(name=who)
     if not on:
-        return "Off: each machine keeps its current values; previous separate values are not restored."
-    with_machines = "compatible paired machines" if who == "every paired machine" else f"compatible versions of {who}"
-    return "Shares resistance, drag protection, Shortcut and six animation settings with " + with_machines + "."
+        return tr("Off: each machine keeps its current values; previous separate values are not restored.")
+    with_machines = tr("compatible paired machines") if who == "every paired machine" else tr("compatible versions of {name}").format(name=who)
+    return tr("Shares resistance, drag protection, Shortcut and six animation settings with {machines}.").format(machines=with_machines)
 
 
 def switch_detail(platform=""):
-    text = "Connected machines with compatible Beamer versions update now; others catch up when they reconnect. Zones, sides, jump keys, full-screen hold, animation enable and appearance stay on each machine."
     if platform == "mac":
-        text += " Notch and trackpad controls stay on this Mac."
-    return text
+        return tr("Connected machines with compatible Beamer versions update now; others catch up when they reconnect. Zones, sides, jump keys, full-screen hold, animation enable and appearance stay on each machine. Notch and trackpad controls stay on this Mac.")
+    return tr("Connected machines with compatible Beamer versions update now; others catch up when they reconnect. Zones, sides, jump keys, full-screen hold, animation enable and appearance stay on each machine.")

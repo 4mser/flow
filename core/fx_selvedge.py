@@ -1,6 +1,7 @@
 """Selvedge: tension opens a woven seam; the threads stay continuous and mend behind you."""
 
 import math
+from core.i18n import N_
 
 from .effects import Effect, clamp, ease_out, effect_depth_scale
 from .fx_material import stroke, surface
@@ -82,15 +83,15 @@ def _make(id_, name, level, blurb):
 
 
 EFFECTS = [
-    _make("thread", "Thread", 0, "Two fine yarns tighten, part for the pointer and stitch the seam closed behind it."),
-    _make("weave", "Weave", 1, "A woven border gathers tension, opens between its strands and gently mends on arrival."),
-    _make("jacquard", "Jacquard", 2, "A diamond-patterned textile tightens across the edge, opens its weave and settles behind you."),
+    _make("thread", N_("Thread"), 0, N_("Two fine yarns tighten, part for the pointer and stitch the seam closed behind it.")),
+    _make("weave", N_("Weave"), 1, N_("A woven border gathers tension, opens between its strands and gently mends on arrival.")),
+    _make("jacquard", N_("Jacquard"), 2, N_("A diamond-patterned textile tightens across the edge, opens its weave and settles behind you.")),
 ]
 
 PACKS = {
-    "woad": ("Woad", ["#8277b3", "#7268a4", "#c3b9df"]),
-    "saffron": ("Saffron", ["#d48238", "#976025", "#efc18a"]),
-    "flax": ("Flax", ["#cfb885", "#8a9c84", "#efdfb8"]),
-    "madder": ("Madder", ["#c45b68", "#873d57", "#e5b09b"]),
-    "tide": ("Tide", ["#58a9a3", "#547498", "#b1d1c1"]),
+    "woad": (N_("Woad"), ["#8277b3", "#7268a4", "#c3b9df"]),
+    "saffron": (N_("Saffron"), ["#d48238", "#976025", "#efc18a"]),
+    "flax": (N_("Flax"), ["#cfb885", "#8a9c84", "#efdfb8"]),
+    "madder": (N_("Madder"), ["#c45b68", "#873d57", "#e5b09b"]),
+    "tide": (N_("Tide"), ["#58a9a3", "#547498", "#b1d1c1"]),
 }

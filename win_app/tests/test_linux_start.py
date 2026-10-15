@@ -166,6 +166,9 @@ def x11_child() -> None:
         raise RuntimeError("no X server in this test")
 
     desktop_x11._connect = no_server
+    # Start reads this PC's displays for the Crossing map (696d451f); the one X call answered here.
+    from core.return_edge import Rect
+    desktop_x11.monitors = lambda: [Rect(0, 0, 1920, 1080)]
 
     import kvm_bridge_win
     import platform_parts

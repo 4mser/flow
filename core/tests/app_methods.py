@@ -12,5 +12,8 @@ def load_methods(relative_path, class_name, names, namespace):
     for method in methods:
         method.decorator_list = []
     module = ast.Module(body=methods, type_ignores=[])
+    from core import i18n
+    for name in ("tr", "trn", "trc", "N_", "joined", "matches_translation"):
+        namespace.setdefault(name, getattr(i18n, name))
     exec(compile(module, str(path), "exec"), namespace)
     return type(class_name, (), {name: namespace[name] for name in names})

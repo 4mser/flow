@@ -6,10 +6,12 @@ table lookup, which is exactly the part that can be wrong without crashing."""
 import unittest
 import os
 import sys
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import input_injector_mac as injector
+from key_codes import KEY_TITLES, SPECIAL_KEY_NAMES
 from core.return_edge import Rect
 
 
@@ -27,6 +29,15 @@ class KeyPlanTests(unittest.TestCase):
     def test_a_named_key_lands_on_its_key_code(self):
         self.assertEqual(self.plan("enter"), (0x24, None))
         self.assertEqual(self.plan("left"), (0x7B, None))
+
+    def test_input_method_keys_land_on_jis_codes_without_modifier_flags(self):
+        for name, code in (("hangul", 0x68), ("hanja", 0x66)):
+            with self.subTest(name=name):
+                self.assertEqual(self.plan(name), (code, None))
+                self.assertEqual(injector.key_flags(code), 0)
+        self.assertEqual((SPECIAL_KEY_NAMES[0x68], SPECIAL_KEY_NAMES[0x66]), ("hangul", "hanja"))
+        self.assertEqual((KEY_TITLES["hangul"], KEY_TITLES["hanja"]), ("Han/Yeong", "Hanja"))
+        self.assertFalse({"hangul", "hanja"} & set(injector.MODIFIER_FLAG_NAMES))
 
     def test_ctrl_on_the_pc_arrives_as_command(self):
         # The Windows capture has already made the swap, so the injector's job
@@ -57,7 +68,11 @@ class KeyPlanTests(unittest.TestCase):
         self.assertEqual(mods, set())
 
     def test_an_unknown_name_sends_nothing(self):
-        self.assertIsNone(self.plan("nonsense_key"))
+        old_names = {name: code for name, code in injector.KEY_NAME_TO_CODE.items() if name not in ("hangul", "hanja")}
+        with mock.patch.object(injector, "KEY_NAME_TO_CODE", old_names):
+            for name in ("hangul", "hanja"):
+                with self.subTest(name=name), self.assertLogs(injector.LOGGER, "WARNING"):
+                    self.assertIsNone(self.plan(name))
 
 
 class TextChunkTests(unittest.TestCase):

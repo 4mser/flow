@@ -248,6 +248,8 @@ class Initiator:
         self.peer = peer
         self.token = key or TOKENS[peer]
         self.sock = socket.create_connection(("127.0.0.1", machine.port), timeout=5)
+        # As core/link.py's initiator: with Nagle on, a burst waits on the first frame's ACK.
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.session = protocol.LinkSession(self.token, protocol.ROLE_INITIATOR)
         self.inbox = queue.Queue()
         self.seen = []

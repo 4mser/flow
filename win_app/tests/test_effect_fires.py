@@ -54,6 +54,12 @@ class PressureRoutingTest(unittest.TestCase):
     edge) both end up on the same bridge.pressure signal and the same _on_pressure -- nothing
     here tells the two apart, which is why one set of tests covers both directions."""
 
+    def setUp(self):
+        # X11 and Windows, whatever session runs the suite; the Wayland tests set it themselves.
+        wayland = mock.patch.object(kvm_bridge_win.platform_parts, "WAYLAND", False)
+        wayland.start()
+        self.addCleanup(wayland.stop)
+
     def test_an_edge_push_reaches_the_effects_overlay_when_the_style_is_an_effect(self):
         owner = _owner(glow_style="rupture")
         overlay = mock.Mock()
@@ -203,6 +209,10 @@ class ArrivalRoutingTest(unittest.TestCase):
     def setUp(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         self.app = QApplication.instance() or QApplication([])
+        # X11 and Windows, whatever session runs the suite.
+        wayland = mock.patch.object(kvm_bridge_win.platform_parts, "WAYLAND", False)
+        wayland.start()
+        self.addCleanup(wayland.stop)
 
     def test_an_edge_crossing_arrival_reaches_the_effects_overlay_when_wanted(self):
         owner = _owner(glow_style="rupture")

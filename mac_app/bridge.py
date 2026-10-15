@@ -1,6 +1,7 @@
 import collections
 import copy
 import errno
+import inspect
 import logging
 import platform
 import queue
@@ -26,6 +27,8 @@ import gestures
 from core import idle_pointer
 from core import ignored
 from core import crossing_state
+from core import profiles
+from core import shake
 from core import effects
 import frame_clock
 import keyboard_layout
@@ -39,6 +42,7 @@ from core import special_keys
 from core import receiver
 from core import settings_sync
 from core import ways
+from core.i18n import N_, tr
 from pointer_hide import PointerHider
 from key_codes import (
     KEY_NAME_TO_CODE,
@@ -66,22 +70,25 @@ SSH_FALLBACK_PORT = 24822
 DESKTOP_BOUNDS_MAX_AGE_SECONDS = 1.0
 CROSSING_RETRY_SECONDS = 30.0
 TAP_HID_STALL_SECONDS = 2.0
+# The HID event time is rebuilt from an age read a moment before this process's own clock, so an
+# event the tap has had can come out a few milliseconds newer than the tap's stamp for it.
+TAP_HID_CLOCK_SLACK_SECONDS = 0.25
 ROUND_TRIP_SAMPLES = 8
 ROUND_TRIP_MAX_AGE_SECONDS = 5.0
 # A driven Mac that is asked to drive waits this long for its owner to let go (the responder ends
 # the ownership by force after one second), then goes ahead.
 LET_GO_WAIT_SECONDS = 1.3
 OWN_PLATFORM = "macos"
-CAPABILITIES = ("clipboard", "clipboard_image", "gestures", "media_keys", "text", "settings", "design_sync", "layout", "displays", "ping_rtt")
+CAPABILITIES = ("clipboard", "clipboard_image", "gestures", "media_keys", "text", "settings", "design_sync", "layout", "profiles", "displays", "ping_rtt")
 MEDIA_KEY_NAMES = frozenset({"volume_mute", "volume_down", "volume_up", "media_next", "media_prev", "media_stop", "media_play_pause", "brightness_up", "brightness_down"})
 
 # Why input came home, in words, for the alert. A why that is not here comes home quietly.
 WHY_TEXT = {
-    "not_allowed": "{name} does not accept input from this Mac",
-    "malformed": "{name} could not read the request to take it",
-    "refused": "{name} refused the input",
-    "no_answer": "{name} did not answer",
-    "link_lost": "Lost the link to {name}",
+    "not_allowed": N_("{name} does not accept input from this Mac"),
+    "malformed": N_("{name} could not read the request to take it"),
+    "refused": N_("{name} refused the input"),
+    "no_answer": N_("{name} did not answer"),
+    "link_lost": N_("Lost the link to {name}"),
 }
 
 
@@ -101,6 +108,7 @@ NX_DEVICE_MODIFIER_BITS = {
     0x3E: 0x2000,
 }
 CAPS_LOCK_KEY_CODE = 0x39
+INPUT_METHOD_KEY_CODES = frozenset({0x66, 0x68})  # Hanja and Han/Yeong, sent as taps
 # Command, Option and Control, left and right. Shift and caps lock are
 # excluded on purpose -- see _unicode_character.
 CHORD_MODIFIER_KEY_CODES = frozenset({0x36, 0x37, 0x3A, 0x3B, 0x3D, 0x3E})
@@ -177,6 +185,11 @@ class QuartzEventTranslator:
         )
         if is_trigger:
             return KeyResult(True, is_down, is_repeat, [])
+        name = SPECIAL_KEY_NAMES.get(keycode)
+        if name in ("hangul", "hanja"):
+            # Only the keyboard's own key: an input-source switch may post these keycodes itself.
+            physical = quartz.CGEventGetIntegerValueField(event, quartz.kCGEventSourceStateID) == quartz.kCGEventSourceStateHIDSystemState
+            return KeyResult(False, is_down, is_repeat, keytable.tap_messages(name, physical and is_down and not is_repeat))
         special_messages = self._special_key_messages(keycode, is_down, key_map)
         if special_messages:
             return KeyResult(False, is_down, is_repeat, special_messages)
@@ -201,11 +214,14 @@ class QuartzEventTranslator:
             data["us"] = PRINTABLE_KEY_FALLBACKS[keycode]
         return KeyResult(False, is_down, is_repeat, [{"type": message_type, "data": data}])
 
-    def mouse_messages(self, event_type, event):
+    def mouse_messages(self, event_type, event, motion=None):
         quartz = self.quartz
         if event_type in self.movement_event_types:
             dx = quartz.CGEventGetDoubleValueField(event, quartz.kCGMouseEventDeltaX)
             dy = quartz.CGEventGetDoubleValueField(event, quartz.kCGMouseEventDeltaY)
+            if motion is not None and motion(dx, dy):
+                self.reset_mouse_accumulators()
+                return []
             self._move_accum_x += dx
             self._move_accum_y += dy
             int_x = int(self._move_accum_x)  # truncates toward zero
@@ -507,6 +523,14 @@ class KVMController:
         self._redirecting = bool(value)
         if old != self._redirecting:
             self.logger.info("redirecting %s -> %s (thread %s)", old, self._redirecting, threading.current_thread().name)
+            if self._redirecting:
+                self._refresh_shake()
+                if self._shake_enabled:
+                    self.shake.arm(self.clock())
+                    with self._shake_presses_lock:
+                        self.shake.held(self.clock(), bool(self._shake_presses))
+            else:
+                self.shake.disarm()
         if not self._redirecting:
             self.pointer.show()
 
@@ -563,6 +587,14 @@ class KVMController:
         self._cursor_assoc_status_logged = False
         self._cursor_warp_error_logged = False
         self._redirecting = False
+        self.shake = shake.ShakeDetector(shake.STROKE_MAC)
+        self.home_hold = shake.HomeHold()
+        self._shake_enabled = True
+        self._shake_presses = {}
+        self._shake_press_seq = 0
+        self._shake_presses_lock = threading.Lock()
+        self.desk_last_heard = {}
+        self.desk_link_times = {}
         self._repair_lock = threading.Lock()
         self._repair_running = False
         self._repair_again = False
@@ -594,7 +626,7 @@ class KVMController:
         self.capture_lock = threading.Lock()
         self.capture_thread = None
         self.input_error = None
-        self._connection_status = "Waiting to connect"
+        self._connection_status = tr("Waiting to connect")
         self.tap_ready = threading.Event()
         self.event_tap = None
         self.tap_source = None
@@ -609,6 +641,7 @@ class KVMController:
         self.trigger_suppressed = False
         self.redirect_started_at = 0.0
         self._last_tap_event_at = self.clock()
+        self._hid_unseen_since = None
         self._move_reason = None
         self.ignore_gate = ignored.Gate(cfg.ignored_inputs)
         # Crossing: the engine is pure and runs on the event-tap thread; the
@@ -709,6 +742,18 @@ class KVMController:
     def zones_changed(self):
         """A machine's side or zones changed in the settings: the engine is built again from them."""
         self.crossing = self._crossing_engine()
+        self._refresh_shake()
+
+    def publish_desk(self):
+        """Send every desk register changed since the last publish, whatever changed it: a crossing
+        event, a pairing, a peer removed, a load that reconciled. Receivers ignore one they hold."""
+        with self.book.lock:
+            desk = profiles.desk_message(self.book._load())
+        # The first publish sends the whole desk: it is what any linked peer was last told.
+        held, self._desk_published = getattr(self, "_desk_published", {}), desk
+        paths = profiles.changed_paths(held, desk)
+        if paths:
+            self._send_desk(profiles.desk_message({"crossing_desk": desk}, paths))
 
     def crossing_capable(self):
         known = getattr(self, "_crossing_known_caps", {})
@@ -747,7 +792,10 @@ class KVMController:
 
     def crossing_event(self, handler, *args, arrived=None, **kwargs):
         """Compute and save atomically, releasing the book before taking responder locks."""
-        capable = kwargs.setdefault("capable", self.crossing_capable())
+        capable = self.crossing_capable()
+        parameters = inspect.signature(handler).parameters
+        if "capable" in parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+            capable = kwargs.setdefault("capable", capable)
         with self.book.lock:
             outcome = handler(self.book._load(), *args, **kwargs)
             self._save_crossing(outcome, capable)
@@ -755,7 +803,8 @@ class KVMController:
 
     def carry_crossing(self, outcome, source=None, arrived=None, saved=False):
         """Save, rebuild and re-arm before publishing a crossing event's messages."""
-        if not (outcome["changed"] or outcome["tell"] or outcome["send_picture"] or outcome["forward_picture"]):
+        if not (outcome["changed"] or outcome["tell"] or outcome["send_picture"] or outcome["forward_picture"]
+                or outcome.get("send_desk") or outcome.get("forward") or outcome.get("answer")):
             return outcome
         if outcome["changed"] and not saved:
             capable = self.crossing_capable()
@@ -784,6 +833,76 @@ class KVMController:
                     self._send_crossing_picture(message["data"])
         if outcome["forward_picture"] and arrived is not None:
             self._send_crossing_picture(arrived, source=source)
+        self.publish_desk()
+        if outcome.get("forward"):
+            self._send_desk(outcome["forward"], source=source)
+        if outcome.get("answer") and source is not None:
+            self._send_desk(outcome["answer"], target=source)
+        return outcome
+
+    def profiles_capable(self):
+        known = getattr(self, "_profiles_known_caps", {})
+        known.update({peer: frozenset(link.caps) for peer, link in list(self._peers_up.items())})
+        if self.responder is not None:
+            known.update({protocol.id_text(peer): self.responder.caps_of(peer) or frozenset()
+                          for peer in self.responder.links()})
+        peers = {entry.get("id") for entry in self.book.peers()}
+        self._profiles_known_caps = {peer: caps for peer, caps in known.items() if peer in peers}
+        return {peer for peer, caps in self._profiles_known_caps.items() if "profiles" in caps}
+
+    def _desk_envelope(self):
+        for message in self.announce():
+            if message.get("type") == protocol.MSG_SETTINGS:
+                return message["data"]
+        cfg = self.cfg
+        return settings_sync.message_data(cfg.same_on_both, cfg.same_set_at,
+            by=cfg.same_by or protocol.id_text(self.identity()["id"]), groups=cfg.same_groups)
+
+    def _send_desk(self, desk, source=None, target=None):
+        frames = profiles.frames(desk)
+        if not frames:
+            return
+        envelope = self._desk_envelope()
+        outbound = set()
+        for peer, link in list(self._peers_up.items()):
+            if peer == source or (target is not None and peer != target) or "profiles" not in link.caps or not link.live():
+                continue
+            for frame in frames:
+                data = settings_sync.desk_message_data(envelope, frame)
+                link.post(protocol.settings_msg(settings_sync.for_capabilities(data, link.caps)))
+            outbound.add(peer)
+        if self.responder is not None:
+            for ident in self.responder.links():
+                peer = protocol.id_text(ident)
+                caps = self.responder.caps_of(ident) or ()
+                if peer == source or peer in outbound or (target is not None and peer != target) or "profiles" not in caps:
+                    continue
+                for frame in frames:
+                    data = settings_sync.desk_message_data(envelope, frame)
+                    self.responder.send(ident, protocol.settings_msg(settings_sync.for_capabilities(data, caps)))
+
+    def send_desk_to(self, peer):
+        with self.book.lock:
+            desk = profiles.desk_message(self.book._load())
+        self._send_desk(desk, target=peer)
+
+    def reset_desk_peer(self, peer):
+        self.desk_last_heard.pop(peer, None)
+        self.desk_link_times[peer] = time.time()
+
+    def receive_desk(self, data, source, *, linked=None, live=None, gone=None, now=None):
+        now = time.time() if now is None else now
+        state = profiles.read_desk_state(data, now=now)
+        if state is None:
+            return None
+        if linked is None:
+            link = self._peers_up.get(source)
+            linked = bool(link is not None and link.live()) or bool(self.responder is not None
+                and protocol.read_id(source) in self.responder.links())
+        outcome = self.crossing_event(crossing_state.desk_arrived, state, source=source,
+            linked=linked, platform="mac", live=live, gone=gone, now=now)
+        if linked and outcome["accepted"]:
+            self.desk_last_heard[source] = True
         return outcome
 
     def _send_crossing_picture(self, data, source=None):
@@ -896,7 +1015,7 @@ class KVMController:
 
     def _announce_shortcut_skips(self, skipped):
         for ident in skipped:
-            self._alert("Beamer", f"Skipped {self._name_of(ident)}: not connected.")
+            self._alert("Beamer", tr("Skipped {name}: not connected.").format(name=self._name_of(ident)))
 
     def _link_of(self, peer):
         """The link to `peer`, up or not; None when this Mac has none to it."""
@@ -1127,6 +1246,7 @@ class KVMController:
         if self._memory is not None:
             self._memory.follow(cfg)
         self.crossing = self._crossing_engine()
+        self._refresh_shake()
         self._crossing_failed = False
         self._drain_outbound()
         self._sync_links()
@@ -1134,9 +1254,9 @@ class KVMController:
         for link in list(self.links.values()):
             entry = link.entry()
             if link.live() and entry is not None and link.dialled != (entry.get("host"), entry.get("port")):
-                link.drop("Settings saved; reconnecting")
+                link.drop(tr("Settings saved; reconnecting"))
             link.refresh()
-        self.connection_status = "Settings saved; reconnecting"
+        self.connection_status = tr("Settings saved; reconnecting")
         self.logger.info("settings updated; redirect mode returned to local")
 
     def apply_settings(self, cfg):
@@ -1158,7 +1278,92 @@ class KVMController:
         if self._memory is not None:
             self._memory.follow(cfg)
         self.crossing = self._crossing_engine()
+        self._refresh_shake()
         self._crossing_failed = False
+
+    def _refresh_shake(self):
+        with self.book.lock:
+            settings = self.book._load() or {}
+            enabled = profiles.shake_on(settings) if "crossing_own" in settings else True
+            sensitivity = profiles.shake_sensitivity(settings) if "crossing_own" in settings else 100
+        self.shake.set_stroke(shake.stroke_at_sensitivity(shake.STROKE_MAC, sensitivity))
+        if enabled != self._shake_enabled:
+            self._shake_enabled = enabled
+            if enabled and self.redirecting:
+                self.shake.arm(self.clock())
+                with self._shake_presses_lock:
+                    self.shake.held(self.clock(), bool(self._shake_presses))
+            else:
+                self.shake.disarm()
+
+    def _shake_input_event(self, event_type, event):
+        quartz = self.quartz
+        if event_type in (quartz.kCGEventKeyDown, quartz.kCGEventKeyUp, quartz.kCGEventFlagsChanged):
+            code = quartz.CGEventGetIntegerValueField(event, quartz.kCGKeyboardEventKeycode)
+            down = event_type == quartz.kCGEventKeyDown
+            if event_type == quartz.kCGEventFlagsChanged:
+                down = False if code == CAPS_LOCK_KEY_CODE else self.translator._modifier_transition(code, event)
+            press = ("key", code)
+        else:
+            button = self.translator.button_of(event_type, event)
+            if button is None:
+                if event_type == quartz.kCGEventScrollWheel:
+                    self.shake.scroll(self.clock())
+                return
+            press, down = ("button", button[0]), button[1]
+        with self._shake_presses_lock:
+            if down:
+                self._shake_press_seq += 1
+                self._shake_presses[press] = self._shake_press_seq
+            else:
+                self._shake_presses.pop(press, None)
+            self.shake.held(self.clock(), bool(self._shake_presses))
+
+    def _shake_reconcile_input_state(self):
+        """Keep only the presses still physically down: their releases while a peer drove this Mac
+        never reached the tap."""
+        quartz, source = self.quartz, self.quartz.kCGEventSourceStateHIDSystemState
+        numbers = {"left": 0, "right": 1, **{name: number for number, name in WIRE_OTHER_BUTTONS.items()}}
+
+        def down(kind, value):
+            if kind == "key":
+                return quartz.CGEventSourceKeyState(source, value)
+            return quartz.CGEventSourceButtonState(source, numbers[value] if value in numbers else int(value) - 1)
+
+        with self._shake_presses_lock:
+            presses = self._shake_presses.copy()
+        released = {press: seq for press, seq in presses.items() if not down(*press)}
+        with self._shake_presses_lock:
+            # HID polling must not erase a fresh down delivered meanwhile by the tap.
+            for press, seq in released.items():
+                if self._shake_presses.get(press) == seq:
+                    del self._shake_presses[press]
+            self.shake.held(self.clock(), bool(self._shake_presses))
+
+    def _shake_motion(self, dx, dy):
+        if not self.redirecting or not self._shake_enabled or not self.shake.motion(self.clock(), dx, dy):
+            return False
+        peer = self.owner.on
+        name = self._name_of(peer)
+        self.set_redirecting(False, came_home=True)
+        self.home_hold.motion(self.clock())
+        self._shook = True
+        # Off the event tap: a settings write in its callback could outlast the tap's timeout.
+        threading.Thread(target=self._shake_notice, args=(name,), name="Beamer-shake-notice", daemon=True).start()
+        return True
+
+    def _shake_notice(self, name):
+        """The first three shakes say what happened and where to turn it off."""
+        with self.book.lock:
+            settings = copy.deepcopy(self.book._load())
+            count = settings.get("shake_notices", 0)
+            count = count if type(count) is int and count >= 0 else 0
+            if count < 3:
+                settings["shake_notices"] = count + 1
+                self.book._save(settings)
+        if count < 3:
+            self._alert(tr("Beamer"), tr("Shook home from {name}. Turn this off in Crossing → Way home.").format(name=name))
+        self.logger.info("shook home from %s", name)
 
     def set_redirecting(self, value, edge=None, offset=None, came_home=True, peer=None, reason=None,
                         display=None, side=None):
@@ -1195,7 +1400,7 @@ class KVMController:
         if link is None or link is self._primary_link:
             status = self.connection_status
         else:
-            status = link.status or "Waiting to connect"
+            status = link.status or tr("Waiting to connect")
         name = self._name_of(peer) if peer else None
         return status if not name or name in status else f"{name}: {status}"
 
@@ -1204,7 +1409,7 @@ class KVMController:
         link = self._peers_up.get(peer) if peer else None
         if link is None or not link.live():
             self.logger.warning("cannot redirect: %s is not connected", self._name_of(peer) if peer else "the other machine")
-            self._alert("Beamer", f"Cannot switch — {self._cannot_reach(peer)}")
+            self._alert("Beamer", tr("Cannot switch — {status}").format(status=self._cannot_reach(peer)))
             return False
         if self.receiving:
             # Driven, so this Mac sends its owner home first and drives once the owner has let go
@@ -1309,8 +1514,10 @@ class KVMController:
         self.crossing.reset()
         if value:
             self.idle_pointer.cancel()
-        elif not self.stop_event.is_set() and self.cfg.hide_idle_pointer:
-            self.idle_pointer.driver_left()
+        else:
+            self._shake_reconcile_input_state()
+            if not self.stop_event.is_set() and self.cfg.hide_idle_pointer:
+                self.idle_pointer.driver_left()
 
     def _pointer_location(self):
         x, y = self.quartz.CGEventGetLocation(self.quartz.CGEventCreate(None))
@@ -1492,6 +1699,8 @@ class KVMController:
                 if self.event_tap is not None:
                     self.quartz.CGEventTapEnable(self.event_tap, True)
                 return event
+            if not self.receiving and not self._was_injected(event):
+                self._shake_input_event(event_type, event)
             if not self._was_injected(event) and self._handle_jump_key(event_type, event):
                 return None
             if self.receiving:
@@ -1563,13 +1772,16 @@ class KVMController:
                 if self.redirecting and not self.owner.away:
                     self._repair_redirecting_disagreement()
                     return event
+                keycode = self.quartz.CGEventGetIntegerValueField(event, self.quartz.kCGKeyboardEventKeycode)
+                if keycode in INPUT_METHOD_KEY_CODES and not (self.redirecting and result.is_down):
+                    # A tap goes whole on the press. Its release, and the key at home, stay here.
+                    return event
                 had = len(result.messages)
                 result.messages = self._after_home_presses(result.messages)
-                keycode = self.quartz.CGEventGetIntegerValueField(event, self.quartz.kCGKeyboardEventKeycode)
                 if self.redirecting:
                     entry = ignored.key(keycode)
                     kept = self.ignore_gate.keeps(entry, result.is_down)
-                    if keycode == CAPS_LOCK_KEY_CODE:
+                    if keycode == CAPS_LOCK_KEY_CODE or keycode in INPUT_METHOD_KEY_CODES:
                         # One event per toggle, always read as down and sent as a press and its
                         # release, so it is a whole press to the gate too: a lone down would pin
                         # its route until input came home, whatever the list said by then.
@@ -1604,7 +1816,12 @@ class KVMController:
                     self._home_presses.discard(("button", button[0]))
                 if button is not None and self.ignore_gate.keeps(ignored.button(button[0]), button[1]):
                     return event
-                messages = self.translator.mouse_messages(event_type, event)
+                messages = self.translator.mouse_messages(event_type, event, motion=self._shake_motion)
+                if getattr(self, "_shook", False):
+                    # The motion that fired the shake belongs to neither machine: input is home now
+                    # and the pointer stays where it was captured.
+                    self._shook = False
+                    return None
                 if button is not None and not messages:
                     # A button the wire has no name for stays on this Mac, as one does on the PC,
                     # rather than being swallowed and reaching neither.
@@ -1685,6 +1902,11 @@ class KVMController:
         CROSSING_RETRY_SECONDS or until the next settings save, so one broken
         geometry call cannot log an exception per mouse move -- and a passing
         one cannot leave the edge dead until someone thinks to save a setting."""
+        if self.home_hold.blocks(self.clock()):
+            if event_type in self.translator.movement_event_types:
+                self.home_hold.motion(self.clock())
+            self.crossing.reset()
+            return event
         if self._crossing_failed and self.clock() - self._crossing_failed_at < CROSSING_RETRY_SECONDS:
             return event
         self._crossing_failed = False
@@ -2087,6 +2309,7 @@ class KVMController:
         and tell every peer we can send to who else this machine has (`paired`)."""
         self._sync_links()
         self.zones_changed()
+        self.publish_desk()
         for link in list(self.links.values()):
             link.refresh()
             if link.live():
@@ -2101,6 +2324,7 @@ class KVMController:
         peer = link.peer_id
         if peer and self._peers_up.get(peer) is link:
             self._peers_up.pop(peer, None)
+            self.reset_desk_peer(peer)
             self._forget_held(peer)
             self._step(lambda owner: owner.link_down(peer))
 
@@ -2137,7 +2361,7 @@ class KVMController:
             ) from exc
 
     def _name_of(self, peer):
-        return self._label(lambda entry: entry.get("id") == peer) or self._up_names.get(peer) or "the other machine"
+        return self._label(lambda entry: entry.get("id") == peer) or self._up_names.get(peer) or tr("the other machine")
 
     # Link callbacks: each on a link's own thread
 
@@ -2202,7 +2426,11 @@ class KVMController:
         # `paired` goes before the shared picture: the receiver admits third-party tiles only from
         # the paired list it holds, and a picture is applied once per stamp.
         self._announce_paired(link)
+        self.profiles_capable()
+        self.reset_desk_peer(link.peer_id)
         self.crossing_link_up(link.peer_id)
+        if "profiles" in link.caps:
+            self.send_desk_to(link.peer_id)
         if "settings" in link.caps and "layout" not in link.caps:
             for message in self.announce():
                 if message.get("type") == protocol.MSG_SETTINGS:
@@ -2555,9 +2783,10 @@ class KVMController:
         name = self._name_of(moved.left)
         text = peerlist.refusal_text(moved.why, name, other)
         if moved.why == "taken_over":
-            text = f"{other or 'Another machine'} took over {name}"
+            text = (tr("{machine} took over {name}").format(machine=other, name=name) if other else
+                    tr("Another machine took over {name}").format(name=name))
         if text is None and moved.why in WHY_TEXT:
-            text = WHY_TEXT[moved.why].format(name=name)
+            text = tr(WHY_TEXT[moved.why]).format(name=name)
         if text is not None:
             self.logger.warning("%s; input returned to this Mac", text)
             self._alert("Beamer", text)
@@ -2602,7 +2831,7 @@ class KVMController:
             other = peerlist.label_for(self.book.peers(), peer_id=protocol.id_text(unreachable.other))
         text = peerlist.refusal_text(why, name, other)
         if text is None:
-            text = WHY_TEXT.get(why, "{name} could not be reached").format(name=name)
+            text = tr(WHY_TEXT.get(why, N_("{name} could not be reached"))).format(name=name)
         self.logger.warning("%s", text)
         self._alert("Beamer", text)
 
@@ -2693,6 +2922,7 @@ class KVMController:
 
     def _check_tap_watchdog(self):
         if not self.redirecting:
+            self._hid_unseen_since = None
             return
         try:
             seconds_ago = float(self.quartz.CGEventSourceSecondsSinceLastEventType(
@@ -2702,9 +2932,20 @@ class KVMController:
         except Exception:
             self.logger.debug("could not read the last HID event time", exc_info=True)
             return
-        latest_hid_event = self.clock() - seconds_ago
-        if latest_hid_event - self._last_tap_event_at <= TAP_HID_STALL_SECONDS:
+        now = self.clock()
+        latest_hid_event = now - seconds_ago
+        if latest_hid_event <= self._last_tap_event_at + TAP_HID_CLOCK_SLACK_SECONDS:
+            self._hid_unseen_since = None
             return
+        # The HID system stamps an event before the tap is called with it, so the first input after
+        # a pause is always newer than the tap's last event for a few milliseconds. Comparing the two
+        # times alone sent input home on 14-10-2026 18 ms after a touch that ended a 14 s pause; the
+        # tap is dead only when input it has not seen stays unseen for the whole stall time.
+        if self._hid_unseen_since is None or self._hid_unseen_since <= self._last_tap_event_at:
+            self._hid_unseen_since = latest_hid_event
+        if now - self._hid_unseen_since <= TAP_HID_STALL_SECONDS:
+            return
+        self._hid_unseen_since = None
         self.logger.warning("the event tap is not receiving input while redirected")
         self._return_local()
         if self.event_tap is not None:
@@ -2793,7 +3034,7 @@ class KVMController:
             link.drop(reason)
         self.logger.error("%s; connection dropped and input forced local", reason)
         if was_redirecting:
-            self._alert("Beamer", "Input returned to this Mac")
+            self._alert("Beamer", tr("Input returned to this Mac"))
 
     def _drain_outbound(self):
         while True:

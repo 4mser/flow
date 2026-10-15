@@ -12,7 +12,9 @@ analysis = Analysis(
     # The repo root, for core/, which both apps share.
     pathex=[str(source_dir), str(source_dir.parent)],
     binaries=[],
-    datas=[(str(source_dir / "Beamer.ico"), "."), (str(source_dir / "assets"), "assets"), (str(source_dir.parent / "VERSION"), ".")],
+    datas=[(str(source_dir / "Beamer.ico"), "."), (str(source_dir / "assets"), "assets"),
+           (str(source_dir.parent / "VERSION"), ".")]
+          + [(str(path), "locales") for path in (source_dir.parent / "locales").glob("*.po")],
     # core/effects.py imports its fx_* modules by name, which PyInstaller's analysis cannot see; they are
     # among core_modules. segno is imported inside a try in qr_code.py, so it is named here as well.
     hiddenimports=["nacl", "_cffi_backend", "segno", "win32com.client", "pythoncom", "pywintypes"] + app_modules + core_modules,

@@ -31,6 +31,18 @@ class EdgeGlowConfigTests(unittest.TestCase):
             config_from_dict({**BASE, "edge_glow": "yes"})
 
 
+class HomeShortcutConfigTests(unittest.TestCase):
+    def test_off_by_default_since_turning_it_on_asks_the_desktop_and_round_trips(self):
+        self.assertFalse(config_from_dict(dict(BASE)).home_shortcut)
+        config = config_from_dict({**BASE, "home_shortcut": True})
+        self.assertTrue(config.home_shortcut)
+        self.assertIs(config_to_dict(config)["home_shortcut"], True)
+
+    def test_rejects_a_non_boolean(self):
+        with self.assertRaises(ConfigError):
+            config_from_dict({**BASE, "home_shortcut": "yes"})
+
+
 class OverlappingZonesTests(unittest.TestCase):
     def _legacy_contacts(self):
         own, a, b = (protocol.id_text(peer) for peer in (h.HERE, h.B, h.C))

@@ -1113,6 +1113,7 @@ A key travels as `key`, a name, in `keydown` and `keyup`:
   | Group | Names |
   |---|---|
   | Modifiers | `shift`, `shift_r`, `ctrl`, `ctrl_r`, `alt`, `alt_r`, `cmd`, `cmd_r`, `caps_lock` |
+  | Input method | `hangul`, `hanja` |
   | Editing and movement | `backspace`, `tab`, `enter`, `esc`, `space`, `delete`, `insert`, `home`, `end`, `page_up`, `page_down`, `left`, `right`, `up`, `down` |
   | Function | `f1` to `f24` |
   | Windows keys | `menu`, `print_screen`, `pause`, `num_lock`, `scroll_lock`, `browser_back`, `browser_forward`, `browser_refresh`, `browser_stop`, `browser_search`, `browser_favourites`, `browser_home`, `mail`, `media_select`, `launch_app1`, `launch_app2` |
@@ -1120,13 +1121,18 @@ A key travels as `key`, a name, in `keydown` and `keyup`:
   | System actions | `search`, `spotlight`, `dictation` |
 
   The numpad's Enter is `enter`.
+  `hangul` and `hanja` are HID Lang1 and Lang2. On a JIS Mac they share the Kana (`0x68`) and Eisu
+  (`0x66`) keycodes; on Windows they share VK_KANA and VK_KANJI. A Japanese keyboard's Kana key
+  therefore travels as `hangul`, which is accepted because it lands on the same Windows VK.
 - **`keyup`** carries the same `key` and `us` as the `keydown` it releases, even if Shift changed
   in between. Auto-repeat is more `keydown`s with no `keyup` between them. `caps_lock` is sent as a
-  `keydown` and a `keyup` together on each press.
+  `keydown` and a `keyup` together on each press. `hangul` and `hanja` use the same tap rule: each
+  physical press sends both messages, and the physical release sends nothing.
 - **On the receiver**, `ctrl` is Control, `alt` is Option or Alt, and `cmd` is Command on a Mac,
   the Windows key on Windows and Super on Linux. It types a character as given, pressing or
   releasing Shift around it as its own layout needs, and falls back to `us` when its layout has no
-  key for the character. A name it cannot press is dropped.
+  key for the character. A name it cannot press is dropped; a receiver without `hangul` or `hanja`
+  drops them in the same way as any unknown name.
 - **A phone** has no physical keys to map. It shows a modifier row named for the platform it is
   driving and sends names directly: Command-C to a Mac is `keydown cmd`, `keydown "c"` with `us`
   `"c"`, `keyup "c"`, `keyup cmd`.

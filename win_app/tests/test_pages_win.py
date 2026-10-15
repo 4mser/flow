@@ -463,7 +463,7 @@ class CrossingPageTest(unittest.TestCase):
         for _ in range(8):
             QApplication.processEvents()
 
-        self.assertEqual(self.page.atlas_canvas_hint.text(), "Alt-click a display to split or group · drag to move · click a third of a lit edge to leave it out")
+        self.assertEqual(self.page.atlas_canvas_hint.text(), "Alt-click a display to split or group · drag to move · click a third of a lit edge to leave it out · drag a corner to resize")
         self.assertIs(self.page.atlas_canvas_hint.parentWidget(), self.page.atlas_canvas.parentWidget())
         self.assertGreaterEqual(self.page.atlas_canvas_hint.y(),
                                 self.page.atlas_canvas.y() + self.page.atlas_canvas.height())

@@ -118,6 +118,39 @@ class GameInputForegroundTests(unittest.TestCase):
         self.assertEqual(len(self.restarts), 1)
         self.assertEqual(self.user32.set_calls, [(1818, 2159), (1818, 2159)])
 
+    def test_placement_callback_waits_for_the_gameinput_retry(self):
+        self.user32.foreground = GAMEINPUT
+        self.user32.set_results = [0]
+        placed = mock.Mock()
+
+        desktop_win.set_cursor_position_with_callback(1818, 2159, placed)
+
+        placed.assert_called_once_with()
+        self.assertEqual(self.user32.set_calls, [(1818, 2159), (1818, 2159)])
+
+    def test_pending_arrival_does_not_warp_after_its_visit_ends(self):
+        self.user32.set_results = [0]
+        current = [True]
+        placed = mock.Mock()
+        with mock.patch.object(input_injector, "release_gameinput_foreground", return_value=True) as retry:
+            desktop_win.set_cursor_position_with_callback(
+                1818, 2159, placed, place_if_current=lambda action: action() if current[0] else None)
+
+        placed.assert_not_called()
+        current[0] = False
+        retry.call_args.kwargs["after"]()
+
+        self.assertEqual(self.user32.set_calls, [(1818, 2159)])
+        placed.assert_not_called()
+
+    def test_failed_placement_does_not_claim_arrival_completed(self):
+        self.user32.foreground = EXPLORER
+        self.user32.set_results = [0]
+        placed = mock.Mock()
+        with self.assertLogs(desktop_win.LOGGER, "WARNING"):
+            desktop_win.set_cursor_position_with_callback(10, 20, placed)
+        placed.assert_not_called()
+
     def test_a_refusal_under_anything_else_is_logged_once_per_blocker(self):
         self.user32.foreground = EXPLORER
         self.user32.set_results = [0, 0, 0, 1, 0]

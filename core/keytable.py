@@ -53,6 +53,14 @@ def wire_name(physical: str, own_platform: str, peer_platform: str, style: Union
     return table.get(physical, physical)
 
 
+def tap_messages(name: str, down: bool) -> list:
+    """The input-method keys have no reliable release, so send a complete tap on press only."""
+    if name not in ("hangul", "hanja") or not down:
+        return []
+    data = {"key": name}
+    return [{"type": "keydown", "data": dict(data)}, {"type": "keyup", "data": dict(data)}]
+
+
 # A Linux sender reads evdev codes (linux/input-event-codes.h). Modifiers first, then the named
 # keys of section 7 that have a code. The numpad Enter is `enter`, so two codes share it.
 EVDEV_NAMES = {
@@ -61,6 +69,7 @@ EVDEV_NAMES = {
     56: "alt", 100: "alt_r",
     42: "shift", 54: "shift_r",
     58: "caps_lock",
+    122: "hangul", 123: "hanja",
     14: "backspace", 15: "tab", 28: "enter", 96: "enter", 1: "esc", 57: "space",
     111: "delete", 110: "insert", 102: "home", 107: "end", 104: "page_up", 109: "page_down",
     105: "left", 106: "right", 103: "up", 108: "down",
@@ -84,7 +93,7 @@ EVDEV_US.update(zip(range(0x1E, 0x2A), "asdfghjkl;'`"))
 EVDEV_US.update(zip(range(0x2B, 0x36), "\\zxcvbnm,./"))
 
 SPEC_NAMES = frozenset(
-    {"shift", "shift_r", "ctrl", "ctrl_r", "alt", "alt_r", "cmd", "cmd_r", "caps_lock",
+    {"shift", "shift_r", "ctrl", "ctrl_r", "alt", "alt_r", "cmd", "cmd_r", "caps_lock", "hangul", "hanja",
      "backspace", "tab", "enter", "esc", "space", "delete", "insert", "home", "end", "page_up", "page_down",
      "left", "right", "up", "down", "menu", "print_screen", "pause", "num_lock", "scroll_lock",
      "browser_back", "browser_forward", "browser_stop", "browser_home", "browser_refresh", "search",

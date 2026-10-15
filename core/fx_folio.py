@@ -1,6 +1,7 @@
 """Folio: a scored edge lifts into paper folds and lays itself flat on arrival."""
 
 import math
+from core.i18n import N_
 
 from .effects import Effect, clamp, ease_out, effect_depth_scale, lerp
 from .fx_material import stroke, surface
@@ -92,15 +93,15 @@ def _make(id_, name, level, blurb):
 
 
 EFFECTS = [
-    _make("crease", "Crease", 0, "A small paper crease lifts under pressure, parts, then settles flat where you arrive."),
-    _make("pleat", "Pleat", 1, "Six alternating folds gather at the edge, slide apart and unfold on the other screen."),
-    _make("concertina", "Concertina", 2, "A scored paper fan rises along the boundary, opens a passage and folds itself away behind you."),
+    _make("crease", N_("Crease"), 0, N_("A small paper crease lifts under pressure, parts, then settles flat where you arrive.")),
+    _make("pleat", N_("Pleat"), 1, N_("Six alternating folds gather at the edge, slide apart and unfold on the other screen.")),
+    _make("concertina", N_("Concertina"), 2, N_("A scored paper fan rises along the boundary, opens a passage and folds itself away behind you.")),
 ]
 
 PACKS = {
-    "moss": ("Moss", ["#72965b", "#bfd0a0", "#465e3b"]),
-    "plum": ("Plum", ["#9b6b9e", "#d2b5ce", "#8b6095"]),
-    "vellum": ("Vellum", ["#c69a60", "#f0ddac", "#88674c"]),
-    "carbon_copy": ("Carbon copy", ["#6688ae", "#bbcad9", "#344d72"]),
-    "marbled": ("Marbled", ["#bd6858", "#6c9691", "#e1bb78"]),
+    "moss": (N_("Moss"), ["#72965b", "#bfd0a0", "#465e3b"]),
+    "plum": (N_("Plum"), ["#9b6b9e", "#d2b5ce", "#8b6095"]),
+    "vellum": (N_("Vellum"), ["#c69a60", "#f0ddac", "#88674c"]),
+    "carbon_copy": (N_("Carbon copy"), ["#6688ae", "#bbcad9", "#344d72"]),
+    "marbled": (N_("Marbled"), ["#bd6858", "#6c9691", "#e1bb78"]),
 }

@@ -57,7 +57,8 @@ class PhoneUiTests(unittest.TestCase):
                                  controller=SimpleNamespace(book=self.book, _peers_up={}), windows_input=mock.Mock())
         window.windows_input.server.links.return_value = [protocol.read_id(self.phone["id"])]
         window.windows_input.server.caps_of.return_value = ["settings", "design_sync"]
-        rows = SimpleNamespace(rows={}, addSubview_=mock.Mock(), reflow=mock.Mock())
+        rows = SimpleNamespace(rows={}, addSubview_=mock.Mock(), reflow=mock.Mock(),
+                               control=SimpleNamespace(has_notch=True))
         row = mock.Mock()
         row.setup.return_value = row
         with mock.patch.object(ledger, "Row") as constructor:

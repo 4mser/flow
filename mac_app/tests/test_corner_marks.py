@@ -184,7 +184,7 @@ class CanvasCornerGeometry(unittest.TestCase):
         halo = canvas.corner_halo_layers[(BEE, "corner", "top_right")]
         chevron = pad.sublayers()[0]
         for layer, wanted in ((pad, (182, 32, 16, 16)), (halo, (179, 29, 22, 22)),
-                              (chevron, (187, 36, 7, 7))):
+                              (chevron, (186.5, 36.5, 7, 7))):
             bounds = Quartz.CGPathGetBoundingBox(layer.path())
             actual = (bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height)
             self.assertEqual(actual, wanted)

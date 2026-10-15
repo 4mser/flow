@@ -611,6 +611,27 @@ class WrapWayBack(Case):
         self.assertEqual(self.machine.responder._armed, [])
 
 
+class LeftOutDriverWayHome(Case):
+    """The Mac on 14-10-2026, compiled from its real settings: Fedora (B here) left out but driving
+    it, and its only edges leading to the rig (C) on the right, top and bottom. A left-out driver
+    had no way home, so every push went on to the rig and back."""
+    zones = [{"peer": protocol.id_text(C), "kind": "edge", "display": "main", "side": side,
+              "target_side": opposite}
+             for side, opposite in (("right", "left"), ("top", "bottom"), ("bottom", "top"))]
+
+    def setUp(self):
+        peers = [entry(B, "Bee", left_out=True, way_back=True), entry(C, "Sea"), entry(D, "Dee")]
+        self.machine = Machine(peers, self.zones).start()
+        self.addCleanup(self.machine.stop)
+
+    def test_the_way_home_is_armed_at_the_arrival_side(self):
+        b = self.link(B)
+        self.own(b, edge="left", offset=0.5, display="main", side="left", reach=[C])
+        self.assertIn((B, "left", "main", "right"),
+                      [(peer, model.edge, model.display, model.target_side)
+                       for peer, model in self.machine.responder._armed])
+
+
 class ZoneModels(unittest.TestCase):
     peers = [entry(B, "Bee", side="left"), entry(C, "Sea", side="top"), entry(D, "Dee", side="")]
 

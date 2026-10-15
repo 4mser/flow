@@ -97,7 +97,7 @@
       "buildsystem": "simple",
       "build-commands": [
         "install -d /app/share/beamer",
-        "cp -r core win_app VERSION /app/share/beamer/",
+        "cp -r core win_app locales VERSION /app/share/beamer/",
         "install -Dm755 flatpak/beamer /app/bin/beamer",
         "install -Dm644 tools/flatpak_import_probe.py /app/share/beamer/tools/flatpak_import_probe.py",
         "install -Dm644 tools/wayland_proof.py /app/share/beamer/tools/wayland_proof.py",
@@ -112,6 +112,7 @@
       "sources": [
         {"type": "dir", "path": "core", "dest": "core", "skip": ["tests", "__pycache__"]},
         {"type": "dir", "path": "win_app", "dest": "win_app", "skip": ["tests", "__pycache__", ".venv", "build", "dist", "Output"]},
+        {"type": "dir", "path": "locales", "dest": "locales", "skip": ["beamer.pot"]},
         {"type": "dir", "path": "flatpak", "dest": "flatpak"},
         {"type": "file", "path": "tools/flatpak_import_probe.py", "dest": "tools"},
         {"type": "file", "path": "tools/wayland_proof.py", "dest": "tools"},

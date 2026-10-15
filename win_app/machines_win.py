@@ -4,6 +4,7 @@ them and gives each the one function it calls back."""
 
 from __future__ import annotations
 
+from core.i18n import tr
 import math
 import sys
 from typing import Callable, Optional
@@ -235,7 +236,7 @@ class PairCodeLabel(QLabel, _PairCodeCells):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setAccessibleName("Pairing code")
+        self.setAccessibleName(tr("Pairing code"))
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._mouse_anchor = 0
         self._cursor_position = 0
@@ -362,7 +363,7 @@ class PeerRow(QWidget):
         name_layout.addWidget(self.led, 0, Qt.AlignmentFlag.AlignVCenter)
         self.name = widgets.label("", "tile-name", wrap=True)
         name_layout.addWidget(self.name, 1)
-        self.rename_button = _button("Rename", "small")
+        self.rename_button = _button(tr("Rename"), "small")
         self.rename_button.setMinimumWidth(self.rename_button.sizeHint().width())
         self.rename_button.clicked.connect(self._begin_rename)
         name_layout.addWidget(self.rename_button)
@@ -382,31 +383,31 @@ class PeerRow(QWidget):
         column.addWidget(self.where)
         self.detail = widgets.label("", "note", wrap=True)
         column.addWidget(self.detail)
-        self.repair_button = _button("Re-pair", "small")
+        self.repair_button = _button(tr("Re-pair"), "small")
         self.repair_button.clicked.connect(lambda: self._on_repair(self.token))
         column.addWidget(self.repair_button, 0, Qt.AlignmentFlag.AlignLeft)
-        self.left_out_note = widgets.label("Left out of the layout. The shortcut and the menu still reach it.",
+        self.left_out_note = widgets.label(tr("Left out of the layout. The shortcut and the menu still reach it."),
                                            "note-quiet", wrap=True)
         self.left_out_note.setVisible(False)
         column.addWidget(self.left_out_note)
-        self.shortcut_cycle = QCheckBox("In the shortcut's cycle")
+        self.shortcut_cycle = QCheckBox(tr("In the shortcut's cycle"))
         self.shortcut_cycle.setVisible(False)
         self.shortcut_cycle.toggled.connect(lambda enabled: (on_cycle or (lambda *_: None))(self._entry.get("id"), enabled))
         column.addWidget(self.shortcut_cycle)
-        self.in_use = widgets.Switch("In use")
+        self.in_use = widgets.Switch(tr("In use"))
         self.in_use.toggled.connect(lambda on: on_in_use(self.token, on))
-        self.in_use.setToolTip("Off on this PC: no input or settings link to this machine. Pairing, directions, ways and jump key are kept. Turn it back on here to reconnect.")
-        self.left_out = _button("Leave out", "small")
+        self.in_use.setToolTip(tr("Off on this PC: no input or settings link to this machine. Pairing, directions, ways and jump key are kept. Turn it back on here to reconnect."))
+        self.left_out = _button(tr("Leave out"), "small")
         self.left_out.clicked.connect(lambda: on_left_out(self.token, not self._left_out))
-        self.send = widgets.Switch("This PC drives it")
-        self.send.setToolTip("Input moves only when this PC enables this switch and the other machine enables It drives this PC.")
-        self.allow = widgets.Switch("It drives this PC")
-        self.allow.setToolTip("Input moves only when the other machine enables This machine drives it and this PC enables this switch.")
+        self.send = widgets.Switch(tr("This PC drives it"))
+        self.send.setToolTip(tr("Input moves only when this PC enables this switch and the other machine enables It drives this PC."))
+        self.allow = widgets.Switch(tr("It drives this PC"))
+        self.allow.setToolTip(tr("Input moves only when the other machine enables This machine drives it and this PC enables this switch."))
         for switch in (self.send, self.allow):
             switch.setFont(theme.font(theme.TYPE["body"]))
         self.send.toggled.connect(lambda on: on_send(self.token, on))
         self.allow.toggled.connect(lambda on: on_allow(self.token, on))
-        self.remove_button = _button("Remove", "small")
+        self.remove_button = _button(tr("Remove"), "small")
         self.remove_button.setMinimumHeight(widgets.MIN_TARGET)
         self.remove_button.clicked.connect(lambda: self._ask(True))
         controls = QBoxLayout(QBoxLayout.Direction.TopToBottom)
@@ -420,10 +421,10 @@ class PeerRow(QWidget):
         self.direction_group = QWidget()
         self.direction_group.setLayout(directions)
         self.direction_group.setVisible(False)
-        self.directions = _button("Directions", "small")
+        self.directions = _button(tr("Directions"), "small")
         self.directions.setCheckable(True)
         self.directions.toggled.connect(self.direction_group.setVisible)
-        self.directions.toggled.connect(lambda on: self.directions.setText("Hide directions" if on else "Directions"))
+        self.directions.toggled.connect(lambda on: self.directions.setText(tr("Hide directions" if on else "Directions")))
         for switch in (self.send, self.allow):
             switch.setMaximumWidth(300)
         controls.addStretch(1)
@@ -443,10 +444,10 @@ class PeerRow(QWidget):
         sure.addWidget(self.confirm_text)
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
-        self.really = _button("Remove", "small")
+        self.really = _button(tr("Remove"), "small")
         self.really.setMinimumHeight(widgets.MIN_TARGET)
         self.really.clicked.connect(lambda: self._on_remove(self.token))
-        self.keep = _button("Keep", "small")
+        self.keep = _button(tr("Keep"), "small")
         self.keep.setMinimumHeight(widgets.MIN_TARGET)
         self.keep.clicked.connect(lambda: self._ask(False))
         buttons.addWidget(self.really)
@@ -479,8 +480,8 @@ class PeerRow(QWidget):
         self.name.setVisible(False)
         self.rename_button.setVisible(False)
         self.rename_edit.setVisible(True)
-        self.rename_note.setText("Only on this computer" if self._same_on is False and sys.platform.startswith("linux")
-                                 else "Only on this PC")
+        self.rename_note.setText(tr("Only on this computer") if self._same_on is False and sys.platform.startswith("linux")
+                                 else tr("Only on this PC"))
         self.rename_note.setVisible(not self._same_on)
         self.rename_edit.setFocus()
         self.rename_edit.selectAll()
@@ -514,16 +515,16 @@ class PeerRow(QWidget):
         self.shortcut_cycle.setChecked(entry.get("shortcut_cycle", True))
         self.shortcut_cycle.blockSignals(False)
         self.repair_button.setVisible(dormant)
-        self.repair_button.setAccessibleName(f"Re-pair {label}")
+        self.repair_button.setAccessibleName(tr("Re-pair {name}").format(name=label))
         self.left_out.setVisible(not self._phone and not asking)
-        self.left_out.setText("Put back" if self._left_out else "Leave out")
-        self.left_out.setAccessibleName(f"{'Put back' if self._left_out else 'Leave out'} {label}")
+        self.left_out.setText(tr("Put back" if self._left_out else "Leave out"))
+        self.left_out.setAccessibleName(tr("{action} {name}").format(action=tr("Put back" if self._left_out else "Leave out"), name=label))
         self.left_out_note.setVisible(self._left_out)
         self.directions.setVisible(not self._phone and not asking)
         self.direction_group.setVisible(not self._phone and not asking and self.directions.isChecked())
         self.led.set_tone(state.tone)
         for item, text in ((self.name, label), (self.word, state.word), (self.where, where), (self.detail, state.detail),
-                           (self.confirm_text, f"Remove {label}? {KEEP_NOTE}")):
+                           (self.confirm_text, tr("Remove {name}? {note}").format(name=label, note=tr(KEEP_NOTE)))):
             if item.text() != text:
                 item.setText(text)
         for switch, value in ((self.in_use, entry.get("in_use", True) is True),
@@ -532,13 +533,13 @@ class PeerRow(QWidget):
                 switch.blockSignals(True)
                 switch.setChecked(value)
                 switch.blockSignals(False)
-        self.word.setAccessibleName(f"{label}: {state.word}")
-        self.remove_button.setAccessibleName(f"Remove {label}")
-        self.in_use.setToolTip(f"Off on this PC: no input or settings link to {label}. Pairing, directions, ways and jump key are kept. Turn it back on here to reconnect.")
+        self.word.setAccessibleName(tr("{name}: {status}").format(name=label, status=state.word))
+        self.remove_button.setAccessibleName(tr("Remove {name}").format(name=label))
+        self.in_use.setToolTip(tr("Off on this PC: no input or settings link to {name}. Pairing, directions, ways and jump key are kept. Turn it back on here to reconnect.").format(name=label))
         if self._phone:
-            self.in_use.setToolTip(f"Off on this PC: {label} cannot connect or drive it. Turn it back on here to reconnect.")
-        self.send.setToolTip(f"Input moves only when this PC enables this switch and {label} enables It drives this PC.")
-        self.allow.setToolTip(f"Input moves only when {label} enables This PC drives it and this PC enables this switch.")
+            self.in_use.setToolTip(tr("Off on this PC: {name} cannot connect or drive it. Turn it back on here to reconnect.").format(name=label))
+        self.send.setToolTip(tr("Input moves only when this PC enables this switch and {name} enables It drives this PC.").format(name=label))
+        self.allow.setToolTip(tr("Input moves only when {name} enables This PC drives it and this PC enables this switch.").format(name=label))
 
 
 class MachinesModule(widgets.Module):
@@ -549,7 +550,7 @@ class MachinesModule(widgets.Module):
                  on_cycle: Optional[Callable] = None, on_repair: Optional[Callable] = None,
                  on_pair_phone: Optional[Callable] = None,
                  on_pair_nearby: Optional[Callable] = None) -> None:
-        super().__init__("Machines")
+        super().__init__(tr("Machines"))
         self._callbacks = (on_send, on_allow, on_in_use, on_left_out, on_remove,
                            on_rename or (lambda *_: None), on_cycle,
                            on_repair or (lambda *_: None))
@@ -557,12 +558,12 @@ class MachinesModule(widgets.Module):
         self.rows_layout = QVBoxLayout()
         self.rows_layout.setContentsMargins(0, 0, 0, 0)
         self.rows_layout.setSpacing(0)
-        self.pair_button = _button("Pair a machine")
+        self.pair_button = _button(tr("Pair a machine"))
         self.pair_button.clicked.connect(on_pair)
-        self.pair_phone_button = _button("Pair a phone")
+        self.pair_phone_button = _button(tr("Pair a phone"))
         self.pair_phone_button.setVisible(feature_flags.PAIRING_QR_VISIBLE)
         self.pair_phone_button.clicked.connect(on_pair_phone or (lambda: None))
-        self.pair_nearby_button = _button("Pair nearby", "primary")
+        self.pair_nearby_button = _button(tr("Pair nearby"), "primary")
         self.pair_nearby_button.clicked.connect(on_pair_nearby or (lambda: None))
         pair_actions = QBoxLayout(QBoxLayout.Direction.LeftToRight)
         self.pair_actions = pair_actions
@@ -604,7 +605,7 @@ class MachinesModule(widgets.Module):
         self.empty.setVisible(not items)
 
     def set_pairing_open(self, opened: bool) -> None:
-        text = "Cancel" if opened else "Pair a machine"
+        text = tr("Cancel" if opened else "Pair a machine")
         if self.pair_button.text() != text:
             self.pair_button.setText(text)
             widgets.set_role(self.pair_button, "")
@@ -618,7 +619,7 @@ class QrView(QWidget):
         super().__init__()
         self._rows: list = []
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.setAccessibleName("QR code for the pairing code")
+        self.setAccessibleName(tr("QR code for the pairing code"))
 
     def set_rows(self, rows: list) -> None:
         if rows != self._rows:
@@ -649,7 +650,7 @@ class PairingSheet(widgets.Module):
                  on_choose_nearby: Optional[Callable] = None,
                  on_confirm_nearby: Optional[Callable] = None,
                  on_cancel_nearby: Optional[Callable] = None) -> None:
-        super().__init__("Pair a machine")
+        super().__init__(tr("Pair a machine"))
         self._on_pair = on_pair
         self._on_pick = on_pick
         self._machines: list = []
@@ -660,10 +661,10 @@ class PairingSheet(widgets.Module):
         self._on_choose_nearby = on_choose_nearby or (lambda *_: None)
         self._on_confirm_nearby = on_confirm_nearby or (lambda *_: None)
         self._on_cancel_nearby = on_cancel_nearby or (lambda: None)
-        self.body.addWidget(widgets.label("Show a code on this PC", "tile-name"))
-        self.show_button = _button("Show a code", "primary")
+        self.body.addWidget(widgets.label(tr("Show a code on this PC"), "tile-name", wrap=True))
+        self.show_button = _button(tr("Show a code"), "primary")
         self.show_button.clicked.connect(on_show)
-        self.cancel_button = _button("Cancel", "small")
+        self.cancel_button = _button(tr("Cancel"), "small")
         self.cancel_button.setMinimumHeight(widgets.MIN_TARGET)
         self.cancel_button.clicked.connect(on_cancel)
         self.cancel_button.setVisible(False)
@@ -693,7 +694,7 @@ class PairingSheet(widgets.Module):
         self.count_label = widgets.label("", "count")
         self.count_label.setFont(theme.mono_font(theme.TYPE["body"]))
         self.count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.count_label.setAccessibleName("Time left")
+        self.count_label.setAccessibleName(tr("Time left"))
         box.addLayout(row)
         count_row = QHBoxLayout()
         count_row.addStretch(1)
@@ -717,11 +718,11 @@ class PairingSheet(widgets.Module):
         nearby.setContentsMargins(0, 8, 0, 8)
         nearby.setSpacing(8)
         self.nearby_note = widgets.label("", "note", wrap=True)
-        self.nearby_note.setAccessibleName("Nearby pairing status")
+        self.nearby_note.setAccessibleName(tr("Nearby pairing status"))
         nearby.addWidget(self.nearby_note)
         self.nearby_count = widgets.label("", "count")
         self.nearby_count.setFont(theme.mono_font(theme.TYPE["body"]))
-        self.nearby_count.setAccessibleName("Nearby pairing time left")
+        self.nearby_count.setAccessibleName(tr("Nearby pairing time left"))
         nearby.addWidget(self.nearby_count)
         self.nearby_choices = QWidget()
         self.nearby_choices.setProperty("vernier", "plain")
@@ -740,11 +741,11 @@ class PairingSheet(widgets.Module):
         nearby.addWidget(self.nearby_digits, 0, Qt.AlignmentFlag.AlignLeft)
         nearby_buttons = QHBoxLayout()
         nearby_buttons.setSpacing(8)
-        self.nearby_confirm = _button("Confirm", "primary")
+        self.nearby_confirm = _button(tr("Confirm"), "primary")
         self.nearby_confirm.setDefault(False)
         self.nearby_confirm.setAutoDefault(False)
         self.nearby_confirm.clicked.connect(self._confirm_nearby)
-        self.nearby_cancel = _button("Cancel", "small")
+        self.nearby_cancel = _button(tr("Cancel"), "small")
         self.nearby_cancel.setDefault(False)
         self.nearby_cancel.setAutoDefault(False)
         self.nearby_cancel.clicked.connect(self._on_cancel_nearby)
@@ -756,31 +757,31 @@ class PairingSheet(widgets.Module):
         self.body.addWidget(self.nearby_box)
 
         self.body.addWidget(widgets.rule(False))
-        self.body.addWidget(widgets.label("Enter a code from another machine", "tile-name"))
-        self.body.addWidget(widgets.label("On this network", "note-quiet"))
+        self.body.addWidget(widgets.label(tr("Enter a code from another machine"), "tile-name", wrap=True))
+        self.body.addWidget(widgets.label(tr("On this network"), "note-quiet"))
         self.heard_layout = QVBoxLayout()
         self.heard_layout.setContentsMargins(0, 0, 0, 0)
         self.heard_layout.setSpacing(6)
         self.body.addLayout(self.heard_layout)
-        self.none_heard = widgets.label("No other machine is showing a code yet.", "note", wrap=True)
+        self.none_heard = widgets.label(tr("No other machine is showing a code yet."), "note", wrap=True)
         self.body.addWidget(self.none_heard)
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
         self.address = QLineEdit()
-        self.address.setAccessibleName("Address of the other machine")
-        self.address.setPlaceholderText("Address")
+        self.address.setAccessibleName(tr("Address of the other machine"))
+        self.address.setPlaceholderText(tr("Address"))
         self.address.textEdited.connect(self._typed_address)
         self.body.addWidget(self.address)
-        self.body.addWidget(widgets.label("Not listed? Type its address.", "note-quiet"))
+        self.body.addWidget(widgets.label(tr("Not listed? Type its address."), "note-quiet", wrap=True))
         self.code = PairCodeEdit()
-        self.code.setAccessibleName("Code")
+        self.code.setAccessibleName(tr("Code"))
         self.code.setValidator(QRegularExpressionValidator(QRegularExpression(r"[0-9 \s–—\-]{0,32}"), self.code))
         self.code.setFont(theme.mono_font(20))
         self.code.setFixedHeight(self.code.fontMetrics().height() + CODE_CELL_PAD_Y * 2 + 4)
         self.code.textEdited.connect(self._typed_code)
         self.code.returnPressed.connect(self._pair)
         self.body.addWidget(self.code)
-        self.pair_button = _button("Pair", "primary")
+        self.pair_button = _button(tr("Pair"), "primary")
         self.pair_button.clicked.connect(self._pair)
         self.body.addWidget(self.pair_button, 0, Qt.AlignmentFlag.AlignLeft)
         self.pair_note = widgets.label("", "note", wrap=True)
@@ -814,10 +815,10 @@ class PairingSheet(widgets.Module):
             "expired": "Nearby pairing expired. Press Pair nearby to try again.",
             "not_saved": "The new peer could not be saved.",
         }
-        self.nearby_note.setText(copy.get(state, "Nearby pairing could not continue."))
+        self.nearby_note.setText(tr(copy.get(state, "Nearby pairing could not continue.")))
         widgets.set_role(self.nearby_note, "note-fault" if state in {"refused", "expired", "not_saved"} else "note")
         seconds_left = max(0, int(status.get("seconds_left", 0)))
-        self.nearby_count.setText(f"Expires in {seconds_left} s")
+        self.nearby_count.setText(tr("Expires in {n} s").format(n=seconds_left))
         self.nearby_count.setVisible(state in {"searching", "choosing", "exchanging", "confirm", "waiting"})
 
         peers = status.get("peers") or []
@@ -855,13 +856,13 @@ class PairingSheet(widgets.Module):
         self.nearby_choices.setVisible(state == "choosing")
         selected_name = str((peer or {}).get("name") or "")
         selected_platform = peers_view.platform_name(peer) if peer else ""
-        selected = f"Selected: {selected_name} · {selected_platform}" if selected_name else ""
+        selected = tr("Selected: {name} · {platform}").format(name=selected_name, platform=selected_platform) if selected_name else ""
         self.nearby_peer.setText(shown(selected) if selected else "")
         self.nearby_peer.setVisible(bool(self.nearby_peer.text()))
         sas = status.get("sas") if state in {"confirm", "waiting"} else None
         grouped = f"{sas[:3]} {sas[3:]}" if isinstance(sas, str) and len(sas) == 6 and sas.isascii() and sas.isdigit() else ""
         self.nearby_digits.setText(grouped)
-        self.nearby_digits.setAccessibleName(f"Pairing digits {' '.join(sas)}" if grouped else "Pairing digits")
+        self.nearby_digits.setAccessibleName(tr("Pairing digits {digits}").format(digits=" ".join(sas)) if grouped else tr("Pairing digits"))
         self.nearby_digits.setVisible(bool(grouped))
         self.nearby_confirm.setVisible(state == "confirm")
         self.nearby_confirm.setEnabled(state == "confirm" and bool(grouped) and bool(self._nearby_attempt))
@@ -873,8 +874,8 @@ class PairingSheet(widgets.Module):
         shown = f"{code[:3]} {code[3:]}"
         if self.code_label.text() != shown:
             self.code_label.setText(shown)
-            self.code_label.setAccessibleName(f"Pairing code {' '.join(code)}")
-        self.count_label.setText(f"Expires in {seconds} s")
+            self.code_label.setAccessibleName(tr("Pairing code {digits}").format(digits=" ".join(code)))
+        self.count_label.setText(tr("Expires in {n} s").format(n=seconds))
         self.drain.set_remaining(seconds)
         if self.address_note.text() != address:
             self.address_note.setText(address)
@@ -896,7 +897,7 @@ class PairingSheet(widgets.Module):
         self.cancel_button.setVisible(False)
         self.show_button.setVisible(True)
         self.drain.set_remaining(0)
-        self.code_label.setAccessibleName("Pairing code")
+        self.code_label.setAccessibleName(tr("Pairing code"))
         self.code_box.setVisible(False)
 
     @property
@@ -1009,7 +1010,7 @@ class PairingSheet(widgets.Module):
 
     def busy(self, working: bool) -> None:
         self._working = working
-        self.pair_button.setText("Pairing…" if working else "Pair")
+        self.pair_button.setText(tr("Pairing…") if working else tr("Pair"))
         self._refresh_pair_button()
 
     def clear_code(self) -> None:

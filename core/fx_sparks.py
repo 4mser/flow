@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 from types import SimpleNamespace
+from core.i18n import N_
 
 from . import effects
 from .effects import TAU, clamp, lerp
@@ -448,29 +449,29 @@ def effect(id_, name, intensity, blurb, depart_cfg, arrive_cfg):
 
 EFFECTS = [
     effect(
-        "flint", "Flint", "quiet",
-        "A single hot point at the pointer draws in a few close sparks as you push, snaps them "
+        "flint", N_("Flint"), "quiet",
+        N_("A single hot point at the pointer draws in a few close sparks as you push, snaps them "
         "through the edge, and a pinch of sparks pops out where you land. Small enough to leave on "
-        "all day.",
+        "all day."),
         dict(N=8, R=40, align=False, len0=2, len1=5, crawl=0, arcs=False, flash=0, core=13,
              implode=0.14, departSeconds=0.4, still=5, stillR=(8, 16)),
         dict(M=12, V=420, drag=7, G=260, life=0.45, branch=0, pop=11, arriveSeconds=0.45),
     ),
     effect(
-        "filings", "Filings", "medium",
-        "Scattered sparks swing round to point at the pointer and creep in like iron filings to a "
+        "filings", N_("Filings"), "medium",
+        N_("Scattered sparks swing round to point at the pointer and creep in like iron filings to a "
         "magnet, the edge warming beside it; at breakthrough they are sucked through the point, and "
-        "on the other screen the same sparks are thrown back out and fall.",
+        "on the other screen the same sparks are thrown back out and fall."),
         dict(N=24, R=72, align=True, len0=2.5, len1=8, crawl=0, arcs=False, flash=70, core=18,
              implode=0.2, departSeconds=0.55, still=9, stillR=(12, 26)),
         dict(M=26, V=500, drag=6.5, G=320, life=0.62, branch=0, pop=20, arriveSeconds=0.65),
     ),
     effect(
-        "discharge", "Discharge", "showpiece",
-        "The boundary charges up: sparks crawl along it and forty filings wheel in, with a crackle "
+        "discharge", N_("Discharge"), "showpiece",
+        N_("The boundary charges up: sparks crawl along it and forty filings wheel in, with a crackle "
         "arcing to the pointer at every tick. At breakthrough the whole charge implodes through the "
         "point with a last arc; where it lands it goes off like a sparkler, stars splitting as they "
-        "fall.",
+        "fall."),
         dict(N=40, R=104, align=True, len0=3, len1=11, crawl=8, arcs=True, flash=120, core=26,
              implode=0.24, departSeconds=0.75, still=13, stillR=(14, 34)),
         dict(M=30, V=600, drag=6, G=260, life=0.72, branch=9, pop=30, arriveSeconds=0.78),
@@ -478,9 +479,9 @@ EFFECTS = [
 ]
 
 PACKS = {
-    "arc": ("Arc", ["#69c8ff", "#269de8", "#b5e5ff", "#456ad0"]),
-    "magnesium": ("Magnesium", ["#c98bff", "#9255da", "#ead2ff", "#b064e8"]),
-    "ember": ("Ember", ["#ffe4ad", "#ffb04a", "#ff6a24", "#d8321a", "#8e1a10"]),
-    "forge": ("Forge", ["#fff4dc", "#ffc15e", "#ff7f2a", "#b8c4d2", "#5d7896"]),
-    "sparkler_gold": ("Sparkler gold", ["#ffffff", "#fff1bf", "#ffd35c", "#f0a531"]),
+    "arc": (N_("Arc"), ["#69c8ff", "#269de8", "#b5e5ff", "#456ad0"]),
+    "magnesium": (N_("Magnesium"), ["#c98bff", "#9255da", "#ead2ff", "#b064e8"]),
+    "ember": (N_("Ember"), ["#ffe4ad", "#ffb04a", "#ff6a24", "#d8321a", "#8e1a10"]),
+    "forge": (N_("Forge"), ["#fff4dc", "#ffc15e", "#ff7f2a", "#b8c4d2", "#5d7896"]),
+    "sparkler_gold": (N_("Sparkler gold"), ["#ffffff", "#fff1bf", "#ffd35c", "#f0a531"]),
 }

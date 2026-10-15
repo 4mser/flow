@@ -35,8 +35,10 @@ from core import protocol
 from core import special_keys
 from core import receiver
 from core import return_edge
+from core.shake import HomeHold, ShakeDetector
 from core import ways
 from core import wol
+from core.i18n import N_, tr
 
 LOGGER = logging.getLogger(__name__)
 
@@ -48,9 +50,9 @@ WAKE_POLL_SECONDS = 0.5
 # How long a machine that is being driven waits for its driver to let go before it gives up on
 # the move it was asked for: the responder's own forced end is one second.
 LET_GO_WAIT_SECONDS = 1.5
-WAKING_STATUS = "Waking {name}…"
-NOT_WOKEN_STATUS = "{name} did not wake"
-NOT_CONNECTED_STATUS = "Not connected"
+WAKING_STATUS = N_("Waking {name}…")
+NOT_WOKEN_STATUS = N_("{name} did not wake")
+NOT_CONNECTED_STATUS = N_("Not connected")
 
 # The capture names this PC's Ctrl "cmd" and its Windows key "ctrl", the Semantic style; the key
 # table takes the physical key, so the two are swapped back here.
@@ -65,12 +67,12 @@ INPUT_TYPES = protocol.INPUT_TYPES
 
 # What the owner's reasons for bringing input home say, naming the machine (WIRE.md section 5).
 HOME_REASONS = {
-    "not_allowed": "{name} does not accept input from this one",
-    "sent_home": "{name} sent the input back",
-    "link_lost": "Lost the link to {name}",
-    "no_answer": "{name} did not answer",
-    "refused": "{name} would not take the input",
-    "malformed": "{name} would not take the input",
+    "not_allowed": N_("{name} does not accept input from this one"),
+    "sent_home": N_("{name} sent the input back"),
+    "link_lost": N_("Lost the link to {name}"),
+    "no_answer": N_("{name} did not answer"),
+    "refused": N_("{name} would not take the input"),
+    "malformed": N_("{name} would not take the input"),
 }
 
 
@@ -175,12 +177,17 @@ class LinkSender:
         # The name a key went down under, by virtual key, so its release matches even when Shift or
         # the style changes while it is held.
         self._keys_down: dict = {}
+        self._input_method_tap_releases: set = set()
         self._pending_windows_key: Optional[int] = None
         self._intent_keys_up: set = set()
         self._intent_windows_up: set = set()
         self._accepts: dict = {}        # peer id: whether it lets this PC drive it
         self._sent_names: dict = {}     # (peer, physical key): the name its press went out under
         self._buttons_held = set()
+        self._shake_detector = None
+        self._shake_callback = None
+        self._home_hold = None
+        self._shake_home_pending = False
         self._pin_point = None
         self._monitors = None
         self._display_map = {}
@@ -222,6 +229,7 @@ class LinkSender:
         # capture it (Wayland), which it does at an edge barrier: there the shortcut and the tray
         # cannot send input away, only an edge push can.
         self.input_held: Callable[[], bool] = lambda: True
+        self.push_out: Optional[Callable[[bytes, Callable[[], None], Callable[[], None]], bool]] = None
         # The responder's: whether a peer's input is on this PC, and sending it home.
         self.driven: Callable[[], bool] = lambda: False
         self.send_peer_home: Callable[[], bool] = lambda: False
@@ -316,7 +324,8 @@ class LinkSender:
 
     def _announce_shortcut_skips(self, skipped):
         for ident in skipped:
-            self._alert(f"Skipped {peerlist.label_for(self._entries, peer_id=ident) or 'Other machine'}: not connected.")
+            name = peerlist.label_for(self._entries, peer_id=ident)
+            self._alert(tr("Skipped {name}: not connected.").format(name=name or tr("Other machine")))
 
     def toggle_shortcut(self) -> None:
         if self._setting("shortcut_goes_to", "last") == "last":
@@ -324,6 +333,13 @@ class LinkSender:
             return
         target = self._cycle_target()
         self.set_redirecting(target is not None, peer=target)
+
+    def models_toward(self, peer: bytes) -> list:
+        """The active zone models that lead to `peer`, or none while edges are held."""
+        with self._lock:
+            if self.edges_held:
+                return []
+            return [model for target, model in self._models if target == peer]
 
     def hold_shortcut(self, down: bool) -> None:
         if not down:
@@ -505,12 +521,37 @@ class LinkSender:
         owner = self._owner
         if owner is None:
             return False
+        if name in ("hangul", "hanja"):
+            # A tap goes whole on the press; only the release of a press that went is swallowed.
+            held = vk if vk is not None else name
+            if not down:
+                if held in self._input_method_tap_releases:
+                    self._input_method_tap_releases.discard(held)
+                    return True
+                return False
+            if not owner.away:
+                return False
+            if not self._live():
+                self._lost()
+                return False
+            if vk is not None:
+                entry = ignored.key(vk)
+                kept = self._ignore_gate.keeps(entry, True)
+                self._ignore_gate.keeps(entry, False)
+                if kept:
+                    return False
+            if not self._input_tap(name):
+                return False
+            self._input_method_tap_releases.add(held)
+            return True
         held = vk if vk is not None else name
         if down:
             data = self._keys_down.get(held) or self._key_data(name, us)
             self._keys_down[held] = data
         else:
             data = self._keys_down.pop(held, None) or self._key_data(name, us)
+        if self._shake_detector is not None:
+            self._shake_detector.held(self._clock(), bool(self._keys_down or self._buttons_held))
         if owner.away:
             if not self._live():
                 self._lost()
@@ -634,6 +675,8 @@ class LinkSender:
             self._buttons_held.add(name)
         else:
             self._buttons_held.discard(name)
+        if self._shake_detector is not None:
+            self._shake_detector.held(self._clock(), bool(self._buttons_held or self._keys_down))
         owner = self._owner
         if owner is None:
             return False
@@ -657,6 +700,8 @@ class LinkSender:
         if not self._live():
             self._lost()
             return False
+        if self._shake_detector is not None:
+            self._shake_detector.scroll(self._clock())
         self._send_pending_windows_key()
         return self._input(protocol.scroll_msg(dy, -dx, "line"))
 
@@ -680,15 +725,66 @@ class LinkSender:
             if not self._live():
                 self._lost()
                 return
+            now = self._clock()
+            detector = self._shake_detector
+            if detector is not None and detector.motion(now, dx, dy):
+                peer = self.owner
+                self._shake_home_pending = True
+                self._home_hold = HomeHold()
+                self._home_hold.motion(now)
+                detector.disarm()
+                self.set_redirecting(False)
+                if self._shake_callback is not None and peer is not None:
+                    self._call(self._shake_callback, peer)
+                return
             self._input({"type": protocol.MSG_MOUSEMOVE, "data": {"dx": int(dx), "dy": int(dy)}})
             return
+        now = self._clock()
+        if self._home_hold is not None:
+            if self._home_hold.blocks(now):
+                self._home_hold.motion(now)
+                return
+            self._home_hold = None
         self._press_edge(int(dx), int(dy))
+
+    def set_shake(self, enabled: bool, stroke: float, on_shake=None) -> None:
+        """Configure the local raw-motion return gesture; disabled until the app opts in."""
+        if enabled and self._shake_detector is not None:
+            self._shake_detector.set_stroke(stroke)
+            self._shake_callback = on_shake
+            return
+        self._shake_detector = ShakeDetector(stroke) if enabled else None
+        self._shake_callback = on_shake
+        self._home_hold = None
+        self._shake_home_pending = False
+        if self._shake_detector is not None and self.redirecting:
+            now = self._clock()
+            self._shake_detector.arm(now)
+            self._shake_detector.held(now, bool(self._buttons_held or self._keys_down))
+
+    def _consume_shake_home(self) -> bool:
+        """One-shot reason flag used by Wayland's capture release after a shake."""
+        pending, self._shake_home_pending = self._shake_home_pending, False
+        return pending
 
     def _input(self, message: dict) -> bool:
         """Gives the owner one input event and carries out what it answers; True when this PC
         must not act on the event."""
         with self._lock:
             actions = self._owner.input(message)
+            self._queue(actions)
+        self._report(actions)
+        return not any(action is owner_module.LOCAL for action in actions)
+
+    def _input_tap(self, name: str) -> bool:
+        """Queue both halves under the owner lock, so a switch cannot release a half-tap as held."""
+        actions = []
+        with self._lock:
+            owner = self._owner
+            if owner is None:
+                return False
+            for message in keytable.tap_messages(name, True):
+                actions.extend(owner.input(message))
             self._queue(actions)
         self._report(actions)
         return not any(action is owner_module.LOCAL for action in actions)
@@ -705,7 +801,8 @@ class LinkSender:
         It runs while a peer is driving this PC too. Every move a peer makes here carries
         INJECTED_MARK and never arrives, so what does is this PC's own mouse, and its push out
         means the pointer is going on with this mouse behind it."""
-        if not self._models or self.edges_held or self._owner is None:
+        if ((self._home_hold is not None and self._home_hold.blocks(self._clock()))
+                or not self._models or self.edges_held or self._owner is None):
             return
         if self._buttons_held and self._setting("block_while_dragging", True) and self._still_dragging():
             # A drag that reaches the edge is dragging, not leaving: the push so far is dropped,
@@ -802,7 +899,7 @@ class LinkSender:
                 return self.go(peer) if peer is not None and peer != self.owner else False
             peer = peer or self.shortcut_target()
             if peer is None:
-                self._alert(f"Cannot switch — {self.status}")
+                self._alert(tr("Cannot switch — {status}").format(status=self.status))
                 return False
             return self._go(peer)
         if not self.redirecting:
@@ -827,8 +924,17 @@ class LinkSender:
         if owner is None:
             return False
         if not self.input_held():
-            self._alert("Cannot switch — on this desktop input goes to another machine only by pushing the pointer "
-                        "through an edge")
+            if self.push_out is not None:
+                if self.push_out(
+                    peer,
+                    on_captured=lambda: self._go(peer, edge, offset, display, side),
+                    on_failed=lambda: self._alert(tr(
+                        "Cannot switch — the desktop did not let Beamer send input to {name}"
+                    ).format(name=self._name(peer))),
+                ):
+                    return True
+            self._alert(tr("Cannot switch — on this desktop input goes to another machine only by pushing the pointer "
+                           "through an edge"))
             return False
         if self.driven():
             # A machine that is driven does not drive (section 4): its driver goes home first, then
@@ -851,7 +957,7 @@ class LinkSender:
 
     def _after_let_go(self, peer, edge, offset, display=None, side=None) -> None:
         if not self.send_peer_home() and self.driven():
-            self._alert(f"Cannot switch — {self._name(peer)} could not be reached while this PC is being driven")
+            self._alert(tr("Cannot switch — {name} could not be reached while this PC is being driven").format(name=self._name(peer)))
             return
         deadline = self._clock() + LET_GO_WAIT_SECONDS
         while self.driven() and self._clock() < deadline and not self._stop_event.is_set():
@@ -1281,9 +1387,11 @@ class LinkSender:
                 other = peerlist.label_for(self._entries, peer_id=protocol.id_text(moved.other))
             reason = peerlist.refusal_text(moved.why, self._name(moved.left), other)
             if moved.why == "taken_over":
-                reason = f"{other or 'Another machine'} took over {self._name(moved.left)}"
+                reason = tr("{other} took over {name}").format(
+                    other=other or tr("Another machine"), name=self._name(moved.left))
             if reason is None:
-                reason = HOME_REASONS.get(moved.why, "{name} returned the input").format(name=self._name(moved.left))
+                reason = tr(HOME_REASONS.get(moved.why, N_("{name} returned the input"))).format(
+                    name=self._name(moved.left))
             self._alert(reason)
 
     def _land(self, edge: str, offset: float, display=None, side=None) -> None:
@@ -1314,6 +1422,14 @@ class LinkSender:
         if value == self._reported_redirecting:
             return
         self._reported_redirecting = value
+        detector = self._shake_detector
+        if detector is not None:
+            if value:
+                now = self._clock()
+                detector.arm(now)
+                detector.held(now, bool(self._buttons_held or self._keys_down))
+            else:
+                detector.disarm()
         if self._redirect_callback is not None:
             self._call(self._redirect_callback, value)
 
@@ -1321,17 +1437,17 @@ class LinkSender:
         name = self._name(action.peer)
         if action.why == "unreachable" and not self.links.up(action.peer):
             if not self.wake(action.peer):
-                self._alert(f"Cannot switch — {self._status_of(action.peer)}")
+                self._alert(tr("Cannot switch — {status}").format(status=self._status_of(action.peer)))
             return
         if action.why == "unreachable" and self._accepts.get(action.peer) is False:
-            self._alert("Cannot switch — " + HOME_REASONS["not_allowed"].format(name=name))
+            self._alert(tr("Cannot switch — {reason}").format(reason=tr(HOME_REASONS["not_allowed"]).format(name=name)))
             return
         other = ""
         if isinstance(action.other, bytes) and action.other != self._own_id:
             other = peerlist.label_for(self._entries, peer_id=protocol.id_text(action.other))
         reason = peerlist.refusal_text(action.why, name, other)
         if reason is None:
-            reason = f"Cannot switch — {name} could not be reached"
+            reason = tr("Cannot switch — {name} could not be reached").format(name=name)
         self._alert(reason)
 
     def _learn_hardware(self, peer: bytes) -> None:
@@ -1376,20 +1492,20 @@ class LinkSender:
                 self._wake_sender(address, entry.get("host") or None)
             except (OSError, ValueError) as exc:
                 LOGGER.warning("wake-on-LAN packet not sent: %s", exc)
-                self._alert("Could not send the wake-up packet")
+                self._alert(tr("Could not send the wake-up packet"))
                 return
             LOGGER.info("sent wake-on-LAN to %s", name)
-            self._alert(WAKING_STATUS.format(name=name))
+            self._alert(tr(WAKING_STATUS).format(name=name))
             while not self._stop_event.wait(WAKE_POLL_SECONDS):
                 if self.links.up(peer):
                     LOGGER.info("%s woke and connected", name)
-                    self._alert(f"{name} is awake — switch again to send input")
+                    self._alert(tr("{name} is awake — switch again to send input").format(name=name))
                     return
                 if self._clock() - started >= wol.WAKE_WINDOW_SECONDS:
                     break
             if not self._stop_event.is_set():
                 LOGGER.warning("%s did not answer within %.0fs of the wake-on-LAN packet", name, wol.WAKE_WINDOW_SECONDS)
-                self._alert(NOT_WOKEN_STATUS.format(name=name))
+                self._alert(tr(NOT_WOKEN_STATUS).format(name=name))
         finally:
             with self._wake_lock:
                 self._waking.discard(peer)
@@ -1445,7 +1561,7 @@ class LinkSender:
 
     def _name(self, peer) -> str:
         """What this PC's statuses and alerts call a machine: its label, so two of one name are told apart."""
-        return peerlist.label_for(self._entries, peer_id=protocol.id_text(peer)) or "The other machine"
+        return peerlist.label_for(self._entries, peer_id=protocol.id_text(peer)) or tr("The other machine")
 
     def _alert(self, message: str) -> None:
         if self.on_alert is None:
