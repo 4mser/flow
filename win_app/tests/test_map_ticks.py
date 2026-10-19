@@ -77,10 +77,13 @@ class MapTicks(unittest.TestCase):
             self.assertAlmostEqual((seen_end + seen_start) / 2, point, delta=0.01)
             self.assertAlmostEqual(seen_start - seen_end, diagram.THIRD_GAP, delta=0.01)
 
-    def test_breaks_are_centred_on_the_thirds_of_the_shared_stretch(self):
+    def test_all_lit_thirds_share_one_continuous_seam(self):
         canvas = self.canvas()
         own = canvas.tile_rect(OWN)
-        self.assert_breaks(canvas, [own.left() + own.width() / 3, own.left() + 2 * own.width() / 3])
+        pieces = self.bottom_pieces(canvas)
+        self.assertEqual([path[4] for path in pieces], [4.0])
+        self.assertAlmostEqual(pieces[0][1].x(), own.left() + 2)
+        self.assertAlmostEqual(pieces[0][2].x(), own.right() - 2)
 
     def test_an_unlit_third_breaks_the_same_way_as_a_lit_one(self):
         canvas = self.canvas(desk={"thirds": ["start", "end"], "lit": ["start", "end"]})
@@ -88,13 +91,38 @@ class MapTicks(unittest.TestCase):
         self.assertEqual([path[4] for path in self.bottom_pieces(canvas)], [4.0, 2.0, 4.0])
         self.assert_breaks(canvas, [own.left() + own.width() / 3, own.left() + 2 * own.width() / 3])
 
-    def test_partial_contact_breaks_at_this_pcs_own_third_boundaries(self):
+    def test_partial_contact_keeps_one_continuous_seam_across_lit_thirds(self):
         canvas = self.canvas({OWN: ROW[OWN], DESK: {"x": 40, "y": 100, "w": 80, "h": 100}})
         own = canvas.tile_rect(OWN)
-        self.assert_breaks(canvas, [own.left() + own.width() / 3, own.left() + 2 * own.width() / 3])
         pieces = self.bottom_pieces(canvas)
+        self.assertEqual([path[4] for path in pieces], [4.0])
         self.assertAlmostEqual(pieces[0][1].x(), own.left() + 40 * canvas._scale + 2)
-        self.assertAlmostEqual(pieces[-1][2].x(), own.left() + 120 * canvas._scale - 2)
+        self.assertAlmostEqual(pieces[0][2].x(), own.left() + 120 * canvas._scale - 2)
+
+    def test_adjacent_lit_thirds_join_and_keep_the_lit_unlit_divider(self):
+        from PySide6.QtCore import QPointF
+
+        contacts = (ROW, {**ROW, DESK: {"x": 40, "y": 100, "w": 80, "h": 100}})
+        for tiles in contacts:
+            with self.subTest(contact=tiles[DESK]["x"]):
+                canvas = self.canvas(tiles, desk={"thirds": ["start", "middle"], "lit": ["start", "middle"]})
+                own = canvas.tile_rect(OWN)
+                lit, track = [path for path in self.bottom_pieces(canvas) if path[4] == 4.0], \
+                             [path for path in self.bottom_pieces(canvas) if path[4] == 2.0]
+                self.assertEqual(len(lit), 1)
+                self.assertEqual(len(track), 1)
+                first_boundary = own.left() + own.width() / 3
+                lit_unlit_boundary = own.left() + 2 * own.width() / 3
+                self.assertLess(lit[0][1].x(), first_boundary)
+                self.assertGreater(lit[0][2].x(), first_boundary)
+                self.assertAlmostEqual(lit[0][2].x(), lit_unlit_boundary - 3)
+                self.assertAlmostEqual(track[0][1].x(), lit_unlit_boundary + 2)
+                painted_gap = (track[0][1].x() - track[0][4] / 2) - (lit[0][2].x() + lit[0][4] / 2)
+                self.assertAlmostEqual(painted_gap, 2.0)
+
+                for x, third in ((46, "start"), (80, "middle"), (113, "end")):
+                    point = QPointF(own.left() + (x - ROW[OWN]["x"]) * canvas._scale, own.bottom())
+                    self.assertEqual(canvas._third_at(point), (DESK, third))
 
     def test_nothing_for_the_thirds_is_drawn_outside_the_seam_band(self):
         from PySide6.QtCore import QPointF
@@ -295,12 +323,18 @@ class MapTicks(unittest.TestCase):
                     self.assertLessEqual(two.x() + width / 2,
                                          own.left() + (external["x"] + external["w"]) * canvas._scale + 1e-9)
 
-    def test_with_displays_the_breaks_are_at_that_displays_thirds_inside_the_contact(self):
+    def test_with_displays_adjacent_lit_thirds_stay_continuous_inside_the_contact(self):
         from PySide6.QtCore import QPointF
 
         canvas = self.canvas(WITH_DISPLAYS)
         own, external = canvas.tile_rect(OWN), self.external()
-        self.assert_breaks(canvas, [own.left() + (external["x"] + 2 * external["w"] / 3) * canvas._scale])
+        pieces = self.bottom_pieces(canvas)
+        self.assertEqual(len(pieces), 1)
+        contact = canvas._side_contacts(DESK)[0][1]
+        self.assertAlmostEqual(pieces[0][1].x(),
+                               own.left() + (contact[1] - WITH_DISPLAYS[OWN]["x"]) * canvas._scale + 2)
+        self.assertAlmostEqual(pieces[0][2].x(),
+                               own.left() + (contact[2] - WITH_DISPLAYS[OWN]["x"]) * canvas._scale - 2)
         y = own.top() + 80 * canvas._scale + 4
         end = own.left() + (external["x"] + 0.9 * external["w"]) * canvas._scale
         self.assertEqual(canvas._third_at(QPointF(end, y)), (DESK, "end"))
@@ -351,7 +385,16 @@ class MapTicks(unittest.TestCase):
             with self.subTest(lit=lit):
                 canvas = self.canvas(tiles, desk={"thirds": lit, "lit": lit})
                 own = canvas.tile_rect(OWN)
-                self.assert_breaks(canvas, [own.left() + own.width() / 3, own.left() + 2 * own.width() / 3])
+                if lit == PARTS:
+                    pieces = self.bottom_pieces(canvas)
+                    self.assertTrue(pieces)
+                    self.assertTrue(all(path[4] == 4.0 for path in pieces))
+                    for before, after in zip(pieces, pieces[1:]):
+                        painted_gap = (after[1].x() - after[4] / 2) - (before[2].x() + before[4] / 2)
+                        self.assertAlmostEqual(painted_gap, 0.0)
+                else:
+                    self.assert_breaks(canvas, [own.left() + own.width() / 3,
+                                                 own.left() + 2 * own.width() / 3])
 
 
 if __name__ == "__main__":

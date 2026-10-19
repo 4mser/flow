@@ -1083,6 +1083,11 @@ msgstr ""
 
 #: core/ways.py
 #, python-brace-format
+msgid "{key}, next in order"
+msgstr ""
+
+#: core/ways.py
+#, python-brace-format
 msgid "the {parts} of the {edge} edge"
 msgstr ""
 
@@ -1127,6 +1132,16 @@ msgstr ""
 #: core/ways.py
 #, python-brace-format
 msgid "{name} no longer has this pairing, so it has no way in. Remove {name} here and pair the two again."
+msgstr ""
+
+#: core/ways.py
+#, python-brace-format
+msgid "{key}, next among ticked"
+msgstr ""
+
+#: core/ways.py
+#, python-brace-format
+msgid "{key}, to where input last went"
 msgstr ""
 
 #: core/ways.py
@@ -2418,11 +2433,6 @@ msgstr ""
 #: mac_app/kvm_bridge_app.py win_app/kvm_bridge_win.py
 #, python-brace-format
 msgid "Plays {name}"
-msgstr ""
-
-#: mac_app/kvm_bridge_app.py win_app/kvm_bridge_win.py
-#, python-brace-format
-msgid "{key}, to where input last went"
 msgstr ""
 
 #: mac_app/kvm_bridge_app.py

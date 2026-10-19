@@ -76,7 +76,7 @@ class AtlasCanvasTests(unittest.TestCase):
 
         self.assertEqual(canvas.states["home"]["detail"], "Studio PC")
 
-    def test_this_pc_name_is_painted_over_its_display_boxes(self):
+    def test_this_pc_name_is_painted_in_a_single_display_tile(self):
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QColor, QImage
 
@@ -101,6 +101,44 @@ class AtlasCanvasTests(unittest.TestCase):
             for y in range(max(0, int(rect.top()) + 6), min(image.height(), int(rect.top()) + 30))
             for x in range(max(0, int(rect.left()) + 20), min(image.width(), int(rect.right()) - 20)))
         self.assertTrue(visible_ink)
+
+    def test_internal_display_frames_are_drawn_only_for_multiple_displays(self):
+        from unittest.mock import patch
+        from PySide6.QtCore import Qt, QRectF
+        from PySide6.QtGui import QImage
+
+        import diagram
+        from diagram import AtlasCanvas
+
+        canvas = AtlasCanvas()
+        self.addCleanup(canvas.deleteLater)
+        canvas.resize(480, 268)
+        image = QImage(canvas.size(), QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.transparent)
+        rounded_rects = []
+        original = diagram.QPainter
+
+        class RecordingPainter(original):
+            def drawRoundedRect(self, *args):
+                rounded_rects.append(QRectF(args[0]))
+                return super().drawRoundedRect(*args)
+
+        def internal_frames(displays):
+            rounded_rects.clear()
+            canvas.set_tiles({"home": {"x": 0, "y": 0, "w": 160, "h": 100, "displays": displays}},
+                             {"home": "This PC"}, {"home": {"state": "this"}}, "home", own_id="home")
+            with patch.object(diagram, "QPainter", RecordingPainter):
+                canvas.render(image)
+            tile = canvas.tile_rect("home")
+            return [rect for rect in rounded_rects
+                    if rect.left() >= tile.left() + 1 and rect.top() >= tile.top() + 1
+                    and rect.right() <= tile.right() - 1 and rect.bottom() <= tile.bottom() - 1]
+
+        one = {"main": {"x": 0, "y": 0, "w": 1728, "h": 1117}}
+        two = {"left": {"x": 0, "y": 0, "w": 1728, "h": 1117},
+               "right": {"x": 1728, "y": 0, "w": 1728, "h": 1117}}
+        self.assertEqual(internal_frames(one), [])
+        self.assertEqual(len(internal_frames(two)), 2)
 
     def _wrapping_canvas(self, **states):
         from PySide6.QtCore import Qt

@@ -78,6 +78,19 @@ class GlobalShortcutTests(unittest.TestCase):
         window._record_trigger("key", kvm.TRIGGER_VKS["alt_r"])
         self.assertEqual(window.shortcut_tile.accessibleDescription(), "Right Alt, to where input last went")
 
+    def test_destination_choices_refresh_visible_and_accessible_detail(self):
+        for mode, ending in (("next", "next in order"), ("ticked", "next among ticked"),
+                             ("last", "to where input last went")):
+            with self.subTest(mode=mode):
+                self.window.shortcut_target_choice._buttons[mode].click()
+                expected = f"Right Ctrl, {ending}"
+                self.assertEqual(self.window.shortcut_tile.detail.text(), expected)
+                self.assertEqual(self.window.shortcut_tile.accessibleDescription(), expected)
+                self._close_window()
+                self._open_window()
+                self.assertEqual(self.window.shortcut_target_choice.value, mode)
+                self.assertEqual(self.window.shortcut_tile.detail.text(), expected)
+
 
 if __name__ == "__main__":
     unittest.main()

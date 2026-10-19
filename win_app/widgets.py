@@ -38,7 +38,6 @@ from PySide6.QtWidgets import (
 import motion
 import theme
 import tokens
-from core.locale import americanise
 from core.i18n import N_, tr
 from core import ways as core_ways
 
@@ -126,57 +125,10 @@ def focus_ring_visible(widget) -> bool:
 
 
 def label(text: str, role: str, wrap: bool = False) -> QLabel:
-    item = QLabel(americanise(text))
+    item = QLabel(text)
     item.setProperty("vernier", role)
     item.setWordWrap(wrap)
     return item
-
-
-def install_text_localisation() -> None:
-    """Route Qt's visible text setters through the shared spelling map."""
-    from PySide6.QtWidgets import QMessageBox, QMenu
-
-    def wrap(cls, method, positions=(0,)):
-        original = getattr(cls, method)
-        if getattr(original, "_beamer_localised", False):
-            return
-
-        def setter(self, *args, **kwargs):
-            args = list(args)
-            for position in positions:
-                if position < len(args) and isinstance(args[position], str):
-                    args[position] = americanise(args[position])
-            return original(self, *args, **kwargs)
-
-        setter._beamer_localised = True
-        setattr(cls, method, setter)
-
-    def wrap_static(cls, method, positions):
-        original = getattr(cls, method)
-        if getattr(original, "_beamer_localised", False):
-            return
-
-        def setter(*args, **kwargs):
-            args = list(args)
-            for position in positions:
-                if position < len(args) and isinstance(args[position], str):
-                    args[position] = americanise(args[position])
-            return original(*args, **kwargs)
-
-        setter._beamer_localised = True
-        setattr(cls, method, staticmethod(setter))
-
-    for cls, method in (
-        (QLabel, "setText"), (QAbstractButton, "setText"), (QGroupBox, "setTitle"),
-        (QMenu, "setTitle"), (QMenu, "addAction"), (QWidget, "setToolTip"),
-        (QAction, "setText"), (QMessageBox, "setText"), (QMessageBox, "setInformativeText"),
-        (QMessageBox, "setDetailedText"),
-        (QSystemTrayIcon, "setToolTip"), (QSystemTrayIcon, "showMessage"),
-    ):
-        wrap(cls, method, (0, 1) if method == "showMessage" else (0,))
-    for method in ("critical", "information", "question", "warning"):
-        wrap_static(QMessageBox, method, (1, 2))
-    wrap_static(QToolTip, "showText", (1,))
 
 
 def set_role(widget: QWidget, role: str) -> None:

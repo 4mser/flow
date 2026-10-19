@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 import capture_x11  # noqa: E402
+import sender  # noqa: E402
 from capture_x11 import Device  # noqa: E402
 from core.return_edge import Rect, ReturnEdge  # noqa: E402
 
@@ -289,6 +290,54 @@ class CharacterTest(unittest.TestCase):
 
 
 class KeyTest(Harness):
+    def make_sender(self, messages, ignored=()):
+        class Owner:
+            away = True
+            on = b"synthetic-peer"
+
+            def input(self, message):
+                messages.append(message)
+                return []
+
+        link_sender = sender.LinkSender.__new__(sender.LinkSender)
+        link_sender._owner = Owner()
+        link_sender.links = type("Links", (), {"live": lambda _self, _peer: True})()
+        link_sender._ignore_gate = sender.ignored.Gate(ignored)
+        link_sender._input_method_tap_releases = set()
+        link_sender._lock = threading.RLock()
+        link_sender._queue = lambda _actions: None
+        link_sender._report = lambda _actions: None
+        self.hooks._on_key = link_sender.on_key
+
+    def test_flagged_ime_repeat_makes_one_sender_tap_but_a_later_press_still_taps(self):
+        for keycode, name in ((130, "hangul"), (131, "hanja")):
+            with self.subTest(name=name):
+                messages = []
+                self.make_sender(messages)
+
+                self.feed(key(True, keycode), key(True, keycode, flags=capture_x11.XI_KEY_REPEAT),
+                          key(False, keycode), key(True, keycode), key(False, keycode))
+
+                self.assertEqual(messages, [
+                    {"type": "keydown", "data": {"key": name}},
+                    {"type": "keyup", "data": {"key": name}},
+                    {"type": "keydown", "data": {"key": name}},
+                    {"type": "keyup", "data": {"key": name}},
+                ])
+
+    def test_flagged_ime_repeat_still_replays_a_locally_ignored_press(self):
+        messages = []
+        self.make_sender(messages, ("key:122",))
+
+        self.feed(key(True, 130), key(True, 130, flags=capture_x11.XI_KEY_REPEAT), key(False, 130))
+
+        self.assertEqual(messages, [])
+        self.assertEqual([call for call in self.connection.calls if call[0] == "fake_key"], [
+            ("fake_key", 130, True, ()),
+            ("fake_key", 130, True, ()),
+            ("fake_key", 130, False, ()),
+        ])
+
     def test_a_named_key_outside_a_grab_from_a_raw_event(self):
         self.feed(raw(capture_x11.XI_RAW_KEY_PRESS, 105, sourceid=8), raw(capture_x11.XI_RAW_KEY_RELEASE, 105, sourceid=8))
         self.assertEqual(self.seen.keys, [("cmd_r", True, 97, None), ("cmd_r", False, 97, None)])

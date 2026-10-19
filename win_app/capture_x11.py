@@ -495,6 +495,7 @@ class Hooks:
         # after-last is None while it is held.
         self._spans: Dict[int, collections.deque] = {}
         self._names_down: Dict[int, str] = {}
+        self._ime_repeat_handled: Dict[int, bool] = {}
         # Keys and buttons this machine was given through XTest after a grab kept them from it,
         # held until their own release arrives, whichever way it comes.
         self._played_keys: set = set()
@@ -773,16 +774,17 @@ class Hooks:
             elif evtype == XI_RAW_MOTION:
                 self._motion(sourceid, raw)
         elif kind == "key":
-            _, down, detail, sourceid, _flags, mods, group, _master, _sequence = event
+            _, down, detail, sourceid, flags, mods, group, _master, _sequence = event
             if self.drop_injected and sourceid in self._xtest:
                 return
-            self._key(detail, down, mods, group, True)
+            self._key(detail, down, mods, group, True, repeat=bool(flags & XI_KEY_REPEAT))
         elif kind == "hierarchy":
             self._read_devices()
         elif kind == "mapping" and event[1] == MAPPING_POINTER:
             self._buttons = self._connection.pointer_mapping()
 
-    def _key(self, keycode: int, down: bool, mods: Optional[int], group: Optional[int], swallowed: bool) -> None:
+    def _key(self, keycode: int, down: bool, mods: Optional[int], group: Optional[int], swallowed: bool,
+             repeat: bool = False) -> None:
         code = keycode - KEYCODE_OFFSET
         name = self._names_down.get(code) if down else self._names_down.pop(code, None)
         if name is None:
@@ -796,7 +798,19 @@ class Hooks:
                 return
         if down:
             self._names_down[code] = name
-        answer = self._on_key(name, down, code, keytable.EVDEV_US.get(code))
+        # A repeat follows the first press's local/remote decision; only a remotely handled IME
+        # tap is swallowed here, leaving an ignored key's existing replay path untouched.
+        if (
+            down and repeat and name in ("hangul", "hanja")
+            and self._ime_repeat_handled.get(code) is True
+        ):
+            answer = True
+        else:
+            answer = self._on_key(name, down, code, keytable.EVDEV_US.get(code))
+            if down and not repeat and name in ("hangul", "hanja"):
+                self._ime_repeat_handled[code] = answer
+        if not down:
+            self._ime_repeat_handled.pop(code, None)
         if not down and keycode in self._played_keys:
             self._play_key(keycode, False)  # its press was played here, whatever is answered now
         elif answer is False and swallowed:

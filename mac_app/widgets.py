@@ -20,7 +20,6 @@ import media_keys
 import motion
 import theme
 from core.i18n import N_, tr
-from core.locale import americanise
 from ignored_titles import is_modifier_release, recorded_entry
 from key_codes import KEY_NAME_TO_CODE, PRINTABLE_KEY_FALLBACKS, SPECIAL_KEY_NAMES, key_cap, key_title
 from core import ways as core_ways
@@ -269,7 +268,7 @@ class Label:
             self._render()
 
     def _render(self):
-        text = americanise(self.text)
+        text = self.text
         self.view.setAttributedStringValue_(attributed(
             text, self.size, self.weight, self.ink, self.mono, self.tracking,
             self.upper, self.align, self.wrap
@@ -451,9 +450,9 @@ class Figure:
             self._render()
 
     def _render(self):
-        text = americanise(self.text + (" " + self.unit if self.unit else ""))
+        text = self.text + (" " + self.unit if self.unit else "")
         string = AppKit.NSMutableAttributedString.alloc().initWithAttributedString_(
-            attributed(americanise(self.text), self.size, ink=self.ink, mono=True, tracking=self.tracking)
+            attributed(self.text, self.size, ink=self.ink, mono=True, tracking=self.tracking)
         )
         if self.unit:
             string.appendAttributedString_(attributed(" " + self.unit, self.unit_size, ink="ink_3", mono=True))
@@ -779,7 +778,7 @@ class Button:
             # disables to the same quiet outline instead.
             fill, stroke, ink = "panel", "rule", "ink_3"
         text_size = theme.TYPE["small"] if self.scale == "small" else theme.TYPE["button"]
-        title = attributed(americanise(self.title), text_size, 600, ink, align=AppKit.NSTextAlignmentCenter, wrap=True)
+        title = attributed(self.title, text_size, 600, ink, align=AppKit.NSTextAlignmentCenter, wrap=True)
         self.view.setAttributedTitle_(title)
         paint(self.view, fill, stroke)
         # Width comes from the rendered title, not a measured pixel, so a longer word or a

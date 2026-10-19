@@ -33,7 +33,6 @@ from frame_clock import FrameClock, set_divisor
 import dock_visibility
 from core import crash_log
 from core import effects
-from core.locale import americanise
 from core.i18n import matches_translation, LANGUAGES, N_, tr, trc, install
 import effects_overlay
 import gestures
@@ -893,7 +892,7 @@ def install_main_menu(control_window):
     key equivalent of the Quit item in the application menu — so with no main menu the app could
     not be quit from the keyboard, and Cmd+C/V/A in the token field did nothing either."""
     def item(menu, title, action, key, modifiers=None, target=None):
-        entry = menu.addItemWithTitle_action_keyEquivalent_(americanise(title), action, key)
+        entry = menu.addItemWithTitle_action_keyEquivalent_(title, action, key)
         if modifiers is not None:
             entry.setKeyEquivalentModifierMask_(modifiers)
         if target is not None:
@@ -1682,12 +1681,8 @@ class ControlWindow(AppKit.NSObject):
         contact = (core_ways._rect_contact(layout[own], layout[self.chosen_peer])
                    if own in layout and self.chosen_peer in layout else None)
         side = contact[0] if contact and contact[0] != "corner" else None
-        # Among the chosen machine's ways the shortcut is the one that is not that machine's: it is
-        # this Mac's, and goes where input last went.
-        several = len(self.settings_store.current()["peers"]) > 1
-        self.method_boxes["shortcut"].set_detail(
-            tr("{key}, to where input last went").format(key=widgets.key_title(self.key_recorder.value))
-            if several else widgets.key_title(self.key_recorder.value))
+        self.method_boxes["shortcut"].set_detail(core_ways.shortcut_detail(
+            widgets.key_title(self.key_recorder.value), self.shortcut_goes_to.value or "last"))
         self.ignored_recorder.set_trigger_code(KEY_NAME_TO_CODE.get(self.key_recorder.value))
         hold = self.style_select.value == "hold"
         motion.set_hidden(self.double_tap_head, hold)
@@ -4969,11 +4964,11 @@ class _LaunchWatch(AppKit.NSObject):
 
 
 def _tray_item(title, **kwargs):
-    return rumps.MenuItem(americanise(title), **kwargs)
+    return rumps.MenuItem(title, **kwargs)
 
 
 def _set_tray_title(item, title):
-    item.title = americanise(title)
+    item.title = title
 
 
 # What a click on the Dock icon does while no window is open. With the menu bar item switched off

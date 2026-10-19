@@ -1527,6 +1527,16 @@ def _sendable(entry: dict) -> bool:
     return bool(entry.get("id")) and entry.get("in_use", True) is True and entry.get("send") is True and entry.get("port") != 0
 
 
+def shortcut_detail(key: str, mode: str) -> str:
+    if mode == "next":
+        template = tr("{key}, next in order")
+    elif mode == "ticked":
+        template = tr("{key}, next among ticked")
+    else:
+        template = tr("{key}, to where input last went")
+    return template.format(key=key)
+
+
 def shortcut_peer(peers: list, last: Optional[str], ready: Callable[[str], bool]) -> Optional[str]:
     """The machine the shortcut, the Send button and the tray send this machine's input to: the one
     it was last on while that one can take it, else the first in the list that can, else the one it

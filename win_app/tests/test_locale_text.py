@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 import widgets
-from core import locale
+from core import i18n, locale
 
 
 class VisibleTextTests(unittest.TestCase):
@@ -17,7 +17,7 @@ class VisibleTextTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_us_spelling_applies_at_widget_menu_tooltip_and_action_setters(self):
+    def test_authored_us_spelling_reaches_widgets_menus_tooltips_and_notices(self):
         notices = []
 
         def capture(_tray, title, body, *_args):
@@ -25,14 +25,15 @@ class VisibleTextTests(unittest.TestCase):
 
         with mock.patch.object(locale, "is_us_region", return_value=True):
             with mock.patch.object(QSystemTrayIcon, "showMessage", capture):
-                widgets.install_text_localisation()
-                label = widgets.label("Colourful behaviour", "note")
-                label.setText("Favourite centre")
-                label.setToolTip("Organising a colourful favourite")
+                label = widgets.label(i18n.tr("Colourful behaviour"), "note")
+                self.assertEqual(label.text(), "Colorful behavior")
+                label.setText(i18n.tr("Favourite centre"))
+                label.setToolTip(i18n.tr("Organising a colourful favourite"))
                 menu = QMenu()
-                action = menu.addAction("Minimise")
-                action.setText("Initialising cancelled")
-                QSystemTrayIcon().showMessage("Initialising", "Cancelled colourful behaviour")
+                action = menu.addAction(i18n.tr("Minimise"))
+                self.assertEqual(action.text(), "Minimize")
+                action.setText(i18n.tr("Initialising cancelled"))
+                QSystemTrayIcon().showMessage(i18n.tr("Initialising"), i18n.tr("Cancelled colourful behaviour"))
 
         self.assertEqual(label.text(), "Favorite center")
         self.assertEqual(label.toolTip(), "Organizing a colorful favorite")

@@ -84,18 +84,30 @@ class WidthTests(unittest.TestCase):
         self.assertEqual(figure.view.attributedStringValue().string(), '120 px')
         self.assertEqual(figure.view.accessibilityLabel(), '120 px')
 
-    def test_us_region_changes_rendered_text_and_accessibility_without_changing_source(self):
-        from core import locale
+    def test_authored_us_text_reaches_rendered_text_and_accessibility(self):
+        from core import i18n, locale
 
         with mock.patch.object(locale, "is_us_region", return_value=True):
-            label = widgets.Label("Colourful behaviour")
-            button = widgets.Button("Minimise", None, None)
+            label = widgets.Label(i18n.tr("Colourful behaviour"))
+            button = widgets.Button(i18n.tr("Minimise"), None, None)
 
         self.assertEqual(label.view.stringValue(), "Colorful behavior")
         self.assertEqual(label.view.accessibilityLabel(), "Colorful behavior")
-        self.assertEqual(label.text, "Colourful behaviour")
+        self.assertEqual(label.text, "Colorful behavior")
         self.assertEqual(button.view.title(), "Minimize")
-        self.assertEqual(button.title, "Minimise")
+        self.assertEqual(button.title, "Minimize")
+
+    def test_us_region_preserves_direct_and_interpolated_user_data(self):
+        from core import i18n, locale
+
+        with mock.patch.object(locale, "is_us_region", return_value=True):
+            for value in ("Colourful", "Favourite centre", "colour.example"):
+                with self.subTest(value=value):
+                    label = widgets.Label(value)
+                    self.assertEqual(label.view.stringValue(), value)
+                    self.assertEqual(label.view.accessibilityLabel(), value)
+                    label.set(i18n.tr("Favourite: {name}").format(name=value))
+                    self.assertEqual(label.view.stringValue(), "Favorite: " + value)
 
     def test_nonwrapping_label_updates_full_text_metadata(self):
         label = widgets.Label("Short name")

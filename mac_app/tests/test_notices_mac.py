@@ -15,7 +15,7 @@ import rumps
 
 import notices
 from kvm_bridge_app import TrayApp, _set_tray_title, _tray_item
-from core import locale
+from core import i18n, locale
 from core import peerlist
 
 
@@ -132,7 +132,7 @@ class NoticesTest(unittest.TestCase):
 
     def test_us_notice_text_uses_american_spelling(self):
         with mock.patch.object(locale, "is_us_region", return_value=True):
-            self.assertTrue(self.notices.post("Cancelled", "Colourful behaviour is a favourite."))
+            self.assertTrue(self.notices.post(i18n.tr("Cancelled"), i18n.tr("Colourful behaviour is a favourite.")))
         notice = self.framework.center.added[0].content
         self.assertEqual((notice.title, notice.body),
                          ("Canceled", "Colorful behavior is a favorite."))
@@ -172,9 +172,9 @@ class _FakeTrayApp:
 class TrayNoticeTest(unittest.TestCase):
     def test_tray_menu_titles_use_american_spelling(self):
         with mock.patch.object(locale, "is_us_region", return_value=True):
-            item = _tray_item("Minimise", callback=None)
+            item = _tray_item(i18n.tr("Minimise"), callback=None)
             self.assertEqual(item.title, "Minimize")
-            _set_tray_title(item, "Initialising")
+            _set_tray_title(item, i18n.tr("Initialising"))
         self.assertEqual(item.title, "Initializing")
 
     def test_the_tray_app_posts_through_the_notices_not_rumps_with_addresses_hidden_as_set(self):

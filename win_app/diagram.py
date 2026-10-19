@@ -967,7 +967,8 @@ class AtlasCanvas(QWidget):
             painter.setPen(QPen(_colour(line), 2.0 if outlined else 1.0))
             painter.setBrush(_colour(fill))
             painter.drawRoundedRect(rect, tokens.RADIUS["button"], tokens.RADIUS["button"])
-            if tile.get("displays"):
+            displays = tile.get("displays") or {}
+            if isinstance(displays, dict) and len(displays) > 1:
                 for screen in ways._display_frames(tile):
                     screen_rect = self.display_rect(peer, screen["display"]).adjusted(2, 2, -2, -2)
                     painter.setPen(QPen(_colour("edge"), 1.0))
@@ -1066,13 +1067,29 @@ class AtlasCanvas(QWidget):
                         stretches = ways.third_stretches(contact, screen)
                         breaks = [before[3] for before, after in zip(stretches, stretches[1:])
                                   if before[1] == after[1] and abs(before[3] - after[2]) < 1e-6]
+                        lit_group = None
                         for stretch in stretches:
                             if stretch[0] in lit_thirds:
-                                for lit in ways.crossing_stretches(contact, screen, [stretch[0]]):
-                                    self._paint_contact(painter, own, own_rect, lit, alpha=seam_alpha,
-                                                        breaks=breaks, screen=screen)
+                                if (lit_group and lit_group[1] == stretch[1]
+                                        and abs(lit_group[3] - stretch[2]) < 1e-6):
+                                    lit_group = (lit_group[0], lit_group[1], lit_group[2], stretch[3])
+                                else:
+                                    if lit_group:
+                                        self._paint_contact(painter, own, own_rect,
+                                                            (lit_group[1], lit_group[2], lit_group[3]),
+                                                            alpha=seam_alpha, breaks=breaks, screen=screen)
+                                    lit_group = stretch
                             else:
+                                if lit_group:
+                                    self._paint_contact(painter, own, own_rect,
+                                                        (lit_group[1], lit_group[2], lit_group[3]),
+                                                        alpha=seam_alpha, breaks=breaks, screen=screen)
+                                    lit_group = None
                                 self._paint_third_track(painter, own, own_rect, stretch, breaks, screen)
+                        if lit_group:
+                            self._paint_contact(painter, own, own_rect,
+                                                (lit_group[1], lit_group[2], lit_group[3]),
+                                                alpha=seam_alpha, breaks=breaks, screen=screen)
                 # The seam is the edge's own mark: a machine reached only by its corner shows the
                 # corner bracket and no seam.
                 elif (held.get("state") in ("edge", "part", "corner")

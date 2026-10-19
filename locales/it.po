@@ -1085,6 +1085,11 @@ msgstr "Bordo intero"
 
 #: core/ways.py
 #, python-brace-format
+msgid "{key}, next in order"
+msgstr "{key}, prossimo in ordine"
+
+#: core/ways.py
+#, python-brace-format
 msgid "the {parts} of the {edge} edge"
 msgstr "il tratto {parts} del bordo {edge}"
 
@@ -1130,6 +1135,16 @@ msgstr "{name} non ha una via di ritorno verso questo computer: nessuno dei suoi
 #, python-brace-format
 msgid "{name} no longer has this pairing, so it has no way in. Remove {name} here and pair the two again."
 msgstr "{name} non ha più questo abbinamento, quindi non ha una via d'ingresso. Rimuovi {name} qui e abbina di nuovo i due computer."
+
+#: core/ways.py
+#, python-brace-format
+msgid "{key}, next among ticked"
+msgstr "{key}, prossimo spuntato"
+
+#: core/ways.py
+#, python-brace-format
+msgid "{key}, to where input last went"
+msgstr "{key}, dove è andato l'input l'ultima volta"
 
 #: core/ways.py
 #, python-brace-format
@@ -2468,11 +2483,6 @@ msgstr ""
 #, python-brace-format
 msgid "Plays {name}"
 msgstr "Riproduce {name}"
-
-#: mac_app/kvm_bridge_app.py win_app/kvm_bridge_win.py
-#, python-brace-format
-msgid "{key}, to where input last went"
-msgstr "{key}, dove è andato l'input l'ultima volta"
 
 #: mac_app/kvm_bridge_app.py
 msgid "On a PC, Command arrives as Control, so Command-C copies there too, and Control arrives as the Windows key. Between two Macs every key arrives as itself."

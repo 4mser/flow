@@ -68,7 +68,7 @@ def is_us_region() -> bool:
 
 
 def americanise(text: str) -> str:
-    """Convert British spellings in text intended for display on a US system, when Beamer is in English."""
+    """Convert authored English templates for a US region, preserving format fields."""
     from core import i18n
 
     if not isinstance(text, str) or not i18n.is_source() or not is_us_region():
@@ -83,4 +83,7 @@ def americanise(text: str) -> str:
             return target.capitalize()
         return target
 
-    return _WORD_PATTERN.sub(replace, text)
+    # Field identifiers are code, and their values have not been inserted yet.
+    parts = re.split(r"(\{[^{}]*\})", text)
+    return "".join(part if part.startswith("{") else _WORD_PATTERN.sub(replace, part)
+                   for part in parts)

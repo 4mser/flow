@@ -123,6 +123,29 @@ class I18nTests(unittest.TestCase):
             i18n.install("ru")
             self.assertEqual(locale.americanise("Colour"), "Colour")
 
+    def test_us_templates_preserve_interpolated_data_and_field_names(self):
+        with mock.patch.object(locale, "is_us_region", return_value=True):
+            i18n.install("en")
+            fields = {"colour": "Colourful", "address": "colour.example", "n": 2}
+            self.assertEqual(i18n.tr("Favourite {colour}: {address}").format(**fields),
+                             "Favorite Colourful: colour.example")
+            self.assertEqual(i18n.trc("menu", "Centre {colour}").format(**fields),
+                             "Center Colourful")
+            self.assertEqual(i18n.trn("{n} colour for {colour}", "{n} colours for {colour}", 2).format(**fields),
+                             "2 colors for Colourful")
+            self.assertEqual(i18n.joined(["Colourful", "Favourite centre"]),
+                             "Colourful and Favourite centre")
+
+    def test_us_region_does_not_rewrite_italian_or_pseudo_templates(self):
+        for code in ("it", "qps"):
+            with self.subTest(code=code), \
+                    mock.patch.dict(os.environ, {"BEAMER_LANGUAGE": code}), \
+                    mock.patch.object(locale, "is_us_region", return_value=True):
+                i18n.install("auto")
+                expected = i18n.load(code).gettext("Favourite {name}")
+                self.assertEqual(i18n.tr("Favourite {name}").format(name="Colourful"),
+                                 expected.format(name="Colourful"))
+
 
 if __name__ == "__main__":
     unittest.main()

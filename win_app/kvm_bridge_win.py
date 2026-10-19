@@ -521,7 +521,6 @@ class WindowsApplication(QWidget):
 
     def __init__(self, config_path: Path, start_after_first_paint: bool = False) -> None:
         super().__init__()
-        widgets.install_text_localisation()
         self.config_path = config_path
         self._status_lock = threading.RLock()
         self._status = ServerState.STOPPED
@@ -2987,7 +2986,7 @@ class WindowsApplication(QWidget):
             self.shortcut_tile.setChecked("shortcut" in config.crossing_methods)
         finally:
             self.shortcut_tile.blockSignals(False)
-        self.shortcut_tile.set_detail(tr("{key}, to where input last went").format(key=key))
+        self.shortcut_tile.set_detail(ways.shortcut_detail(key, config.shortcut_goes_to))
         self.shortcut_target_choice.set_value(config.shortcut_goes_to)
         self._crossing_text(self.shortcut_target_note, pages_win.shortcut_destination_note(
             config.shortcut_goes_to, config.trigger_style == "hold"))
@@ -3301,7 +3300,7 @@ class WindowsApplication(QWidget):
     def _shortcut_module(self, current: Config) -> QWidget:
         module = widgets.Module(tr("Shortcut"))
         key = TRIGGER_KEYS.get(current.trigger_key, current.trigger_key)
-        self.shortcut_tile = widgets.WayTile(tr("Shortcut"), tr("{key}, to where input last went").format(key=key))
+        self.shortcut_tile = widgets.WayTile(tr("Shortcut"), ways.shortcut_detail(key, current.shortcut_goes_to))
         self.shortcut_tile.setChecked("shortcut" in current.crossing_methods)
         self.shortcut_tile.toggled.connect(lambda on: self._ways_changed("shortcut", on))
         module.body.addWidget(self.shortcut_tile)

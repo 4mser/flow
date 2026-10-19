@@ -11,7 +11,7 @@ they go into a template as a ``{field}`` instead, so a machine called "Home" is 
 Catalogues are ``locales/<code>.po`` beside VERSION, read with the standard library only. The
 English catalogue is the template (``locales/beamer.pot``) that ``tools/i18n_extract.py`` writes;
 a language is one more ``.po`` file and one line in ``LANGUAGES``. The US spelling of English
-stays where it was, in core.locale, applied at the widgets' text setters.
+is applied to these authored templates before typed values are interpolated.
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ import re
 import struct
 import sys
 from pathlib import Path
+
+from core.locale import americanise
 
 
 # Code -> the language's own name for itself, shown in the Language choice whatever the current
@@ -49,7 +51,7 @@ def N_(message: str) -> str:
 
 
 def tr(message: str) -> str:
-    return _translations.gettext(message)
+    return americanise(_translations.gettext(message))
 
 
 def matches_translation(text: str, *templates: str) -> bool:
@@ -62,11 +64,11 @@ def matches_translation(text: str, *templates: str) -> bool:
 
 
 def trn(singular: str, plural: str, n: int) -> str:
-    return _translations.ngettext(singular, plural, n)
+    return americanise(_translations.ngettext(singular, plural, n))
 
 
 def trc(context: str, message: str) -> str:
-    return _translations.pgettext(context, message)
+    return americanise(_translations.pgettext(context, message))
 
 
 def joined(items) -> str:
