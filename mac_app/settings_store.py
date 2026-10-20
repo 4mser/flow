@@ -310,7 +310,7 @@ def _merge_config(base, cfg):
         # which clears what was learnt at the old one, or a save from a window read before one was
         # learnt would put the old one back.
         if cfg.host != peer.get("host"):
-            peer.update(name=cfg.pc_name, hw=cfg.mac_address)
+            peer.update(name=cfg.pc_name, hw=cfg.mac_address, host_pinned=True)
         peer.update(host=cfg.host, port=cfg.port, send=cfg.send_to_windows, allow_drive=cfg.allow_windows_to_drive)
     settings["crossing"] = {
         name: value for name, value in crossing.items() if not (peerlist.first_desktop(peers) is not None and name in MOVED_CROSSING)

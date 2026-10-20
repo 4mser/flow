@@ -111,6 +111,7 @@ A peer entry:
 | `platform` | string | the peer's platform, from pairing, then from every `hello` or `welcome` |
 | `token` | string | the shared token from pairing, never reused for another peer |
 | `host` | string | the IPv4 address to open a link to the peer at; `""` for a phone |
+| `host_pinned` | boolean, optional | absent or true preserves the chosen host; false for an address pairing or an incoming link learnt, which may follow discovery |
 | `port` | integer | the peer's own link port; 0 for a phone, which is never dialled |
 | `hw` | string | the peer's hardware address for wake-on-LAN, `aa:bb:cc:dd:ee:ff`, or `""` |
 | `send` | boolean | this machine's input may go to the peer |
@@ -468,7 +469,9 @@ AEAD   = ChaCha20-Poly1305 (RFC 8439), no associated data
 Each end updates the peer entry from what the other sent: `name` and `platform` always, and `hw`
 when it is present (an absent `hw` keeps the saved one). The responder also takes `port` from
 `hello`, and `host` from the address the link came from when `port` is not 0 and that address
-is neither loopback nor link-local. A change is saved.
+is neither loopback nor link-local, but only when the saved host is empty or `host_pinned` is
+false. Learning into an empty host sets `host_pinned` false. Pairing writes it false, so an address pairing learnt still follows discovery; legacy entries
+without this field are preserved; editing the destination sets it true. A change is saved.
 
 Capabilities say what a machine does with a message it receives:
 
@@ -1024,7 +1027,10 @@ Every desktop both announces and discovers. Each sends a beacon every 2 seconds 
 while it runs, with `pair` and `id` only while a code is up, and each keeps the list of machines
 it hears. Any desktop can show a code (and be the host) or enter one (and be the requester).
 
-**Finding a peer whose address changed.** When the link to a peer with `send` true has been down
+**Finding a peer whose address changed.** Only entries with `host_pinned` false follow beacons.
+A chosen address, including a legacy saved address whose provenance is unknown, is never
+replaced automatically. If it changes, edit the destination or pair again.
+When the link to an eligible peer with `send` true has been down
 for 10 seconds, a desktop tries a link at the source address of a beacon carrying that peer's
 exact name, at the peer's saved `port`, and saves the address only once that link authenticates.
 It never tries a beacon with another name, nor one whose `id` is not the peer's; one at another

@@ -333,6 +333,8 @@ def peer_entry(identity: bytes, name: str, platform: str, port: int, token: str,
         "in_use": True,
         "side": "", "side_set_at": 0, "side_by": "", "paired_with": [], "paired_at": int(paired_at),
         "linked": False, "from_1_4": False,
+        # Pairing learnt this address; only one typed in Settings is a choice that discovery must not replace.
+        "host_pinned": False,
     }
 
 

@@ -273,6 +273,8 @@ class OutboundLink:
                     self._blocked_for = None
                 with self._lock:
                     tried, self._try_host = self._try_host, None
+                if entry.get("host_pinned") is not False:
+                    tried = None
                 if self._blocked_for is not None:
                     self._wake.wait(0.25)
                     self._wake.clear()
@@ -879,7 +881,9 @@ class OutboundLink:
 
     def follow(self, machines):
         """`machines`: what discovery hears, dicts with `name`, `address` and, while that machine shows
-        a code, `id`. A link down for ten seconds is tried once at the address of a beacon with this
+        a code, `id`. Only an address learnt into an empty entry may follow discovery; saved choices,
+        including older entries without provenance, stay put. A link down for ten seconds is
+        tried once at the address of a beacon with this
         entry's exact name, at its saved port, at most every thirty seconds. The address is saved only
         once the link authenticates. Two machines may share a name, so a beacon whose `id` is another
         machine's is passed over, one at another paired machine's saved address is tried after the
@@ -894,6 +898,8 @@ class OutboundLink:
             return
         entry = self.entry()
         if entry is None or self._target(entry) is None or not entry.get("name"):
+            return
+        if entry.get("host_pinned") is not False:
             return
         others = {peer.get("host") for peer in self._book.peers() if peer.get("token") != self.token}
         own_id = entry.get("id")

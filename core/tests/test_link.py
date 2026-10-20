@@ -845,6 +845,7 @@ class LinkFollowTests(unittest.TestCase):
     def link(self, clock, tried):
         side = Side(None)
         side.peer()["host"] = "192.168.77.7"
+        side.peer()["host_pinned"] = False
 
         def factory(address, timeout=None):
             tried.append(address)
@@ -946,6 +947,7 @@ class LinkFollowTests(unittest.TestCase):
         clock = FakeClock()
         side = Side(machine)
         side.peer()["host"] = "10.255.255.1"
+        side.peer()["host_pinned"] = False
 
         real = socket.create_connection
 
@@ -1116,6 +1118,7 @@ class LinkReviewFindingsTests(unittest.TestCase):
         clock = FakeClock()
         side = Side(None)
         side.peer()["host"] = "10.255.255.1"
+        side.peer()["host_pinned"] = False
         side.peer()["port"] = server.port
         real = socket.create_connection
 

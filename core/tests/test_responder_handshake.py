@@ -132,6 +132,12 @@ class TheLookup(Case):
         self.initiator().handshake()
         self.assertEqual(self.machine.settings.peer(TOKENS[B])["hw"], "11:22:33:44:55:66")
 
+    def test_authenticated_reverse_link_preserves_the_selected_address(self):
+        # Treat this loopback client as a learnable LAN source without touching a real interface.
+        with mock.patch.object(receiver, "learnable_host", return_value=True):
+            self.initiator().handshake()
+        self.assertEqual(self.machine.settings.peer(TOKENS[B])["host"], "192.168.77.9")
+
     def test_which_addresses_teach_a_host(self):
         self.assertTrue(receiver.learnable_host("192.168.77.5", 24820))
         self.assertTrue(receiver.learnable_host("192.168.1.20", 1))

@@ -19,6 +19,23 @@ from app_config import ConfigError, config_from_dict, config_to_dict, default_co
 BASE = {"host": "192.168.1.3", "port": 51820, "auth_token": "shared-token"}
 
 
+class PeerAddressConfigTests(unittest.TestCase):
+    def test_editing_a_learnt_host_pins_it_and_survives_reload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            config = config_from_dict({**BASE, "mac_host": "192.0.2.10"})
+            app_config.save_config(path, config)
+            settings = app_config.load_settings(path)
+            settings["peers"][0]["host_pinned"] = False
+            app_config.write_settings(path, settings)
+            self.assertIs(app_config.load_settings(path)["peers"][0]["host_pinned"], False)
+            config = app_config.load_config(path)
+            app_config.save_config(path, replace(config, mac_host="198.51.100.10"))
+            peer = app_config.load_settings(path)["peers"][0]
+            self.assertEqual(peer["host"], "198.51.100.10")
+            self.assertIs(peer["host_pinned"], True)
+
+
 class EdgeGlowConfigTests(unittest.TestCase):
     def test_defaults_on_and_round_trips(self):
         self.assertTrue(config_from_dict(dict(BASE)).edge_glow)

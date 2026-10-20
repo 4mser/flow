@@ -897,7 +897,7 @@ def _apply_flat(settings: dict, flat: dict) -> None:
     # clears what was learnt at the old one, or a save from a window read before one was learnt would
     # put the old one back.
     if flat["mac_host"] != peer.get("host"):
-        peer.update(name=flat["paired_with"], hw=flat["mac_hardware_address"])
+        peer.update(name=flat["paired_with"], hw=flat["mac_hardware_address"], host_pinned=True)
     peer.update(host=flat["mac_host"], send=flat["send_to_mac"], allow_drive=flat["allow_mac_to_drive"])
     if flat["port"] != old_port and peer.get("port") == old_port:
         peer["port"] = flat["port"]

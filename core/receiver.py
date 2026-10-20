@@ -335,6 +335,14 @@ class PeerBook:
                 return IN_USE_OFF, None
             before = copy.deepcopy(entry)
             was_dormant = entry.get("dormant") is True
+            changes = dict(changes)
+            # Old entries have no provenance: preserve their selected interface rather than
+            # letting discovery or a reverse link silently replace a cable address.
+            if "host" in changes:
+                if entry.get("host") and entry.get("host_pinned") is not False:
+                    changes.pop("host")
+                elif changes["host"] and not entry.get("host"):
+                    changes["host_pinned"] = False
             entry.update(changes)
             entry["linked"] = True
             entry.pop("dormant", None)
