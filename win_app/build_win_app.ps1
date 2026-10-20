@@ -15,6 +15,36 @@ function Invoke-Native {
     & $Command
 }
 
+function Get-BeamerSignTool {
+    $Certificate = Get-ChildItem Cert:\CurrentUser\My |
+        Where-Object Thumbprint -eq 'EA6F2A81A84E49D31FF7965A50D7DE771601DA0A' |
+        Select-Object -First 1
+    if (-not $Certificate) {
+        Write-Host 'Windows signing: unsigned (Certum certificate absent from CurrentUser\My).'
+        return $null
+    }
+
+    $Tool = Get-Command signtool.exe -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty Source
+    if (-not $Tool) {
+        $SdkBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+        $Tool = Get-ChildItem "$SdkBin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+            Sort-Object { [version]$_.Directory.Parent.Name } -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (-not $Tool) { throw 'Certum certificate is present, but Windows SDK SignTool is missing' }
+    return $Tool
+}
+
+function Sign-BeamerArtifact {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not $SignTool) { return }
+    Invoke-Native { & $SignTool sign /sha1 EA6F2A81A84E49D31FF7965A50D7DE771601DA0A /tr http://time.certum.pl /td sha256 /fd sha256 $Path }
+    if ($LASTEXITCODE -ne 0) { throw "Certum signing failed: $Path" }
+    Invoke-Native { & $SignTool verify /pa /v /tw $Path }
+    if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed: $Path" }
+}
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 if (-not $ScriptDir) { $ScriptDir = Get-Location }
 Set-Location $ScriptDir
@@ -28,6 +58,8 @@ if ($Release) {
     $Iscc = Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
     if (-not (Test-Path $Iscc)) { throw "Inno Setup 6 is not installed at $Iscc" }
 }
+
+$SignTool = Get-BeamerSignTool
 
 $Python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
 if (-not $Python) { throw 'Python was not found on PATH' }
@@ -48,6 +80,7 @@ if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
 
 $Output = Join-Path $ScriptDir 'dist\Beamer.exe'
 if (-not (Test-Path $Output)) { throw 'PyInstaller did not create Beamer.exe' }
+Sign-BeamerArtifact $Output
 Write-Output "Built $Output"
 
 if ($Release) {
@@ -55,6 +88,8 @@ if ($Release) {
     $ReleaseDir = [IO.Path]::GetFullPath((Join-Path $ProjectDir "..\docs\beamer-releases\$Version"))
     & $Iscc "/O$ReleaseDir" Beamer-Setup.iss
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
+    $Setup = Join-Path $ReleaseDir "Beamer-Setup-$Version.exe"
+    Sign-BeamerArtifact $Setup
     $Commit = git -C $ProjectDir rev-parse --short HEAD
-    Write-Output "Released $(Join-Path $ReleaseDir "Beamer-Setup-$Version.exe") from $Commit"
+    Write-Output "Released $Setup from $Commit"
 }

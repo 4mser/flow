@@ -22,7 +22,7 @@ Free, with no account. Mac, Windows and Linux downloads are on the [releases pag
 | Platform | Get it | Notes |
 |---|---|---|
 | macOS 13 or later, Apple silicon or Intel | `Beamer-<version>.dmg` | One universal app, signed and notarised by Apple |
-| Windows 10 and 11 | `Beamer-Setup-<version>.exe` | Not code-signed; see step 1 below |
+| Windows 10 and 11 | `Beamer-Setup-<version>.exe` | Code-signed; see step 1 below |
 | Linux, 64-bit x86 and arm64 (Flatpak) | [Install from the Kalkman Code repository](https://flatpak.kalkmancode.co.uk/beamer.flatpakref); `Beamer-<version>-x86_64.flatpak` and `Beamer-<version>-aarch64.flatpak` are available as an offline alternative | Tested on Fedora 44 GNOME under Wayland; KDE Plasma is experimental and not yet tested on real hardware; X11 is not yet verified |
 
 ### Install on Linux
@@ -71,8 +71,9 @@ as an offline alternative; the repository picks the right one for your machine b
    two Grant buttons on the Permissions page (Accessibility, then Input Monitoring), then Relaunch
    Beamer on the same page: macOS only passes keys to an app started after the grant, so until then
    the pointer crosses but the keyboard does not. On Windows,
-   run the installer. It is not code-signed, because a certificate costs money and Beamer is free,
-   so Windows says "Windows protected your PC" the first time: choose More info, then Run anyway.
+   run the installer. Since 1.5.8 it is code-signed, so Windows names the publisher instead of
+   "Unknown publisher". Windows may still say "Windows protected your PC" until the installer has
+   built a download reputation: choose More info, then Run anyway.
    Beamer on Windows runs as administrator, so expect one UAC prompt when you open it. On Linux,
    follow [Install on Linux](#install-on-linux) to install Beamer from the Kalkman Code repository.
 2. **Pair them.** On one machine, choose Pair a machine to show a six-digit code. On the other,
@@ -195,7 +196,8 @@ when Same on all machines is on.
 - **AltGr is out of reach from the Mac.**
 - **Linux on Wayland has fewer controls.** Its limits are listed under [Linux](#linux).
 - **Linux gestures are not supported.**
-- **The Windows installer is unsigned.** SmartScreen may warn when you first run it; choose More
+- **SmartScreen may still warn.** The Windows installer is code-signed from 1.5.8, but SmartScreen
+  can show "Windows protected your PC" until it has built a download reputation; choose More
   info, then Run anyway.
 
 ## In detail

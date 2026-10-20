@@ -43,6 +43,9 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.5.8" date="2026-10-20">
+      <description><p>The Windows installer and Beamer.exe are now signed with a Certum code-signing certificate, so Windows no longer shows an unknown publisher. Nothing else changes from 1.5.7.</p></description>
+    </release>
     <release version="1.5.7" date="2026-10-20">
       <description><p>Keeps the address you chose for a machine after reconnects and restarts, instead of replacing it with a discovered or incoming one.</p></description>
     </release>
