@@ -56,15 +56,15 @@ setup(
         "widgets",
         "windows_input",
     ],
-    # No Mac ships Hanken Grotesk or B612 Mono. macOS registers anything under
+    # No Mac ships Space Grotesk or IBM Plex Mono. macOS registers anything under
     # ATSApplicationFontsPath before the app runs, so the bundle carries the same files the
     # Windows receiver does rather than a second copy of them.
     data_files=[(
         "Fonts",
         [
-            "../win_app/assets/HankenGrotesk-Variable.ttf",
-            "../win_app/assets/B612Mono-Regular.ttf",
-            "../win_app/assets/B612Mono-Bold.ttf",
+            "../win_app/assets/SpaceGrotesk-Variable.ttf",
+            "../win_app/assets/IBMPlexMono-Regular.ttf",
+            "../win_app/assets/IBMPlexMono-Bold.ttf",
         ],
     ), ("", ["../VERSION"]), ("locales", [str(path) for path in Path(__file__).resolve().parent.parent.glob("locales/*.po")])],
     options={
@@ -84,13 +84,13 @@ setup(
                 "objc", "AppKit", "ApplicationServices", "Quartz", "UserNotifications",
                 "core.crash_log", "core.effects", "core.i18n", "core.locale", "core.idle_pointer", "core.ignored", "core.keytable", "core.link", "core.owner", "core.pairing",
                 "core.peerlist", "core.protocol", "core.receiver", "core.return_edge", "core.settings_sync",
-                "core.updates", "core.visitor", "core.wol",
+                "core.updates", "core.visitor", "core.brand", "core.wol",
                 "core.fx_ink", "core.fx_instrument", "core.fx_membrane", "core.fx_sparks", "core.fx_warp",
                 "core.fx_light", "core.fx_material", "core.fx_folio", "core.fx_selvedge",
             ],
             "iconfile": "../Beamer.icns",
             "plist": {
-                "CFBundleDisplayName": "Beamer",
+                "CFBundleDisplayName": "FLOW",
                 "CFBundleIdentifier": "uk.co.kalkman.beamer",
                 "CFBundleName": "Beamer",
                 "CFBundleShortVersionString": PLIST_VERSION,

@@ -13,8 +13,9 @@ import re
 import sys
 import threading
 
-LATEST_URL = "https://api.github.com/repos/kalkman-code/beamer/releases/latest"
-RELEASES_PAGE = "https://github.com/kalkman-code/beamer/releases/latest"
+# FLOW checks its own releases: offering Beamer's would replace FLOW with the app it was forked from.
+LATEST_URL = "https://api.github.com/repos/4mser/flow/releases/latest"
+RELEASES_PAGE = "https://github.com/4mser/flow/releases/latest"
 CHECK_EVERY_SECONDS = 24 * 60 * 60
 TIMEOUT_SECONDS = 10.0
 MAX_BYTES = 256 * 1024
@@ -62,7 +63,7 @@ def newer_release(current, payload):
     if not beta and theirs[:2] == ours[:2] and not (isinstance(body, str) and ANNOUNCE in body):
         return None
     url = payload.get("html_url")
-    if not isinstance(url, str) or not url.startswith("https://github.com/kalkman-code/beamer/"):
+    if not isinstance(url, str) or not url.startswith("https://github.com/4mser/flow/"):
         url = RELEASES_PAGE
     return (str(tag).lstrip("v"), url)
 

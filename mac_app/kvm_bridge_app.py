@@ -27,6 +27,7 @@ import bridge
 from instance_signal import InstanceSignalServer, instance_socket_path, request_running_instance
 import config as config_module
 import crossing
+from core import brand
 from core import return_edge
 import desktop_mac
 from frame_clock import FrameClock, set_divisor
@@ -868,6 +869,7 @@ class EdgeGlow:
 
 
 BEAMER_SITE_URL = "https://kalkmancode.co.uk/beamer"
+FLOW_SITE_URL = "https://github.com/4mser/flow"
 
 
 def show_about_panel():
@@ -878,13 +880,15 @@ def show_about_panel():
     AppKit.NSApp.activateIgnoringOtherApps_(True)
     paragraph = AppKit.NSMutableParagraphStyle.alloc().init()
     paragraph.setAlignment_(AppKit.NSTextAlignmentCenter)
-    credits = AppKit.NSAttributedString.alloc().initWithString_attributes_(
-        "kalkmancode.co.uk/beamer",
-        {
-            AppKit.NSLinkAttributeName: AppKit.NSURL.URLWithString_(BEAMER_SITE_URL),
-            AppKit.NSParagraphStyleAttributeName: paragraph,
-        },
-    )
+    # FLOW's page, then the credit GPL-3.0 asks to keep: what FLOW is built on and who made it.
+    flow_link, built_on = "github.com/4mser/flow", tr("Built on Beamer by Kalkman Code")
+    credits = AppKit.NSMutableAttributedString.alloc().initWithString_attributes_(
+        f"{flow_link}\n{built_on}", {AppKit.NSParagraphStyleAttributeName: paragraph})
+    credits.addAttribute_value_range_(
+        AppKit.NSLinkAttributeName, AppKit.NSURL.URLWithString_(FLOW_SITE_URL), (0, len(flow_link)))
+    credits.addAttribute_value_range_(
+        AppKit.NSLinkAttributeName, AppKit.NSURL.URLWithString_(BEAMER_SITE_URL),
+        (len(flow_link) + 1, len(built_on)))
     AppKit.NSApp.orderFrontStandardAboutPanelWithOptions_({AppKit.NSAboutPanelOptionCredits: credits})
 
 
@@ -903,8 +907,8 @@ def install_main_menu(control_window):
 
     main_menu = AppKit.NSMenu.alloc().init()
 
-    application_item = main_menu.addItemWithTitle_action_keyEquivalent_("Beamer", None, "")
-    application_menu = AppKit.NSMenu.alloc().initWithTitle_("Beamer")
+    application_item = main_menu.addItemWithTitle_action_keyEquivalent_(brand.APP_NAME, None, "")
+    application_menu = AppKit.NSMenu.alloc().initWithTitle_(brand.APP_NAME)
     item(application_menu, tr("About Beamer"), "showAbout:", "", target=control_window)
     application_menu.addItem_(AppKit.NSMenuItem.separatorItem())
     item(application_menu, tr("Hide Beamer"), "hide:", "h")
@@ -1249,7 +1253,7 @@ class ControlWindow(AppKit.NSObject):
             AppKit.NSBackingStoreBuffered,
             False,
         )
-        self.window.setTitle_("Beamer")
+        self.window.setTitle_(brand.APP_NAME)
         self.window.setReleasedWhenClosed_(False)
         self.window.setMinSize_((640, 540))
         self.window.keyboard_navigation = False
@@ -1282,8 +1286,8 @@ class ControlWindow(AppKit.NSObject):
             self._select_page,
             # Words rather than the address, which wraps mid-path at the sidebar's narrowest; the
             # address is in the tooltip.
-            footer_text=tr("Beamer {version}\nBeamer's website").format(version=VERSION),
-            footer_label=tr("Open Beamer's website, kalkmancode.co.uk/beamer"),
+            footer_text=tr("FLOW {version}\nFLOW on GitHub").format(version=VERSION),
+            footer_label=tr("Open FLOW on GitHub, github.com/4mser/flow"),
             on_footer=self._open_beamer_site,
         )
         self.sidebar.footer_icon.setImage_(menu_bar_glyph("local"))
@@ -1506,7 +1510,7 @@ class ControlWindow(AppKit.NSObject):
 
     @objc.python_method
     def _open_beamer_site(self):
-        AppKit.NSWorkspace.sharedWorkspace().openURL_(AppKit.NSURL.URLWithString_(BEAMER_SITE_URL))
+        AppKit.NSWorkspace.sharedWorkspace().openURL_(AppKit.NSURL.URLWithString_(FLOW_SITE_URL))
 
     @objc.python_method
     def _run_previews(self):
@@ -5240,7 +5244,7 @@ class TrayApp(rumps.App):
         "Moving input"), or home when it is already there."""
         controller = self.controller
         if not controller.input_ready:
-            self.notify_user("Beamer", tr("Grant both Mac permissions first."))
+            self.notify_user(brand.APP_NAME, tr("Grant both Mac permissions first."))
             return
         if controller.redirecting and controller.owner.on == peer:
             controller.set_redirecting(False)
@@ -5340,7 +5344,7 @@ class TrayApp(rumps.App):
         except (SettingsError, OSError, KeyError) as exc:
             self.logger.warning("layout state not saved: %s", exc)
             # Translators: {error} is the system error message.
-            self.notify_user("Beamer", tr("Could not save the change: {error}").format(error=exc))
+            self.notify_user(brand.APP_NAME, tr("Could not save the change: {error}").format(error=exc))
             self.control_window.panel.invalidate()
             self.control_window.peers_changed()
             return
@@ -5357,7 +5361,7 @@ class TrayApp(rumps.App):
         except SettingsError as exc:
             self.logger.warning("direction not saved: %s", exc)
             # Translators: {error} is the system error message.
-            self.notify_user("Beamer", tr("Could not save the change: {error}").format(error=exc))
+            self.notify_user(brand.APP_NAME, tr("Could not save the change: {error}").format(error=exc))
             # Some machines may have been saved before this one failed, and a switch the person
             # flipped shows a state that is not saved: read it all again.
             self.control_window.panel.invalidate()

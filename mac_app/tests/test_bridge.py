@@ -529,7 +529,7 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.controller.redirecting)
         self.assertEqual(link.dropped, ["Windows stopped responding"])
         self.assertEqual(self.controller.connection_status, "Windows stopped responding")
-        self.assertEqual(self.alerts, [("Beamer", "Input returned to this Mac")])
+        self.assertEqual(self.alerts, [("FLOW", "Input returned to this Mac")])
 
     def test_jump_chord_for_the_current_peer_returns_input_home_and_is_swallowed(self):
         link = bring_up(self.controller)
@@ -687,7 +687,7 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.controller.set_redirecting(True))
         self.assertEqual(
             self.alerts,
-            [("Beamer", "Cannot switch — Waiting to connect")],
+            [("FLOW", "Cannot switch — Waiting to connect")],
         )
 
     def test_alert_callback_exception_does_not_propagate(self):

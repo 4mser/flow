@@ -125,7 +125,7 @@ def preview(fx, t, palette, dark, method="edge", scale=0.6):
 def render(output):
     from PIL import Image, ImageDraw, ImageFont
     output.mkdir(parents=True, exist_ok=True)
-    font = ImageFont.truetype(str(ROOT / "win_app/assets/HankenGrotesk-Variable.ttf"), 17)
+    font = ImageFont.truetype(str(ROOT / "win_app/assets/SpaceGrotesk-Variable.ttf"), 17)
     times = (0.92, 1.35, 1.78, 2.18, 2.27, 2.44, 2.7)
     stages = ("Push · 10%", "Push · 45%", "Push · 85%", "Threshold", "Give", "Arrival", "Settle")
     total = 0

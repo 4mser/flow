@@ -30,12 +30,12 @@ from win_app.tests.test_settings_layout_acceptance import SyntheticWindow
 # Key names are recorded values, the synthetic row supplies its peer name, and the machine running
 # the test shows its own name as this machine's.
 ALLOWED_TEXT = {
-    "Beamer",
-    "English", "Italiano",
+    "Beamer", "FLOW",
+    "English", "Español", "Italiano",
     "Synthetic workstation",
     socket.gethostname(), socket.gethostname().split(".", 1)[0],
     "Right Ctrl",
-    "https://kalkmancode.co.uk/beamer",
+    "https://kalkmancode.co.uk/beamer", "https://github.com/4mser/flow",
     "⌘", "⌥", "⌃", "⇧", "⌫", "↵", "⎋", "←", "→", "↑", "↓",
     "px", "ms", "s", "Hz", "DIP",
 }

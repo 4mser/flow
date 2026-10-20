@@ -1705,6 +1705,9 @@ class Sidebar(QWidget):
     def set_window_width(self, width):
         rail = width < 640
         self.setFixedWidth(56 if rail else 144 if width < 800 else 176)
+        # At 144 the words before the figure run out of room in longer languages; the figure alone
+        # shows there, as on the rail, and the full reading stays in the tooltip.
+        self._compact = not rail and width < 800
         self._link_details.setVisible(not rail)
         self.link_peer.setVisible(bool(getattr(self, "_response_peer", "")) and not rail)
         self._rail = rail
@@ -1756,15 +1759,20 @@ class Sidebar(QWidget):
             self.response_time.setAccessibleName(tr("Response time: disconnected"))
             self.response_time.setToolTip("")
             return
-        target = f" to {self._response_peer}" if getattr(self, "_response_peer", "") else ""
-        detail = f"Response time{target}: {value} ms" if value is not None else f"Response time{target}: no fresh measurement"
-        rail = getattr(self, "_rail", False)
+        peer = getattr(self, "_response_peer", "")
+        if peer:
+            detail = (tr("Response time to {peer}: {ms} ms").format(peer=peer, ms=value) if value is not None
+                      else tr("Response time to {peer}: no fresh measurement").format(peer=peer))
+        else:
+            detail = (tr("Response time: {ms} ms").format(ms=value) if value is not None
+                      else tr("Response time: no fresh measurement"))
+        rail = getattr(self, "_rail", False) or getattr(self, "_compact", False)
         if rail:
             visible = f"{value} ms" if value is not None else "—"
         elif value is None:
-            visible = "Response: —"
+            visible = tr("Response: —")
         else:
-            visible = f"Response: {value} ms"
+            visible = tr("Response: {ms} ms").format(ms=value)
         self.response_time.setText(visible)
         self.response_time.setAccessibleName(detail)
         self.response_time.setToolTip(detail)

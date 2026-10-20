@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (QApplication, QAbstractButton, QComboBox, QFrame,
 import kvm_bridge_win as kvm
 import pages_win
 import theme
+import tokens
 import widgets
 import app_config
 from core import protocol
@@ -146,8 +147,8 @@ class SettingsLayoutAcceptance(unittest.TestCase):
         cls.effective_font = cls.app.font()
 
     def setUp(self):
-        self.assertTrue(self.effective_font.family().lower().startswith("hanken"),
-                        f"tests must use the bundled Hanken Grotesk font, got {self.effective_font.family()!r}")
+        self.assertTrue(self.effective_font.family().lower().startswith(tokens.UI_FAMILY.lower()),
+                        f"tests must use the bundled {tokens.UI_FAMILY} font, got {self.effective_font.family()!r}")
         scratch = ROOT / "win_app" / ".test-tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         self.folder = tempfile.TemporaryDirectory(prefix="beamer-layout-acceptance-", dir=scratch)

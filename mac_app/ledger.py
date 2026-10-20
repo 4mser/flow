@@ -628,13 +628,16 @@ class Row(AppKit.NSView):
                 (CORNER_SIZE, CORNER_SIZE)))
         w = self.cells["keys"].bounds().size.width
         self.cycle.setFrame_(((0, 0), (w, 28)))
-        self.jump_caption.view.setFrame_(((0, 34), (35, 24)))
-        jump_w, jump_h = self.jump.arrange_compact(max(1, w-36))
-        self.jump.view.setFrame_(((36, 32), (jump_w, jump_h)))
-        clear_x, clear_y = 36 + jump_w + 4, 32
+        # Wide enough for the caption in the face and language in use, never under Beamer's 35.
+        caption_w = max(35, math.ceil(self.jump_caption.view.attributedStringValue().size().width) + 5)
+        self.jump_caption.view.setFrame_(((0, 34), (caption_w, 24)))
+        jump_x = caption_w + 1
+        jump_w, jump_h = self.jump.arrange_compact(max(1, w - jump_x))
+        self.jump.view.setFrame_(((jump_x, 32), (jump_w, jump_h)))
+        clear_x, clear_y = jump_x + jump_w + 4, 32
         clear_w = 38
         if clear_x + clear_w > w:
-            clear_x, clear_y = 36, 32 + jump_h + 2
+            clear_x, clear_y = jump_x, 32 + jump_h + 2
         self.clear.setFrame_(((clear_x, clear_y), (clear_w, 24)))
         self.clear.setHidden_(not self.jump.value or self.jump.monitor is not None)
         cell_heights["keys"] = max(60, 32 + jump_h,

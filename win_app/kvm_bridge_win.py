@@ -62,6 +62,7 @@ from app_config import (
     load_config,
     save_config,
 )
+from core import brand
 from core import crash_log
 from core.capture_types import DeadKey, TextInput
 from core.i18n import tr
@@ -119,8 +120,9 @@ try:
 except OSError:
     VERSION = "dev"
 
-HOME_PAGE = "https://kalkmancode.co.uk/beamer"
-HOME_PAGE_TEXT = N_("Beamer's website")
+HOME_PAGE = "https://github.com/4mser/flow"
+HOME_PAGE_TEXT = N_("FLOW on GitHub")
+BEAMER_PAGE = "https://kalkmancode.co.uk/beamer"
 
 STATUS_TITLES = {
     ServerState.STOPPED: N_("Receiver stopped"),
@@ -795,7 +797,7 @@ class WindowsApplication(QWidget):
         row_layout.setSpacing(0)
 
         self.sidebar = widgets.Sidebar(
-            pages_win.PAGES, self._select_page, foot=tr("Beamer {version}\n{link}").format(version=VERSION, link=tr(HOME_PAGE_TEXT)), on_foot=self.open_home_page,
+            pages_win.PAGES, self._select_page, foot=tr("FLOW {version}\n{link}").format(version=VERSION, link=tr(HOME_PAGE_TEXT)), on_foot=self.open_home_page,
             foot_tip=HOME_PAGE,
         )
         self.sidebar.setFixedWidth(theme.SIDEBAR_WIDTH)
@@ -4227,7 +4229,7 @@ class WindowsApplication(QWidget):
                 remaining = bool(settings["peers"])
         except (ConfigError, OSError):
             LOGGER.exception("A machine could not be removed")
-            self._on_alert("Beamer", tr("Beamer could not save the removal. Try again in a moment."))
+            self._on_alert(brand.APP_NAME, tr("Beamer could not save the removal. Try again in a moment."))
             return
         LOGGER.info("Removed %s from the paired machines",
                     peerlist.label_for([removed], token=token) or "a machine")
@@ -4869,7 +4871,7 @@ class WindowsApplication(QWidget):
             config = load_config(self.config_path, unpaired_ok=True)
         except (ConfigError, OSError) as exc:
             LOGGER.warning("Configuration not reloaded: %s", exc)
-            self._on_alert("Beamer", tr("Could not reload the configuration: {error}").format(error=exc))
+            self._on_alert(brand.APP_NAME, tr("Could not reload the configuration: {error}").format(error=exc))
             return
         self._host = config.host
         self._paired = bool(self.book.peers())
@@ -5229,12 +5231,12 @@ class WindowsApplication(QWidget):
 
     def show_about(self) -> None:
         box = QMessageBox(self)
-        box.setWindowTitle(tr("About Beamer"))
+        box.setWindowTitle(tr("About FLOW"))
         box.setIconPixmap(QIcon(str(ICON_PATH)).pixmap(QSize(64, 64), 1.0))
         box.setTextFormat(Qt.TextFormat.RichText)
         box.setText(tr(
-            '<b>Beamer {version}</b><br>One keyboard and mouse for all your Macs and PCs.<br><br><a href="{url}" style="color: {colour};">{link}</a>'
-        ).format(version=VERSION, url=HOME_PAGE, colour=theme.colour("signal"), link=tr(HOME_PAGE_TEXT)))
+            '<b>FLOW {version}</b><br>One keyboard and mouse for all your Macs and PCs.<br><br><a href="{url}" style="color: {colour};">{link}</a><br>Built on <a href="{beamer}" style="color: {colour};">Beamer</a> by Kalkman Code'
+        ).format(version=VERSION, url=HOME_PAGE, colour=theme.colour("signal"), link=tr(HOME_PAGE_TEXT), beamer=BEAMER_PAGE))
         box.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         for text in box.findChildren(QLabel):
             text.setOpenExternalLinks(True)

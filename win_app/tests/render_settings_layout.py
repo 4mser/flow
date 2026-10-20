@@ -27,6 +27,7 @@ from PySide6.QtWidgets import QApplication, QFrame, QWidget
 
 import pages_win
 import theme
+import tokens
 from test_settings_layout_acceptance import SyntheticWindow, write_synthetic_settings
 
 
@@ -139,7 +140,7 @@ def make_contact_sheet(images, destination, title, columns=4, tile_width=260, ti
     sheet.fill(0xFF202124)
     painter = QPainter(sheet)
     painter.setPen(Qt.GlobalColor.white)
-    painter.setFont(QFont("Hanken Grotesk", 11))
+    painter.setFont(QFont(tokens.UI_FAMILY, 11))
     painter.drawText(padding, 18, title)
     for index, (label, path) in enumerate(images):
         image = QImage(str(path))
@@ -165,7 +166,7 @@ def run_case(width, scale):
     theme.init_fonts()
     app.setFont(theme.font(theme.TYPE["body"]))
     font = app.font()
-    if not font.family().lower().startswith("hanken"):
+    if not font.family().lower().startswith(tokens.UI_FAMILY.lower()):
         raise RuntimeError(f"real application font not active: {font.family()!r}")
 
     import tempfile
@@ -222,7 +223,7 @@ def run_case(width, scale):
                   f"dpr={window.devicePixelRatioF()}, font={font.family()}", flush=True)
         (cell / "measurements.json").write_text(json.dumps(all_measures, indent=2) + "\n")
         make_contact_sheet(sheet_images, cell / "contact-sheet.png",
-                           f"Qt settings · {width} DIP · {scale}x · Hanken Grotesk")
+                           f"Qt settings · {width} DIP · {scale}x · {tokens.UI_FAMILY}")
     finally:
         window.server.stop()
         window.close()
@@ -366,8 +367,8 @@ def run_test_suite(selectors=()):
     app = QApplication.instance() or QApplication([])
     theme.init_fonts()
     app.setFont(theme.font(theme.TYPE["body"]))
-    if not app.font().family().lower().startswith("hanken"):
-        raise RuntimeError(f"suite did not start with Hanken Grotesk: {app.font().family()!r}")
+    if not app.font().family().lower().startswith(tokens.UI_FAMILY.lower()):
+        raise RuntimeError(f"suite did not start with {tokens.UI_FAMILY}: {app.font().family()!r}")
     print(f"test suite application font={app.font().family()} point={app.font().pointSizeF()} "
           f"pixel={app.font().pixelSize()}", flush=True)
     if selectors:

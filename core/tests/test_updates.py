@@ -5,7 +5,7 @@ from core import updates
 
 
 def release(tag, **extra):
-    return dict({"tag_name": tag, "html_url": f"https://github.com/kalkman-code/beamer/releases/tag/{tag}",
+    return dict({"tag_name": tag, "html_url": f"https://github.com/4mser/flow/releases/tag/{tag}",
                  "draft": False, "prerelease": False}, **extra)
 
 
@@ -21,7 +21,7 @@ class NewerReleaseTests(unittest.TestCase):
 
     def test_a_newer_tag_is_offered_with_its_page(self):
         self.assertEqual(updates.newer_release("1.3.3", release("v1.4.0")),
-                         ("1.4.0", "https://github.com/kalkman-code/beamer/releases/tag/v1.4.0"))
+                         ("1.4.0", "https://github.com/4mser/flow/releases/tag/v1.4.0"))
 
     def test_the_same_or_an_older_tag_is_not(self):
         self.assertIsNone(updates.newer_release("1.4.0", release("v1.4.0")))
@@ -93,7 +93,7 @@ class CheckerTests(unittest.TestCase):
     def test_reports_a_newer_release(self):
         checker, results = self.make(release("v1.4.0"))
         checker.check_once()
-        self.assertEqual(results, [("1.4.0", "https://github.com/kalkman-code/beamer/releases/tag/v1.4.0")])
+        self.assertEqual(results, [("1.4.0", "https://github.com/4mser/flow/releases/tag/v1.4.0")])
 
     def test_reports_none_when_current(self):
         checker, results = self.make(release("v1.3.3"))

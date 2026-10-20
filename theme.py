@@ -37,7 +37,7 @@ PEER_SIZE_NARROW = 14.0
 # not as an empty field.
 PREVIEW_REST = 0.18
 # The sidebar and its pages. The sidebar gives up to 30pt toward the minimum window so the page
-# keeps its width; the page title is the one large Hanken Grotesk line on each page. Padding is
+# keeps its width; the page title is the one large Space Grotesk line on each page. Padding is
 # top, leading, bottom, trailing.
 SIDEBAR_WIDTH = (150.0, 180.0)
 SIDEBAR_WORD = 15.0

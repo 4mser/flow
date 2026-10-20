@@ -7,6 +7,7 @@ from __future__ import annotations
 import threading
 
 from bridge import KVMController
+from core import brand
 from core import protocol
 from core.i18n import tr
 from core.wol import WAKE_WINDOW_SECONDS, lookup_mac, mac_from_arp_output, magic_packet, parse_mac, send_magic_packet
@@ -136,22 +137,22 @@ class WakingController(KVMController):
             self.logger.warning("wake-on-LAN packet not sent: %s", exc)
             self._waking = False
             self.connection_status = not_woken_status(name)
-            self._alert("Beamer", tr("Could not send the wake-up packet"))
+            self._alert(brand.APP_NAME, tr("Could not send the wake-up packet"))
             return
         self.logger.info("sent wake-on-LAN to %s", host)
-        self._alert("Beamer", tr("Waking {name}…").format(name=name))
+        self._alert(brand.APP_NAME, tr("Waking {name}…").format(name=name))
         while not self.stop_event.wait(self.WAKE_POLL_SECONDS):
             if self._awake(peer):
                 self._waking = False
                 self.logger.info("%s woke and connected", name)
-                self._alert("Beamer", tr("{name} is awake — switch again to send input").format(name=name))
+                self._alert(brand.APP_NAME, tr("{name} is awake — switch again to send input").format(name=name))
                 return
             if self.clock() - started >= WAKE_WINDOW_SECONDS:
                 break
         self._waking = False
         self.connection_status = not_woken_status(name)
         self.logger.warning("%s did not answer within %.0fs of the wake-on-LAN packet", name, WAKE_WINDOW_SECONDS)
-        self._alert("Beamer", tr("{name} did not wake").format(name=name))
+        self._alert(brand.APP_NAME, tr("{name} did not wake").format(name=name))
 
     def _peer_up(self, link, fields):
         super()._peer_up(link, fields)

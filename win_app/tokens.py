@@ -1,4 +1,4 @@
-"""Beamer's design tokens: the Vernier direction.
+"""FLOW's design tokens: Beamer's Vernier system in FLOW's red (4MSER // NÚCLEO).
 
 This file is the one home for every colour, size, face and spring both apps draw with. The Mac app
 reads it through the root theme.py; win_app/tokens.py is a byte-identical copy because PyInstaller
@@ -6,9 +6,9 @@ only bundles what sits under the app, and win_app's tests fail if the two drift.
 copy it across.
 
 `signal` is the one colour that means something is happening: the link is up, input is on Windows,
-pressure is building, a permission is granted. The mock used lime; it was swapped for cockpit cyan
-at build time because lime on near-black is the stock developer-tool look, and B612 Mono is a
-cockpit face. Reverting is this one value and `signal_dim`, in both palettes.
+pressure is building, a permission is granted. In FLOW it is the brand red, so `fault` moved to
+orange and `amber` to yellow to keep a failure from reading as success. Beamer used cockpit cyan;
+reverting is `signal`, `signal_dim`, `fault` and `amber` in both palettes.
 
 PALETTE is the dark settings window and PALETTE_LIGHT the light one, the same names in the same
 roles, chosen by the `appearance` setting. The crossing effects and PALETTES take the dark `signal`
@@ -16,58 +16,59 @@ whatever the window shows: they draw on the desktop, not on the window.
 """
 
 PALETTE = {
-    "ground": "#0e0f0d",
-    "panel": "#161714",
-    "well": "#1f201c",
-    "rule": "#2a2b26",
-    "edge": "#6e6f66",
-    "ink": "#efeee6",
-    "ink_2": "#b3b2a7",
-    "ink_3": "#8f8e84",
-    "signal": "#5fd4f4",
-    "signal_dim": "#1f4a55",
-    "amber": "#f2b544",
+    "ground": "#060405",
+    "panel": "#0f0b0c",
+    "well": "#1b1416",
+    "rule": "#2b2124",
+    "edge": "#77686c",
+    "ink": "#f4f5f7",
+    "ink_2": "#bfb6b9",
+    "ink_3": "#968b8f",
+    "signal": "#ef4444",
+    "signal_dim": "#4d1519",
+    "amber": "#f2c94c",
     "resistance_flash": "#b77a00",
-    "fault": "#ff7a66",
-    "off": "#4a4b44",
+    "fault": "#ff9a52",
+    "off": "#4a4144",
 }
 
-# Measured WCAG ratios, for whoever changes a value: ink on panel 15.5, ink_2 on panel 8.4, ink_3 on
-# panel 5.5, edge on panel 3.5 (control boundaries), signal on panel 10.4, ground on signal 11.1,
-# amber on panel 9.8, fault on panel 7.1.
+# Measured WCAG ratios, for whoever changes a value: ink on panel 17.9, ink_2 on panel 9.9 and on
+# well 9.2, ink_3 on panel 6.0 and on well 5.5, edge on panel 3.7 and on well 3.4 (control
+# boundaries), signal on panel 5.2, ground on signal 5.4, ink on signal_dim 13.4, amber on panel
+# 12.3, fault on panel 9.3.
 
 # Paper rather than the dark palette turned over: modules are lighter than the window, as in the dark
 # one, so a module still lifts off the ground and a well still sets a control apart from its module.
 # signal keeps its hue but drops to a depth that carries text on paper and a ground-coloured glyph on
-# itself. Measured WCAG ratios: ink on panel 16.4, ink_2 on panel 9.1 and on well 7.5, ink_3 on
-# panel 5.6 and on well 4.6, edge on panel 3.9 and on well 3.2, signal on panel 5.9 and on ground 5.4,
-# ground on signal 5.4, ink on signal_dim 12.3, amber on panel 5.4, fault on panel 5.8.
+# itself. Measured WCAG ratios: ink on panel 17.2, ink_2 on panel 9.8 and on well 8.0, ink_3 on
+# panel 6.2 and on well 5.1, edge on panel 4.3 and on well 3.5, signal on panel 5.6 and on ground 5.1,
+# ground on signal 5.1, ink on signal_dim 12.0, amber on panel 5.9, fault on panel 5.7.
 PALETTE_LIGHT = {
-    "ground": "#f1f0ea",
-    "panel": "#fbfaf6",
-    "well": "#e5e4dc",
-    "rule": "#dcdbd3",
-    "edge": "#7f7e74",
-    "ink": "#1b1c18",
-    "ink_2": "#46463f",
-    "ink_3": "#66655c",
-    "signal": "#006a88",
-    "signal_dim": "#bfe0ea",
-    "amber": "#8f5c00",
+    "ground": "#f3f1f0",
+    "panel": "#fcfbfa",
+    "well": "#e8e4e3",
+    "rule": "#ddd8d7",
+    "edge": "#7f7578",
+    "ink": "#1b1718",
+    "ink_2": "#47403f",
+    "ink_3": "#665d5f",
+    "signal": "#c81e1e",
+    "signal_dim": "#f6caca",
+    "amber": "#7d5d00",
     "resistance_flash": "#b55f00",
-    "fault": "#b53522",
-    "off": "#aeada3",
+    "fault": "#a84600",
+    "off": "#b0a9aa",
 }
 
 # The `appearance` setting on both apps: follow the system, or keep one palette.
 APPEARANCES = ("system", "light", "dark")
 
-UI_FAMILY = "Hanken Grotesk"
-MONO_FAMILY = "B612 Mono"
+UI_FAMILY = "Space Grotesk"
+MONO_FAMILY = "IBM Plex Mono"
 FONT_FILES = (
-    "HankenGrotesk-Variable.ttf",
-    "B612Mono-Regular.ttf",
-    "B612Mono-Bold.ttf",
+    "SpaceGrotesk-Variable.ttf",
+    "IBMPlexMono-Regular.ttf",
+    "IBMPlexMono-Bold.ttf",
 )
 
 # Points on the Mac, logical pixels on Windows. The `_narrow` sizes apply at the 640 minimum width.

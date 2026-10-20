@@ -2264,8 +2264,9 @@ class Sidebar:
         self.word.set(state.word, ink=state.tone)
         self.peer.set(peer)
         if connected:
-            response = f"Response time: {response_time_ms} ms" if response_time_ms is not None else "Response time: —"
-            spoken_response = response if response_time_ms is not None else "Response time: no fresh measurement"
+            response = (tr("Response time: {ms} ms").format(ms=response_time_ms) if response_time_ms is not None
+                        else tr("Response time: —"))
+            spoken_response = response if response_time_ms is not None else tr("Response time: no fresh measurement")
         else:
             response = spoken_response = ""
         self.response_time.set(response)

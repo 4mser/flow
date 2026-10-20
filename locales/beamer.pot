@@ -1540,6 +1540,10 @@ msgstr ""
 msgid "Input on another machine"
 msgstr ""
 
+#: mac_app/kvm_bridge_app.py
+msgid "Built on Beamer by Kalkman Code"
+msgstr ""
+
 #: mac_app/kvm_bridge_app.py win_app/kvm_bridge_win.py
 msgid "About Beamer"
 msgstr ""
@@ -1886,7 +1890,7 @@ msgid "Beamer is using the config on disk."
 msgstr ""
 
 #: mac_app/kvm_bridge_app.py
-msgid "Open Beamer's website, kalkmancode.co.uk/beamer"
+msgid "Open FLOW on GitHub, github.com/4mser/flow"
 msgstr ""
 
 #: mac_app/kvm_bridge_app.py win_app/kvm_bridge_win.py
@@ -2426,8 +2430,8 @@ msgstr ""
 #: mac_app/kvm_bridge_app.py
 #, python-brace-format
 msgid ""
-"Beamer {version}\n"
-"Beamer's website"
+"FLOW {version}\n"
+"FLOW on GitHub"
 msgstr ""
 
 #: mac_app/kvm_bridge_app.py win_app/kvm_bridge_win.py
@@ -3868,6 +3872,14 @@ msgstr ""
 msgid "Add a key or button that stays on this Mac"
 msgstr ""
 
+#: mac_app/widgets.py
+msgid "Response time: —"
+msgstr ""
+
+#: mac_app/widgets.py win_app/widgets.py
+msgid "Response time: no fresh measurement"
+msgstr ""
+
 #. {key} is the key combination recorded by the person.
 #: mac_app/widgets.py
 #, python-brace-format
@@ -3893,6 +3905,11 @@ msgstr ""
 #: mac_app/widgets.py
 #, python-brace-format
 msgid "{name}  ⌘{key}"
+msgstr ""
+
+#: mac_app/widgets.py win_app/widgets.py
+#, python-brace-format
+msgid "Response time: {ms} ms"
 msgstr ""
 
 #. {name} is a settings page name.
@@ -4163,7 +4180,7 @@ msgid "Send input to another machine"
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
-msgid "Beamer's website"
+msgid "FLOW on GitHub"
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
@@ -4447,6 +4464,10 @@ msgid "Machines drive this PC"
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
+msgid "About FLOW"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
 msgid "On this PC"
 msgstr ""
 
@@ -4592,7 +4613,7 @@ msgstr ""
 
 #: win_app/kvm_bridge_win.py
 #, python-brace-format
-msgid "<b>Beamer {version}</b><br>One keyboard and mouse for all your Macs and PCs.<br><br><a href=\"{url}\" style=\"color: {colour};\">{link}</a>"
+msgid "<b>FLOW {version}</b><br>One keyboard and mouse for all your Macs and PCs.<br><br><a href=\"{url}\" style=\"color: {colour};\">{link}</a><br>Built on <a href=\"{beamer}\" style=\"color: {colour};\">Beamer</a> by Kalkman Code"
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
@@ -4603,7 +4624,7 @@ msgstr ""
 #: win_app/kvm_bridge_win.py
 #, python-brace-format
 msgid ""
-"Beamer {version}\n"
+"FLOW {version}\n"
 "{link}"
 msgstr ""
 
@@ -5158,11 +5179,11 @@ msgid "Cannot switch — the desktop did not let Beamer send input to {name}"
 msgstr ""
 
 #: win_app/widgets.py
-msgid "Response time: no fresh measurement"
+msgid "Response time: disconnected"
 msgstr ""
 
 #: win_app/widgets.py
-msgid "Response time: disconnected"
+msgid "Response: —"
 msgstr ""
 
 #: win_app/widgets.py
@@ -5173,6 +5194,21 @@ msgstr ""
 #: win_app/widgets.py
 #, python-brace-format
 msgid "{name}, {choice}"
+msgstr ""
+
+#: win_app/widgets.py
+#, python-brace-format
+msgid "Response time to {peer}: {ms} ms"
+msgstr ""
+
+#: win_app/widgets.py
+#, python-brace-format
+msgid "Response time to {peer}: no fresh measurement"
+msgstr ""
+
+#: win_app/widgets.py
+#, python-brace-format
+msgid "Response: {ms} ms"
 msgstr ""
 
 #: win_app/widgets.py

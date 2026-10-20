@@ -24,6 +24,7 @@ import crossing
 import desktop_mac
 from input_injector_mac import INJECTED_MARK
 import gestures
+from core import brand
 from core import idle_pointer
 from core import ignored
 from core import crossing_state
@@ -1015,7 +1016,7 @@ class KVMController:
 
     def _announce_shortcut_skips(self, skipped):
         for ident in skipped:
-            self._alert("Beamer", tr("Skipped {name}: not connected.").format(name=self._name_of(ident)))
+            self._alert(brand.APP_NAME, tr("Skipped {name}: not connected.").format(name=self._name_of(ident)))
 
     def _link_of(self, peer):
         """The link to `peer`, up or not; None when this Mac has none to it."""
@@ -1409,7 +1410,7 @@ class KVMController:
         link = self._peers_up.get(peer) if peer else None
         if link is None or not link.live():
             self.logger.warning("cannot redirect: %s is not connected", self._name_of(peer) if peer else "the other machine")
-            self._alert("Beamer", tr("Cannot switch — {status}").format(status=self._cannot_reach(peer)))
+            self._alert(brand.APP_NAME, tr("Cannot switch — {status}").format(status=self._cannot_reach(peer)))
             return False
         if self.receiving:
             # Driven, so this Mac sends its owner home first and drives once the owner has let go
@@ -2789,7 +2790,7 @@ class KVMController:
             text = tr(WHY_TEXT[moved.why]).format(name=name)
         if text is not None:
             self.logger.warning("%s; input returned to this Mac", text)
-            self._alert("Beamer", text)
+            self._alert(brand.APP_NAME, text)
         if moved.why == "switch":
             self._arrive(moved.edge, moved.offset, moved.display, moved.side, moved.left)
 
@@ -2833,7 +2834,7 @@ class KVMController:
         if text is None:
             text = tr(WHY_TEXT.get(why, N_("{name} could not be reached"))).format(name=name)
         self.logger.warning("%s", text)
-        self._alert("Beamer", text)
+        self._alert(brand.APP_NAME, text)
 
     # The clipboard (WIRE.md section 5)
 
@@ -3034,7 +3035,7 @@ class KVMController:
             link.drop(reason)
         self.logger.error("%s; connection dropped and input forced local", reason)
         if was_redirecting:
-            self._alert("Beamer", tr("Input returned to this Mac"))
+            self._alert(brand.APP_NAME, tr("Input returned to this Mac"))
 
     def _drain_outbound(self):
         while True:

@@ -172,8 +172,9 @@ class DesignTileMeasurements(unittest.TestCase):
                 self.assertEqual(tile.selection_mark.bounds().size.width, 16)
                 data = bytes(rep.bitmapData())
                 channels = rep.samplesPerPixel()
-                near_signal = sum(max(data[offset:offset + 3]) - min(data[offset:offset + 3]) > 70
-                                  and data[offset + 2] > data[offset] + 50
+                # Near the theme's own signal colour, whatever hue the brand gives it.
+                signal = tuple(int(theme.T["signal"][i:i + 2], 16) for i in (1, 3, 5))
+                near_signal = sum(max(abs(data[offset + c] - signal[c]) for c in range(3)) < 40
                                   for offset in range(0, len(data), channels))
                 with self.subTest(dark=dark):
                     self.assertGreater(near_signal, 80)

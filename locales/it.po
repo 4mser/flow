@@ -1548,6 +1548,10 @@ msgstr "Input bloccato su questo Mac; il passaggio è disattivato"
 msgid "Input on another machine"
 msgstr "Input su un altro computer"
 
+#: mac_app/kvm_bridge_app.py
+msgid "Built on Beamer by Kalkman Code"
+msgstr "Basato su Beamer di Kalkman Code"
+
 #: mac_app/kvm_bridge_app.py win_app/kvm_bridge_win.py
 msgid "About Beamer"
 msgstr "Informazioni su Beamer"
@@ -1911,8 +1915,8 @@ msgid "Beamer is using the config on disk."
 msgstr "Beamer usa la configurazione salvata sul disco."
 
 #: mac_app/kvm_bridge_app.py
-msgid "Open Beamer's website, kalkmancode.co.uk/beamer"
-msgstr "Apri il sito di Beamer, kalkmancode.co.uk/beamer"
+msgid "Open FLOW on GitHub, github.com/4mser/flow"
+msgstr "Apri FLOW su GitHub, github.com/4mser/flow"
 
 # New in 1.5.5: awaiting Lorenzo's check
 #: mac_app/kvm_bridge_app.py win_app/kvm_bridge_win.py
@@ -2473,11 +2477,11 @@ msgstr "Controllato da {name}"
 #: mac_app/kvm_bridge_app.py
 #, python-brace-format
 msgid ""
-"Beamer {version}\n"
-"Beamer's website"
+"FLOW {version}\n"
+"FLOW on GitHub"
 msgstr ""
-"Beamer {version}\n"
-"Sito di Beamer"
+"FLOW {version}\n"
+"FLOW su GitHub"
 
 #: mac_app/kvm_bridge_app.py win_app/kvm_bridge_win.py
 #, python-brace-format
@@ -3928,6 +3932,14 @@ msgstr "Scegli una combinazione di tasti"
 msgid "Add a key or button that stays on this Mac"
 msgstr "Aggiungi un tasto o un pulsante che resta su questo Mac"
 
+#: mac_app/widgets.py
+msgid "Response time: —"
+msgstr "Tempo di risposta: —"
+
+#: mac_app/widgets.py win_app/widgets.py
+msgid "Response time: no fresh measurement"
+msgstr "Tempo di risposta: nessuna misura recente"
+
 #. {key} is the key combination recorded by the person.
 #: mac_app/widgets.py
 #, python-brace-format
@@ -3954,6 +3966,11 @@ msgstr "Cifra {n}"
 #, python-brace-format
 msgid "{name}  ⌘{key}"
 msgstr "{name}  ⌘{key}"
+
+#: mac_app/widgets.py win_app/widgets.py
+#, python-brace-format
+msgid "Response time: {ms} ms"
+msgstr "Tempo di risposta: {ms} ms"
 
 #. {name} is a settings page name.
 #: mac_app/widgets.py
@@ -4225,8 +4242,8 @@ msgid "Send input to another machine"
 msgstr "Invia input a un altro computer"
 
 #: win_app/kvm_bridge_win.py
-msgid "Beamer's website"
-msgstr "Sito di Beamer"
+msgid "FLOW on GitHub"
+msgstr "FLOW su GitHub"
 
 #: win_app/kvm_bridge_win.py
 msgid "Receiver stopped"
@@ -4513,6 +4530,10 @@ msgid "Machines drive this PC"
 msgstr "Gli altri computer controllano questo PC"
 
 #: win_app/kvm_bridge_win.py
+msgid "About FLOW"
+msgstr "Informazioni su FLOW"
+
+#: win_app/kvm_bridge_win.py
 msgid "On this PC"
 msgstr "Su questo PC"
 
@@ -4662,8 +4683,8 @@ msgstr "Salvataggio non riuscito"
 
 #: win_app/kvm_bridge_win.py
 #, python-brace-format
-msgid "<b>Beamer {version}</b><br>One keyboard and mouse for all your Macs and PCs.<br><br><a href=\"{url}\" style=\"color: {colour};\">{link}</a>"
-msgstr "<b>Beamer {version}</b><br>Una sola tastiera e un solo mouse per tutti i tuoi Mac e PC.<br><br><a href=\"{url}\" style=\"color: {colour};\">{link}</a>"
+msgid "<b>FLOW {version}</b><br>One keyboard and mouse for all your Macs and PCs.<br><br><a href=\"{url}\" style=\"color: {colour};\">{link}</a><br>Built on <a href=\"{beamer}\" style=\"color: {colour};\">Beamer</a> by Kalkman Code"
+msgstr "<b>FLOW {version}</b><br>Una tastiera e un mouse per tutti i tuoi Mac e PC.<br><br><a href=\"{url}\" style=\"color: {colour};\">{link}</a><br>Basato su <a href=\"{beamer}\" style=\"color: {colour};\">Beamer</a> di Kalkman Code"
 
 #: win_app/kvm_bridge_win.py
 #, python-brace-format
@@ -4673,10 +4694,10 @@ msgstr "Pronto sulla porta TCP {port}"
 #: win_app/kvm_bridge_win.py
 #, python-brace-format
 msgid ""
-"Beamer {version}\n"
+"FLOW {version}\n"
 "{link}"
 msgstr ""
-"Beamer {version}\n"
+"FLOW {version}\n"
 "{link}"
 
 #: win_app/kvm_bridge_win.py
@@ -5233,12 +5254,12 @@ msgid "Cannot switch — the desktop did not let Beamer send input to {name}"
 msgstr "Impossibile passare: il desktop non ha consentito a Beamer di inviare input a {name}"
 
 #: win_app/widgets.py
-msgid "Response time: no fresh measurement"
-msgstr "Tempo di risposta: nessuna misura recente"
-
-#: win_app/widgets.py
 msgid "Response time: disconnected"
 msgstr "Tempo di risposta: disconnesso"
+
+#: win_app/widgets.py
+msgid "Response: —"
+msgstr "Risposta: —"
 
 #: win_app/widgets.py
 #, python-brace-format
@@ -5249,6 +5270,21 @@ msgstr "{name}, {key}"
 #, python-brace-format
 msgid "{name}, {choice}"
 msgstr "{name}, {choice}"
+
+#: win_app/widgets.py
+#, python-brace-format
+msgid "Response time to {peer}: {ms} ms"
+msgstr "Tempo di risposta con {peer}: {ms} ms"
+
+#: win_app/widgets.py
+#, python-brace-format
+msgid "Response time to {peer}: no fresh measurement"
+msgstr "Tempo di risposta con {peer}: nessuna misura recente"
+
+#: win_app/widgets.py
+#, python-brace-format
+msgid "Response: {ms} ms"
+msgstr "Risposta: {ms} ms"
 
 #: win_app/widgets.py
 #, python-brace-format
