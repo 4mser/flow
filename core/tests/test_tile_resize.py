@@ -183,6 +183,9 @@ assert (dropped["settings"]["layout"][resized]["w"],
 print("old reader, receive_picture and drop kept resized tile at 240x150")
 '''
         for revision in self.revisions:
+            # FLOW: Beamer publishes squashed history, so a fork may not hold these releases.
+            if not _has_revision(revision):
+                self.skipTest(f"revision {revision} is not in this repository's history")
             with self.subTest(revision=revision), tempfile.TemporaryDirectory(dir=ROOT) as temp:
                 archive = subprocess.run(
                     ["git", "archive", revision, "core"], cwd=ROOT, check=True,
@@ -196,6 +199,11 @@ print("old reader, receive_picture and drop kept resized tile at 240x150")
                                         text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("kept resized tile at 240x150", result.stdout)
+
+
+def _has_revision(revision):
+    return subprocess.run(["git", "cat-file", "-e", f"{revision}^{{commit}}"], cwd=ROOT,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
 if __name__ == "__main__":

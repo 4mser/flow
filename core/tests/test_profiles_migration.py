@@ -213,6 +213,10 @@ class MigrationCoreTests(unittest.TestCase):
 
 class DowngradeCompatibilityTests(unittest.TestCase):
     def _frozen_153(self, folder):
+        # FLOW: Beamer publishes squashed history, so a fork may not hold the 1.5.3 release.
+        if subprocess.run(["git", "cat-file", "-e", "be9661d1^{commit}"], cwd=ROOT,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+            self.skipTest("revision be9661d1 is not in this repository's history")
         archive = subprocess.run(
             ["git", "archive", "be9661d1", "core", "win_app", "mac_app"],
             cwd=ROOT, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
