@@ -1,542 +1,136 @@
-<p align="center"><img src="Beamer.svg" width="96" height="96" alt=""></p>
-<h1 align="center">Beamer</h1>
-<p align="center">One keyboard and one mouse or trackpad for Macs, Windows PCs and Linux machines on the same network, in either direction.</p>
 <p align="center">
-  <a href="https://github.com/kalkman-code/beamer/releases/latest"><img src="https://img.shields.io/github/v/release/kalkman-code/beamer" alt="Latest release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/kalkman-code/beamer" alt="Licence"></a>
-  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platforms: macOS, Windows and Linux">
-  <a href="https://github.com/kalkman-code/beamer/releases"><img src="https://img.shields.io/github/downloads/kalkman-code/beamer/total" alt="Downloads"></a>
+  <img src="assets/flow/hero.svg" width="100%" alt="FLOW: one keyboard and mouse, every machine. Mac, Windows and Linux, encrypted and direct, built on Beamer by Kalkman Code">
 </p>
-<p align="center">Made by Toby George Read Kalkman, <a href="https://kalkmancode.co.uk">Kalkman Code</a>.</p>
 
-![The pointer is pushed against the right-hand edge of a Mac's screen, the edge lights up as the push builds, and the pointer carries on onto the Windows PC beside it at the same height](assets/beamer-crossing.gif)
+<p align="center">
+  <a href="README.es.md"><b>Leer en español</b></a> &nbsp;·&nbsp;
+  <a href="#-07-built-on-beamer"><b>Built on Beamer</b></a> &nbsp;·&nbsp;
+  <a href="WIRE.md"><b>Wire protocol</b></a> &nbsp;·&nbsp;
+  <a href="SECURITY.md"><b>Security</b></a>
+</p>
 
-Push the pointer off the edge of the screen and it carries on onto the other machine, the way it
-would onto a second monitor. Or double-tap a key. The clipboard comes with you, your shortcuts
-still work, and what you type never leaves your network.
+FLOW turns the computers on your desk into one workspace. Push the pointer off the edge of your Mac and it carries on onto the PC beside it, keyboard, shortcuts and clipboard included. Machines talk to each other directly over your network, encrypted, with no account and no server in between.
 
-## Download
+FLOW started as my own Rust prototype for sharing a clipboard between PCs. The hard part, capturing input at the operating system level and handing it across safely, was never going to be quick to get right. [Beamer](https://github.com/kalkman-code/beamer) by Toby Kalkman had already done it, carefully and in the open. So FLOW is now a fork of Beamer: everything Beamer does, plus the idea FLOW was born with. **Several people, several machines, one desk, and every hand in its own colour.**
 
-Free, with no account. Mac, Windows and Linux downloads are on the [releases page](https://github.com/kalkman-code/beamer/releases/latest). Linux uses Flatpak; there is no AppImage.
+<p align="center">
+  <img src="assets/flow/crossing.gif" width="100%" alt="A pointer pushes against the right edge of a MacBook until the edge glows, crosses onto a Windows PC at the same height, and a red tag with the name Nico's MacBook follows it there while the PC says Driven by Nico's MacBook">
+</p>
 
-| Platform | Get it | Notes |
-|---|---|---|
-| macOS 13 or later, Apple silicon or Intel | `Beamer-<version>.dmg` | One universal app, signed and notarised by Apple |
-| Windows 10 and 11 | `Beamer-Setup-<version>.exe` | Code-signed; see step 1 below |
-| Linux, 64-bit x86 and arm64 (Flatpak) | [Install from the Kalkman Code repository](https://flatpak.kalkmancode.co.uk/beamer.flatpakref); `Beamer-<version>-x86_64.flatpak` and `Beamer-<version>-aarch64.flatpak` are available as an offline alternative | Tested on Fedora 44 GNOME under Wayland; KDE Plasma is experimental and not yet tested on real hardware; X11 is not yet verified |
+### `// 01` What you get
 
-### Install on Linux
+| | |
+|---|---|
+| **Push through the edge** | The pointer leaves through the edge that faces the other machine and arrives at the same point along the border. The edge resists, lights up as you push, and gives. |
+| **Or press a key** | Double-tap or hold a trigger key to switch without moving the pointer. Shake the mouse to come home. |
+| **Either way round** | The Mac drives the PC, the PC drives the Mac. Macs drive Macs, PCs drive PCs. One switch per direction. |
+| **The clipboard comes with you** | Text and images, both ways, at the moment you cross. |
+| **Your shortcuts still work** | Between a Mac and Windows, Cmd becomes Ctrl and Option becomes Alt, so Cmd+C copies on the PC too. |
+| **Media keys and gestures** | Play, pause and volume cross. Three and four finger swipes on the Mac's trackpad drive Task View and virtual desktops on Windows. |
+| **Several machines** | Pair each machine with the others and arrange them on a map: edges, parts of an edge, corners, even the MacBook's notch. |
+| **Encrypted and direct** | Pair once with a six-digit code. Every link after that is end to end encrypted, with fresh keys each time. |
+| **The visitor badge** *(new in FLOW)* | While another machine drives yours, a tag in that machine's colour follows the pointer and says whose hand it is. |
 
-Beamer for Linux is a Flatpak for 64-bit x86 and arm64. There is no AppImage. Fedora, Linux
-Mint, Pop!_OS and other distributions with Flatpak can install it with one command:
+Mac (macOS 13 or later), Windows 10 and 11, and Linux as a Flatpak (tested on GNOME under Wayland; KDE and X11 still experimental). Free and open source under GPL-3.0.
 
-```sh
-flatpak install --user https://flatpak.kalkmancode.co.uk/beamer.flatpakref
-```
+### `// 02` Push through the edge
 
-Flatpak asks to add the Kalkman Code repository and fetches the KDE runtime from Flathub. The
-runtime download is a few hundred megabytes the first time only.
+This is the part that makes it feel right, and it comes straight from Beamer. Touching the edge does nothing on its own. Pushing past it builds pressure, which drains away when you stop, so the pointer never jumps to the other screen by accident on its way to a scroll bar. Keep pushing and the edge gives: the pointer lands on the other machine at the same height, with a short arrival so you never hunt for it.
 
-On Ubuntu 24.04 or later and Debian 13 or later, install Flatpak first, then log out and back in
-or restart, then run the install command:
+- **Pick the stretch.** A whole edge, only part of it, a corner, or up through the notch.
+- **Pick how hard.** Resistance is a setting, from a light touch to a deliberate shove.
+- **Pick the look.** Glow, Beam and Aperture, or the full effects (Membrane, Sparks, Instrument, Folio, Selvedge) with colour packs, size, length and frame rate.
+- **It stays out of the way.** A drag that reaches the edge stays a drag, and a full-screen app can hold its edges.
 
-```sh
-sudo apt install flatpak
-```
+The model is pure and tested on its own: [`core/return_edge.py`](core/return_edge.py).
 
-```sh
-flatpak install --user https://flatpak.kalkmancode.co.uk/beamer.flatpakref
-```
-
-Older Ubuntu and Debian releases cannot send input out under Wayland because they lack the
-InputCapture portal; use an X11 session there. On Wayland, allow both desktop prompts: the first
-lets Beamer send input and the second lets it receive input. Start Beamer from the app menu; the
-Flatpak cannot start at sign-in yet. Update with `flatpak update` or your software centre's update
-tool, like any Flatpak.
-
-If you installed an earlier downloaded bundle, remove it first; your settings are kept:
-
-```sh
-flatpak uninstall --user uk.co.kalkman.beamer
-flatpak install --user https://flatpak.kalkmancode.co.uk/beamer.flatpakref
-```
-
-The downloadable `Beamer-<version>-x86_64.flatpak` and `Beamer-<version>-aarch64.flatpak` bundles
-remain available from the [releases page](https://github.com/kalkman-code/beamer/releases/latest)
-as an offline alternative; the repository picks the right one for your machine by itself.
-
-## Quick start
-
-1. **Install on every machine.** On the Mac, drag Beamer to Applications, open it, and press the
-   two Grant buttons on the Permissions page (Accessibility, then Input Monitoring), then Relaunch
-   Beamer on the same page: macOS only passes keys to an app started after the grant, so until then
-   the pointer crosses but the keyboard does not. On Windows,
-   run the installer. Since 1.5.8 it is code-signed, so Windows names the publisher instead of
-   "Unknown publisher". Windows may still say "Windows protected your PC" until the installer has
-   built a download reputation: choose More info, then Run anyway.
-   Beamer on Windows runs as administrator, so expect one UAC prompt when you open it. On Linux,
-   follow [Install on Linux](#install-on-linux) to install Beamer from the Kalkman Code repository.
-2. **Pair them.** On one machine, choose Pair a machine to show a six-digit code. On the other,
-   choose that machine from the list and enter the code. It lasts a minute and works once. Or choose
-   Pair nearby on both machines, compare the six digits shown on each, and confirm on both. If the
-   machine does not appear in the list, enter the address shown with its code on the other machine.
-3. **Cross.** Push the pointer through the edge you set, or use the shortcut. On Wayland, an edge
-   sends input out and the shortcut brings it back. The other machine's keyboard and pointer come
-   with it. Cross back through the edge or use the shortcut again.
-
-That is all most people need. The edge, the keys and everything else can be changed in each
-machine's settings.
-
-## Screenshots
-
-In your own appearance: light if your GitHub is light, dark if it is dark.
+### `// 03` Clipboard and pairing
 
 <table>
-<tr><th>Mac</th><th>Windows</th></tr>
-<tr><td><picture><source media="(prefers-color-scheme: light)" srcset="assets/mac-overview-light.png"><img src="assets/mac-overview-dark.png" width="400" alt="Beamer's Overview page on the Mac: the pairing buttons, Pair nearby first, and a card for each paired machine, a desktop PC, a laptop and a Linux box, each showing it is linked, with an In use switch and Rename, Leave out, Directions and Remove buttons"></picture></td><td><picture><source media="(prefers-color-scheme: light)" srcset="assets/windows-overview-light.png"><img src="assets/windows-overview-dark.png" width="400" alt="Beamer's Overview page on Windows: the pairing buttons, Pair nearby first, and a card for each paired machine, a Mac, a laptop and a Linux box, each showing it is linked, with an In use switch and Rename, Directions, Leave out and Remove buttons"></picture></td></tr>
-<tr><td><picture><source media="(prefers-color-scheme: light)" srcset="assets/mac-crossing-light.png"><img src="assets/mac-crossing-dark.png" width="400" alt="Beamer's Crossing page on the Mac: a map with this Mac in the middle, a laptop to its left, a desktop PC to its right and a Linux box below, each edge lit where the pointer crosses, and a ledger of how each machine is reached, its edges and corners as chips"></picture></td><td><picture><source media="(prefers-color-scheme: light)" srcset="assets/windows-crossing-light.png"><img src="assets/windows-crossing-dark.png" width="400" alt="Beamer's Crossing page on Windows: a map with this PC in the middle, a Mac to its left, a laptop to its right and a Linux box below, each edge lit where the pointer crosses, and a ledger of how each machine is reached, its edges and corners as chips"></picture></td></tr>
-<tr><td><picture><source media="(prefers-color-scheme: light)" srcset="assets/mac-design-light.png"><img src="assets/mac-design-dark.png" width="400" alt="Beamer's Design page on the Mac: switches to animate crossings on this Mac and show where the pointer lands, a choice of style for crossing or for the shortcut and menu, shown at the edge, a corner or the notch, and a Light section of preview tiles"></picture></td><td><picture><source media="(prefers-color-scheme: light)" srcset="assets/windows-design-light.png"><img src="assets/windows-design-dark.png" width="400" alt="Beamer's Design page on Windows: switches to animate crossings on this PC and show where the pointer lands, a choice of style for crossing or for the shortcut and menu, shown at the edge or a corner, and a Light section of preview tiles"></picture></td></tr>
+  <tr>
+    <td width="50%"><img src="assets/flow/clipboard.gif" width="100%" alt="A command is selected and copied with Cmd C on the MacBook, the pointer crosses to the Windows PC, and Ctrl V pastes it into PowerShell"></td>
+    <td width="50%"><img src="assets/flow/pairing.gif" width="100%" alt="The Windows PC shows the code 482 913, the MacBook types it into six boxes, both show Paired, and sealed frames flow between them labelled X25519 and ChaCha20-Poly1305"></td>
+  </tr>
+  <tr>
+    <td><b>Copy on one, paste on the other.</b> The clipboard travels with the pointer when you cross, not before and not to everyone: only the machine you are on gets it.</td>
+    <td><b>Six digits once, encrypted every time.</b> One machine shows a code for a minute, the other types it. The code never travels; both sides prove they know it (CPace).</td>
+  </tr>
 </table>
 
-## What it does
+### `// 04` Multiplayer: the vision
 
-- **Push through the edge.** Off the edge that faces the other machine, only along the parts of it
-  you pick, through a corner, or up through the MacBook's notch. The pointer arrives at the same
-  point along the border, on the right display however your monitors are stacked or staggered. The
-  edge lights up as you push, and the trackpad ticks as the push builds. If Windows or macOS briefly
-  cannot report the pointer position, Beamer skips that moment and keeps crossing (GitHub #9).
-- **See where you land.** A switch by the key or a menu plays a short arrival around the pointer on
-  the machine that takes over, so you never hunt for it.
-- **Or press a key.** Double-tap or hold a trigger key to switch without moving the pointer. Right
-  Option on the Mac and Right Ctrl on the PC to start with; on either machine it can be any key
-  that types nothing, recorded by pressing it.
-- **Shake to come home.** While you drive another machine, a quick shake of this machine's mouse or
-  trackpad brings input straight back. Shake sensitivity sets how much movement it takes.
-- **Either way round.** The Mac drives the PC and the PC drives the Mac. Each machine has a switch
-  per direction, so you can turn one way off and keep the other. Macs can drive Macs, and Windows
-  PCs can drive Windows PCs, too.
-- **Pair them clearly.** Pair a machine and Pair nearby are at the top of Overview. Pair nearby
-  shows six digits to compare and confirm on both machines.
-- **Three machines.** Pair each machine with the others in the group. A chain needs a direct
-  pairing between every pair of machines in it.
-- **The clipboard comes with you.** Text and images, both ways, at the moment you switch. Files
-  stay where they are.
-- **Your shortcuts still work.** Between a Mac and Windows, Cmd becomes Ctrl and Option becomes
-  Alt, so Cmd+C copies there too. The PC gets the reverse. Between two Macs or two PCs, each key
-  arrives as the same physical key. On Windows, you can also choose a Mac keyboard layout, where
-  Alt acts as Command and the Windows key acts as Option.
-- **Media keys follow you.** Play, pause, skip, mute and volume cross between supported machines.
-  While input is on a Windows laptop, the Mac's brightness keys change that laptop's built-in
-  screen; the keyboard-backlight keys stay on the Mac.
-- **Keys and buttons that stay put.** Each machine keeps a list of keys and mouse buttons that keep
-  working where they were pressed while its input is on the other one: a mouse's back button for
-  this machine's browser, a volume key for its speakers. Add one by pressing it. The back and
-  forward side buttons cross in both directions otherwise.
-- **Mac gestures on Windows.** Three or four fingers up for Task View, down for the desktop, left
-  and right to change virtual desktop, all from the Mac's trackpad.
-- **Make it yours.** Glow, Beam and Aperture, or effects in Membrane, Sparks, Instrument, Folio and
-  Selvedge, each with colour packs of its own. Set the effect's Size and Length, the MacBook notch
-  as an outline or an island with a meter, how hard you push before it crosses, and whether settings
-  windows follow the system's light or dark appearance. Choose Match display, Half or Quarter for
-  the effect frame rate. Beam fades softly inward from the edge.
-- **Feels like your own.** Each machine sets how the other's pointer moves and scrolls on it, from
-  25% to 400%, and can reverse its scrolling, so a Mac trackpad and a PC mouse each feel right on
-  the other screen.
-- **Hide the pointer on the machine not in use.** On by default, it hides the pointer left behind
-  until that machine's own mouse or trackpad moves it, or a machine drives it again, and a PC or
-  Linux machine under X11 hides its own pointer while it drives another. Wayland does not allow apps
-  to hide the pointer.
-- **See where input is.** The Windows and Linux tray icon shows whether input is here, on another
-  machine or held here while crossing is paused, like the Mac menu bar icon.
-- **Out of the way when it should be.** On macOS and Windows, you can choose whether a full-screen
-  app on each machine holds its edges; it is off by default, and shortcuts still work. A drag that
-  reaches the edge stays a drag. Switch to a machine that is asleep and Beamer wakes it, where that
-  machine answers wake-on-LAN: a PC usually does, a MacBook on Wi-Fi usually does not.
-- **Keep settings in step.** Same on all machines shares resistance, drag protection, Shortcut,
-  effect style, colour, length, size and landing animation with compatible paired machines. Zones,
-  jump keys, full-screen hold, whether effects animate, and window appearance stay local.
-- **One desk, several profiles.** Same ways on every machine shares the crossing ways between
-  1.5.5 machines, so you can set up any machine from the one in front of you and keep up to eight
-  named profiles. Machine tiles on the Crossing map resize, so different screen sizes line up.
-- **In Italian too.** Language on the Connection page picks Automatic, English or Italiano.
-- **Match design.** Follow one paired machine's style, colour, length, size and landing animation.
-  Changing one of those here stops following. Animation enable and window appearance stay local.
-- **A more responsive settings window.** Mac resizing and scrolling stay smooth, the Design grid
-  fills the window, and Windows and Linux settings layouts use their space more clearly.
-- **Your network, nobody else's.** No server in the middle. Paired machines talk to each other
-  directly, encrypted, and you pair them once with a six-digit code. The only thing that ever goes
-  further is a once-a-day check of GitHub's public releases for a newer version, which you can
-  switch off on Overview. More in [SECURITY.md](SECURITY.md).
-- **Free and open source.** No account, no subscription, GPL-3.0.
+<p align="center">
+  <img src="assets/flow/multiplayer.gif" width="100%" alt="Vision: one shared screen with three pointers on it at once, a red one labelled Nico, a blue one labelled Ana and a green one labelled Tomás, each pinging a different card, with their machines listed below">
+</p>
 
-## Settings
+A KVM moves one person's input between machines. FLOW wants the other thing too: several people at their own machines, all visible on the screen that matters right now, each pointer in its owner's colour with their name beside it. Point at a line on a colleague's screen without taking their mouse away. Walk someone through a setting while they keep control.
 
-Each machine has its own settings window and makes its own choices about how input leaves it.
-Both sidebars end with the version and a link to kalkmancode.co.uk/beamer, and both menus have
-About Beamer.
+An operating system has one real pointer, and Beamer's rule that a machine obeys one owner at a time is what keeps input safe. So FLOW builds multiplayer in layers, never by fighting that rule:
 
-| Page | Mac | Windows |
+| Step | What it does | Status |
 |---|---|---|
-| Overview | Paired machines, where input is, the links and their round trips, Send input and Pause crossing, a switch per direction, Same on all machines, start at login, the update check | Paired machines, where input is, the links and their round trips, Send input and Pause crossing, a switch per direction, Same on all machines, start at sign-in, the update check |
-| Permissions | Accessibility and Input Monitoring, with Relaunch Beamer | None; the firewall check is on Connection |
-| Crossing | A map of the arrangement and a ledger of edge and corner chips for each machine, plus the notch and Return through the notch, with its jump key, full-screen hold, resistance and shortcut | A map of the arrangement and a ledger of edge and corner chips for each machine, with its jump key, full-screen hold, resistance and shortcut |
-| Keyboard | Key mapping, what stays on this Mac, each peer's pointer and scroll speed | Key mapping, including a Mac layout, what stays on this PC, each peer's pointer and scroll speed |
-| Design | Crossing and switch styles, colours, Size and Length, Frame rate, landing animation, Match design, notch and trackpad controls, window appearance (System, Light or Dark) | Crossing and switch styles, colours, Size and Length, Frame rate, landing animation, Match design, window appearance (System, Light or Dark) |
-| Connection | Hide addresses, a peer's address, port and pairing details | Whether Windows Firewall lets a peer in, with a one-button fix; hide addresses; this PC's address, port and pairing details |
+| **Visitor badge** | While another machine drives yours, the real pointer carries a tag with that machine's name and colour. Same colour on every machine, derived from its id, so nothing new goes on the wire. | Built for Mac and Windows, waiting for hardware testing |
+| **Your colour** | Choose the colour your machine shows on others, shared with the rest of the settings. | Next |
+| **Ghost pointers** | Press a key and your mouse drives a pointer of your colour on another screen, while its owner keeps their own pointer. It points; it never clicks. | Designed: a new message type, ignored by stock Beamer |
+| **Presence** | See who is linked, who is driving what, and where everyone's pointer is, at a glance. | Idea |
+| **Files** | Send a file to the machine you are on, over the same encrypted link. | Idea, from FLOW's first prototype |
 
-Each machine sets its own zones and the machine beyond each one. These settings stay local even
-when Same on all machines is on.
+New messages ride the same encrypted link and are announced as capabilities, and the wire protocol says a peer ignores message types it does not know. So a FLOW machine can keep pairing and crossing with stock Beamer 1.5.x while it learns new tricks.
 
-## Known limits
+### `// 05` How it works
 
-- **The Windows secure desktop cannot be driven.** UAC prompts, Ctrl+Alt+Del and the lock screen
-  refuse input from any app by design, and Ctrl+Alt+Del cannot be sent at all. Use the PC's own
-  keyboard there.
-- **Files do not cross**, only text and images, up to 256KB of text and an 8MB image.
-- **AltGr is out of reach from the Mac.**
-- **Linux on Wayland has fewer controls.** Its limits are listed under [Linux](#linux).
-- **Linux gestures are not supported.**
-- **SmartScreen may still warn.** The Windows installer is code-signed from 1.5.8, but SmartScreen
-  can show "Windows protected your PC" until it has built a download reputation; choose More
-  info, then Run anyway.
+| Piece | How | Where |
+|---|---|---|
+| **Capture** | A Quartz event tap on the Mac. Low-level hooks plus Raw Input on Windows, so a push still measures at the very edge. libei and the InputCapture portal on Wayland. Injected events are marked so they never come back around. | [`mac_app/bridge.py`](mac_app/bridge.py), [`win_app/capture_win.py`](win_app/capture_win.py) |
+| **Crossing** | Screens, zones and the pressure model, the same on every platform, as pure functions of the pointer, the deltas and a clock. | [`core/return_edge.py`](core/return_edge.py), [`core/ways.py`](core/ways.py) |
+| **Ownership** | One owner per machine at a time, a route number so a late request can never move input that has already moved, and every held key released when ownership ends. | [`core/owner.py`](core/owner.py), [WIRE.md §4–5](WIRE.md) |
+| **The link** | TCP between peers. X25519 per link, HKDF-SHA-256 over the pairing token, ChaCha20-Poly1305 frames with strict counters, one key per direction. Forward secret, no server. | [`core/protocol.py`](core/protocol.py), [WIRE.md §2](WIRE.md) |
+| **Pairing** | CPace (X25519, SHA-512) with a six-digit code shown on one machine and typed on the other; it gives each pair of machines its own token. | [`core/pairing.py`](core/pairing.py), [PAIRING.md](PAIRING.md) |
+| **Safety** | If a link drops or an acknowledgement is late, input comes home on its own. A hook never blocks. | [`core/link.py`](core/link.py) |
+| **Visitor badge** | Who owns this machine, turned into a tag that follows the pointer. | [`core/visitor.py`](core/visitor.py), [`mac_app/visitor_badge.py`](mac_app/visitor_badge.py), [`win_app/visitor_badge_win.py`](win_app/visitor_badge_win.py) |
 
-## In detail
+The protocol is written down well enough to build a second implementation: [WIRE.md](WIRE.md), [PAIRING.md](PAIRING.md) and [SECURITY.md](SECURITY.md).
 
-<details>
-<summary><strong>Connection states</strong></summary>
+### `// 06` Build from source
 
-These examples use a Mac connected to a Windows PC. Beamer names the other machine in each status,
-and reports the mirror status at the other end.
+FLOW has no releases of its own yet, and the app still installs under Beamer's name while the rename is under way. Both builds need Python 3.
 
-| Status | Meaning |
-|---|---|
-| `Connected to <address>:<port>` | The encrypted link is up and the protocol versions match. |
-| `<machine> is reachable, but Beamer is not listening on this port.` | The other machine answered but nothing accepted the TCP port. |
-| `<machine> could not be authenticated — check the shared token matches on both sides` | The two derived different keys. The tokens differ. |
-| `<machine> is unreachable from this Mac` | Nothing got as far as Beamer or the firewall. Check Wi-Fi client isolation, the other machine's network, and that the Mac can resolve its address. |
-| `<machine> did not answer the handshake — it is probably running an older Beamer; update it` | An older Beamer may not understand the current connection. |
-| `<machine> speaks Beamer protocol vN, this machine vM — update both apps` | The wire versions differ. The version travels in cleartext at the start of the connection, so a mismatch says so rather than hanging. |
-| `<machine> stopped responding` | No ping or acknowledgement for about two seconds. |
+**Mac.** Double-click `mac_app/Install-Beamer-Mac.command`. It builds a self-contained app and installs it in `/Applications`. Open it and grant Accessibility and Input Monitoring on the Permissions page, then relaunch from the same page.
 
-Both ends notice a dead link within a few seconds. The receiver enforces a read timeout and the
-sender pings while idle; the machine holding input takes it back when the link is lost.
-
-A dropped connection, a missing acknowledgement, a crashed capture worker or a full event queue
-returns input to the machine at once. A watchdog catches a half-open connection and retries it.
-
-</details>
-
-<details>
-<summary><strong>Crossing</strong></summary>
-
-Push the pointer at the outer edge and it does not move: the push builds as pressure, the edge
-lights up, the trackpad ticks at each quarter, and once you have pushed far enough the boundary
-gives. The resistance is the point. An edge that switches the instant you touch it does so every
-time you overshoot a close button. The default is 120 points; zero switches on contact.
-
-| Way in | Where it triggers | Mac | Windows |
-|---|---|---|---|
-| Shortcut | Double-tap the trigger key, or hold it | Yes | Yes |
-| Edge | An edge chip in the ledger; a machine can have several. At a touching edge, only the shared span crosses; a free edge can wrap round | Yes | Yes |
-| Corner | A corner chip in the ledger; a machine can have several. Each is an 8pt box needing a diagonal push | Yes | Yes |
-| Notch | The top edge, only within the notch's width | Yes | No |
-
-Edges and corners are chips in each machine's ledger, and each machine can have several of each. A
-touching edge crosses only along the span where the screens meet; a free edge can wrap round to
-another machine. On the Mac, Shortcut and the right-hand edge are on to start with. On Linux under
-Wayland, the shortcut only brings input back; the desktop only lets it go to another machine at an edge.
-
-- The notch has no pixels to light, so a push there draws on the notch itself. Outline, the default,
-  runs a comet of light round a small tab under the notch that brightens and speeds up with the
-  push. Island springs a black island out of the notch with a four-segment meter; with Reduce
-  Motion on it stays one size and fades with the push.
-- An edge counts wherever no display of the same machine lies beyond it, so an edge between two
-  displays behaves as the system intends, and the edge of a MacBook under a wider external display
-  still crosses.
-- The pointer arrives where it left: 42% of the way down the Mac's right edge is 42% of the way
-  down the PC's left edge, on whichever monitor owns it.
-- On macOS and Windows, crossing does not fire while a mouse button is held, so a drag that reaches
-  the edge stays a drag. On Wayland, the desktop can capture a drag at the edge.
-- The full-screen hold is off by default. When enabled on macOS or Windows, a full-screen app on
-  that screen holds pointer crossings; it does not apply to Beamer's own window. Shortcuts and jump
-  keys still work. Wayland cannot detect a full-screen app.
-- Only one machine's input is on another at a time. The receiving machine can send it home or pass
-  it on through one of its own configured zones. If its driver sends no input for three seconds,
-  another machine can take over.
-- A machine's own switch, menu or shortcut sends input home. On Wayland, the shortcut only brings
-  input back.
-- Switching to a sleeping PC sends wake-on-LAN when that PC supports it.
-
-Each machine's menu lists its peers and the directions it can drive. Turning one direction off
-leaves the other direction alone.
-
-</details>
-
-<details>
-<summary><strong>Keys, buttons and media keys</strong></summary>
-
-For a Mac-to-Windows pair, Mac modifiers map to Windows by meaning, so the shortcuts your fingers
-know keep working. The Mac's Keyboard page can switch this to positional, where Cmd sends the
-Windows key. Mac-to-Mac and Windows-to-Windows pairs keep each physical key in place.
-
-| Mac key | Sends on Windows |
-|---|---|
-| Cmd | Ctrl |
-| Ctrl | Windows key |
-| Option | Alt |
-
-So Cmd+C, Cmd+V, Cmd+Z and Cmd+T are copy, paste, undo and new tab, Ctrl+E opens Explorer and Ctrl
-on its own opens Start. The PC's keys arrive on the Mac the reverse way. Chords with Ctrl, Alt or
-Windows held are sent as real virtual-key presses, so they land on the right key for the active
-Windows keyboard layout. The Mac reads its own layout too, so on a German or French Mac Cmd+Z is
-still undo and Cmd+A still selects all, and a letter typed from the PC lands on the key that types
-it. When the two machines are on layouts of different alphabets, say the PC on Russian and the Mac
-on English, a letter types what the receiving machine's own layout has on that key, as its own
-keyboard would, and shortcuts keep working. The `key_map` object in each app's config JSON can
-still override single keys.
-
-The trigger key is never forwarded on macOS and Windows. It is recorded by pressing it: Right
-Option on the Mac and Right Ctrl on Windows to start with. Either can double-tap or hold.
-
-The stays-here list is per machine, because a Mac keycode and a Windows virtual key are different
-numbers for the same key. It takes keys, the right, middle, back and forward mouse buttons, and on
-the Mac its media keys. A listed press stays on the machine it was pressed on while input is away;
-its release goes wherever its press went, so nothing is ever left held down on the far side. The
-trigger key cannot be added.
-
-The Mac's F7–F12 media row and volume keys cross as play/pause, next, previous, mute and volume.
-On the Mac they arrive as system events rather than key events and are captured separately
-(`mac_app/media_keys.py`). The keyboard-backlight keys stay with macOS; the brightness keys reach a
-Windows laptop's built-in screen.
-
-Ctrl+Alt+Del is the Secure Attention Sequence, trapped by the kernel before any app sees it.
-`SendInput` cannot produce it, and `SendSAS()` needs a Windows service or a signed `uiAccess` app
-installed under Program Files, which Beamer is not.
-
-</details>
-
-<details>
-<summary><strong>Gestures</strong></summary>
-
-Trackpad scrolling is smooth and horizontal scrolling works on Windows. While input is on Windows,
-the Mac's system gestures do the equivalent thing there and nothing on the Mac:
-
-| Mac gesture | On Windows |
-|---|---|
-| Three or four fingers up (Mission Control) | Task View |
-| Three or four fingers down (App Exposé) | Show desktop |
-| Three or four fingers left or right (Spaces) | Switch virtual desktop, the same way round |
-| Thumb and three fingers spread (Show desktop) | Show desktop |
-| Thumb and three fingers pinched (Launchpad) | Start |
-
-A two-finger pinch and a two-finger swipe between pages are not passed to the other machine yet.
-
-The Mac classifies a system gesture when it ends and sends one message. The PC replays it as a real
-swipe through a synthetic Precision Touchpad, so Windows' own touchpad settings apply and Task View
-animates as it would under fingers. Where Windows refuses that device, it presses the shortcut with
-the same default meaning instead (Win+Tab, Win+D, Win+Ctrl+Left/Right, Win). Direction comes from
-private macOS event fields, keyed by macOS major version in `mac_app/gestures.py`, because the
-horizontal sign has flipped between releases.
-
-</details>
-
-<details>
-<summary><strong>Clipboard</strong></summary>
-
-The clipboard moves at the moment of a switch, ahead of the switch itself: switching to another
-machine carries the current machine's clipboard, and switching back carries the other machine's. Where it
-holds both an image and text, both cross and the pasting app picks. The caps keep the switch
-prompt: 256KB of text and an 8MB image as PNG. Over a cap, that half is left alone rather than
-truncated. The PC converts to and from the Windows clipboard's DIB format itself, using the Qt it
-already ships. A switch sends the clipboard only when it has changed since it last crossed, so a
-large image is not re-sent every time.
-
-</details>
-
-<details>
-<summary><strong>Latency</strong></summary>
-
-If both machines are on Wi-Fi, every event crosses the air twice, through the access point.
-Ethernet on either machine removes a hop. Where Wi-Fi is unavoidable, 5GHz or 6GHz and turning off
-power saving on the PC's adapter both help.
-
-Beamer sends every event at once (TCP_NODELAY). Acknowledgements are coalesced over 15ms so a
-100Hz stream of moves cannot double the packet count, with an idle heartbeat every 400ms. Settings
-show the measured round trip while input is on another machine.
-
-</details>
-
-<details>
-<summary><strong>Security</strong></summary>
-
-Wire version 6 combines each paired token with a fresh X25519 exchange to derive directional keys
-with HKDF-SHA256. Frames are sealed with ChaCha20-Poly1305. Pairing agrees a token with CPace, a
-password-authenticated key exchange, from the six-digit code. What that does and does not protect against is in
-[SECURITY.md](SECURITY.md).
-
-</details>
-
-<details>
-<summary><strong>Update check</strong></summary>
-
-Once a day, and at start, Beamer asks GitHub's public releases API for the latest release of this
-repository and compares its version with its own. A new minor or major version is always offered;
-a patch release (1.5.0 to 1.5.1) only when its release notes ask for it, so a run of small fixes
-does not nag. Drafts and pre-releases never count and nothing is downloaded. When a newer one is out, the menu says Beamer X is available and Overview offers a
-Download button that opens the release page. The request is an ordinary HTTPS request, so GitHub
-sees the address it came from, as it would for a browser. Switch it off with Check for updates on
-Overview.
-
-</details>
-
-<details>
-<summary><strong>Windows specifics</strong></summary>
-
-The installer puts Beamer in `%LOCALAPPDATA%\Beamer` for the current user with a Start menu
-shortcut. Quit Beamer from the tray before installing a newer version over it; only one instance
-runs at a time.
-
-Beamer runs elevated (its exe carries a `requireAdministrator` manifest), because Windows silently
-drops input from a non-elevated app aimed at an elevated window such as an admin PowerShell. Start
-Beamer when you sign in, on Overview, writes and removes an elevated `Beamer` logon task; nothing
-else touches autostart.
-
-Beamer needs two inbound rules on Private networks: TCP 24820 for input and UDP 24821 for pairing,
-both below the range Windows and macOS hand out for themselves. The app adds them on its first
-elevated start. Connection says in one sentence whether the Mac can get in and offers one
-button for whichever of three things usually stops it: the rule is missing (it adds it), Cancel was
-pressed on Windows' own "allow this app" prompt, which writes a block rule that beats any allow rule
-(it removes the block and adds the rule), or the network is classed as public (it marks the network
-private rather than opening the port on every public network).
-
-**The lock screen.** No elevation lets an app type there: it is the Winlogon secure desktop, which
-admits only SYSTEM. On a PC with the author's separate unlock credential provider installed (not
-part of this repository), switching to a locked PC signals that provider, which unlocks it in about
-four seconds; input sent meanwhile is dropped. Beamer only signals the provider and never holds a
-password. Without it, the Mac reports `Windows is locked — unlock it at the PC`.
-
-</details>
-
-<a id="linux"></a>
-<details>
-<summary><strong>Linux</strong></summary>
-
-Linux support has been tested on GNOME; KDE Plasma support is experimental. There is no AppImage. Install the Flatpak, for 64-bit x86 or arm64, from the
-Kalkman Code repository using [Install on Linux](#install-on-linux). The arm64 build has so far only
-been started in a virtual machine, not on arm64 hardware. To build it yourself, follow [the Flatpak
-instructions](docs/flatpak-build.md). On one Fedora 44 GNOME desktop under Wayland, paired with a
-Mac and a Windows PC, the window and tray, pairing, crossing both ways, typing and the clipboard
-work, and crossings show their effect through XWayland. X11 runs with Beamer's keyboard, pointer, pairing and clipboard features, but has not
-been tested on real hardware. Flatpak fetches the KDE runtime from Flathub if it is not already
-present. Beamer targets GNOME and KDE Plasma under Wayland and X11. KDE Plasma support is
-experimental and has not been tested on real hardware: KDE Wayland needs Plasma 6.1.1 or later
-with the matching host portal, and the clipboard needs Plasma 6.6 or later.
-
-On Wayland, the desktop limits what Beamer can do:
-
-- “On Wayland the shortcut only brings input back: the desktop lets input go to another machine only
-  when the pointer pushes through an edge, and keys on the Stays on this PC list cannot stay here
-  while input is away.”
-- “On Wayland Beamer cannot see a full-screen app, or a mouse button held before the pointer reaches
-  an edge, so the edges are never held for one and a drag can cross.”
-- Without XWayland, or if drawing through it fails, Beamer says: “On Wayland the desktop does not let
-  Beamer draw at the edges of the screen, so crossings show no effect on this machine. The other
-  machines still show theirs.”
-
-Older Ubuntu and Debian releases lack the InputCapture portal, so they cannot send input out under
-Wayland; use an X11 session there. Linux does not offer gestures. KDE Plasma awaits hardware
-testing. On KDE Wayland, partly exposed sides in staggered monitor layouts are unavailable;
-use a completely exposed monitor edge. The Flatpak's start-at-sign-in toggle remains unavailable.
-
-</details>
-
-<details>
-<summary><strong>Building from source</strong></summary>
-
-On the Mac, double-click `mac_app/Install-Beamer-Mac.command`. It builds a self-contained app,
-installs it at `/Applications/Beamer.app`, and leaves it closed so the permission prompts do not
-appear unexpectedly.
-
-On Windows, run `win_app\Install-Beamer.ps1` from an admin PowerShell. It builds and installs
-`%LOCALAPPDATA%\Beamer\Beamer.exe`, adds a Start menu shortcut and the two firewall rules. From a
-non-admin PowerShell it still installs but skips the rules, which the app adds on its first
-elevated start.
-
-Pairing is the easy path, not the only one: each Connection page still takes an address, port and
-shared token typed by hand, and they must match on both machines.
-
-</details>
-
-<details>
-<summary><strong>Development checks</strong></summary>
-
-From `mac_app`:
-
-```sh
-.venv/bin/python3 -m unittest discover -s tests -t .. -v
-./build_dmg.sh
-```
-
-From `win_app`:
+**Windows.** From an admin PowerShell:
 
 ```powershell
-python -m unittest discover -s tests -v
-.\build_win_app.ps1
+win_app\Install-Beamer.ps1
 ```
 
-A local Mac build is signed with the release's Developer ID identity when the login keychain can
-reach it, so privacy grants carry between local builds and releases, and ad-hoc otherwise (over
-SSH), under the hardened runtime either way. It is not notarised.
+It installs the app, a Start menu shortcut and the two firewall rules.
 
-What both apps run the same way (`protocol.py`, `pairing.py`, `receiver.py`, `return_edge.py`, the
-crossing effects and others) lives once in `core/`, which both apps import and both packagers
-bundle; `core/tests` runs inside each app's suite. Linux uses the Windows app's Qt shell and its
-Linux back ends, packaged as a Flatpak. `tokens.py` is still copied into `win_app`, and a
-test fails if the two drift. `Beamer.svg` is the master of the mark, and `Beamer.ico`, `Beamer.png` and
-`Beamer.icns` are rendered from it.
-
-</details>
-
-<details>
-<summary><strong>Release builds</strong></summary>
-
-The version lives once, in `VERSION` at the repository root; the Mac build number is the commit
-count. Change `VERSION`, commit, then build each platform from that commit. Both commands refuse
-uncommitted changes outside `docs/`, upload nothing except the Mac's notary submissions, and write
-to `docs/beamer-releases/<version>/` in the folder that contains the repository.
-
-On the Mac, from `mac_app`, in a desktop session (the keychain will not release a Developer ID
-identity over SSH):
+**Tests.** About 3,300 on the Mac side and 3,400 on the Windows side, with the shared `core/` suite running inside each.
 
 ```sh
-./build_dmg.sh --release
+cd mac_app && .venv/bin/python3 -m unittest discover -s tests -t ..
 ```
-
-It signs every nested binary with Developer ID under the hardened runtime with a secure timestamp,
-checks the bundle still runs, notarises and staples the app, then the DMG, and checks both with
-`stapler validate` and `spctl`. Notarisation uses the App Store Connect API key named in
-`~/.appstoreconnect/key_id`.
-
-On Windows, from `win_app`:
 
 ```powershell
-.\build_win_app.ps1 -Release
+cd win_app; python -m unittest discover -s tests
 ```
 
-It runs the tests, builds `Beamer.exe` and compiles `Beamer-Setup.iss` with Inno Setup 6 into
-`Beamer-Setup-<version>.exe`. The installer adds no firewall rules and leaves autostart off.
+Everything about installing, Linux, settings, known limits and troubleshooting is in Beamer's own guide, kept whole in [docs/BEAMER.md](docs/BEAMER.md).
 
-</details>
+### `// 07` Built on Beamer
 
-## Licence and support
+FLOW is a fork of **[Beamer](https://github.com/kalkman-code/beamer)** 1.5.8, written and maintained by **Toby George Read Kalkman** ([Kalkman Code](https://kalkmancode.co.uk/beamer)). Beamer is free software under GPL-3.0, and almost everything in this repository is his work: input capture on three platforms, the crossing engine and its effects, pairing, the encrypted link, the settings apps and the documentation.
 
-GPL-3.0; see [LICENSE](LICENSE). Releases up to and including 1.2.0 were MIT.
+What FLOW adds or changes is listed in the history of this repository, starting after the commit `Beamer 1.5.8`. If you only need a great software KVM, use Beamer: it has signed releases for Mac, Windows and Linux. Bug reports about anything Beamer does belong upstream, and the plan is for FLOW to keep following Beamer's releases.
 
-Beamer is free and made by one person. Issues are welcome and read, but there is no guarantee of a
-reply. Before a pull request, read [CONTRIBUTING.md](CONTRIBUTING.md). Report security problems privately, as [SECURITY.md](SECURITY.md) describes. Home page:
-[kalkmancode.co.uk/beamer](https://kalkmancode.co.uk/beamer).
+Earlier FLOW, the Rust prototype with mDNS discovery and file transfer, lives on at [4mser/flow-legacy](https://github.com/4mser/flow-legacy).
 
-A bug report is far easier to act on with each machine's log attached. Open log folder in each
-machine's menu opens it: `~/Library/Logs/Beamer/Beamer.log` on the Mac and
-`%LOCALAPPDATA%\Beamer\Beamer.log` on Windows.
-They hold your machines' names and local network addresses, so look them over before posting.
+### `// 08` License
+
+GPL-3.0-only, like Beamer. See [LICENSE](LICENSE). Copyright for Beamer stays with Toby Kalkman; FLOW's changes are © 2026 Nicolás Moreno, under the same license.
+
+The animations in this README are illustrations rendered frame by frame from HTML, not screen recordings. Icons in them are from [Lucide](https://lucide.dev) (ISC); type is Space Grotesk and IBM Plex Mono (SIL OFL 1.1).
+
+<p align="center">
+  <img src="assets/flow/footer.svg" width="100%" alt="FLOW, built on Beamer, GPL-3.0">
+</p>

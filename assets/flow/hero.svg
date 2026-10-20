@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="1200" height="420" role="img"><title>FLOW: one keyboard and mouse, every machine on your desk. Built on Beamer.</title><style>
+  .mono { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .sans { font-family: 'Space Grotesk', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+  .blink { animation: blink 1.6s steps(2, start) infinite; }
+  @keyframes blink { to { opacity: 0; } }
+  .flow { stroke-dasharray: 6 10; animation: dash 1.2s linear infinite; }
+  @keyframes dash { to { stroke-dashoffset: -32; } }
+  .glowA { animation: glowA 4.8s ease-in-out infinite; }
+  .glowB { animation: glowB 4.8s ease-in-out infinite; }
+  @keyframes glowA { 0%, 30% { opacity: 0; } 42% { opacity: .9; } 55%, 100% { opacity: 0; } }
+  @keyframes glowB { 0%, 50% { opacity: 0; } 58% { opacity: .9; } 72%, 100% { opacity: 0; } }
+  .badge { animation: badge 4.8s ease-in-out infinite; }
+  @keyframes badge { 0%, 52% { opacity: 0; } 60%, 92% { opacity: 1; } 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } .badge { opacity: 1; } }
+</style>
+<rect width="1200" height="420" rx="14" fill="#000000"/>
+<defs>
+  <radialGradient id="glow" cx="76%" cy="46%" r="42%"><stop offset="0" stop-color="#8b1015" stop-opacity=".42"/><stop offset="1" stop-color="#8b1015" stop-opacity="0"/></radialGradient>
+  <linearGradient id="trail" x1="0" x2="1"><stop offset="0" stop-color="#8b1015"/><stop offset="1" stop-color="#ff8a80"/></linearGradient>
+  <linearGradient id="glassA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a0d12"/><stop offset="1" stop-color="#070406"/></linearGradient>
+  <linearGradient id="glassB" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e0b10"/><stop offset="1" stop-color="#060305"/></linearGradient>
+  <linearGradient id="edgeA" x1="0" x2="1"><stop offset="0" stop-color="#ff8a80" stop-opacity="0"/><stop offset="1" stop-color="#ff8a80"/></linearGradient>
+  <linearGradient id="edgeB" x1="1" x2="0"><stop offset="0" stop-color="#ff8a80" stop-opacity="0"/><stop offset="1" stop-color="#ff8a80"/></linearGradient>
+  <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#1c1416" stroke-width="1"/></pattern>
+  <clipPath id="clip"><rect width="1200" height="420" rx="14"/></clipPath>
+  <path id="route" d="M776 222 C 826 198, 868 190, 905 192 L 935 192 C 968 193, 1000 200, 1020 210"/>
+</defs>
+<g clip-path="url(#clip)">
+  <rect width="1200" height="420" fill="url(#grid)"/>
+  <rect width="1200" height="420" fill="url(#glow)"/>
+  <rect x="0" y="0" width="1200" height="2" fill="#8b1015"/>
+
+  <!-- corner brackets -->
+  <path d="M32 62V32H62" fill="none" stroke="#5c2a2e" stroke-width="2"/>
+  <path d="M32 358V388H62" fill="none" stroke="#5c2a2e" stroke-width="2"/>
+  <path d="M1168 62V32H1138" fill="none" stroke="#5c2a2e" stroke-width="2"/>
+  <path d="M1168 358V388H1138" fill="none" stroke="#5c2a2e" stroke-width="2"/>
+
+  <!-- text -->
+  <text x="76" y="86" class="mono" font-size="16" letter-spacing="3.2" fill="#9aa3af">4MSER <tspan fill="#ff8a80">//</tspan> FLOW</text>
+  <text x="72" y="208" class="sans" font-size="112" font-weight="700" letter-spacing="-4" fill="#f4f5f7">FLOW<tspan fill="#ef4444" class="blink">_</tspan></text>
+  <text x="76" y="252" class="sans" font-size="25" fill="#e3e6ec">One keyboard and mouse. Every machine.</text>
+  <rect x="76" y="282" width="9" height="9" fill="#ef4444"/>
+  <text x="98" y="291" class="mono" font-size="16" fill="#c6ccd6">Mac · Windows · Linux</text>
+  <rect x="76" y="308" width="9" height="9" fill="#ef4444"/>
+  <text x="98" y="317" class="mono" font-size="16" fill="#c6ccd6">Encrypted, direct, no server</text>
+  <rect x="76" y="334" width="9" height="9" fill="#ef4444"/>
+  <text x="98" y="343" class="mono" font-size="16" fill="#c6ccd6">Built on Beamer by Kalkman Code</text>
+
+  <!-- two machines and the crossing -->
+  <g transform="translate(0,0)">
+    <rect x="720" y="128" width="190" height="130" rx="10" fill="#110c0d" stroke="#2e2224"/>
+    <rect x="728" y="136" width="174" height="114" rx="5" fill="url(#glassA)"/>
+    <rect x="890" y="136" width="12" height="114" rx="5" fill="url(#edgeA)" class="glowA" opacity="0"/>
+    <rect x="700" y="258" width="230" height="8" rx="4" fill="#1a1314"/>
+    <rect x="940" y="128" width="190" height="130" rx="10" fill="#110c0d" stroke="#2e2224"/>
+    <rect x="948" y="136" width="174" height="114" rx="5" fill="url(#glassB)"/>
+    <rect x="948" y="136" width="12" height="114" rx="5" fill="url(#edgeB)" class="glowB" opacity="0"/>
+    <rect x="1020" y="258" width="30" height="20" fill="#151011"/>
+    <rect x="985" y="278" width="100" height="6" rx="3" fill="#1a1314"/>
+    <use href="#route" fill="none" stroke="url(#trail)" stroke-width="2" class="flow" opacity=".7"/>
+    <!-- pointer: Lucide mouse-pointer-2 (ISC) -->
+    <g>
+      <animateMotion dur="4.8s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.2;0.62;1" calcMode="spline" keySplines="0 0 1 1;0.45 0 0.55 1;0 0 1 1"><mpath href="#route"/></animateMotion>
+      <g transform="translate(-4,-4)"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" fill="#ffffff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></g>
+      <g class="badge" opacity="0"><rect x="12" y="17" width="76" height="20" rx="6" fill="#ef4444"/><text x="50" y="31" text-anchor="middle" class="sans" font-size="11" font-weight="700" fill="#fff">MacBook</text></g>
+    </g>
+    <text x="725" y="306" class="mono" font-size="12" letter-spacing="2" fill="#9aa3af">MACBOOK</text>
+    <text x="945" y="306" class="mono" font-size="12" letter-spacing="2" fill="#9aa3af">WINDOWS PC</text>
+  </g>
+
+  <text x="76" y="382" class="mono" font-size="13" letter-spacing="2.4" fill="#6b7383">WIRE v6 · X25519 · CHACHA20-POLY1305 · GPL-3.0</text>
+</g>
+</svg>
