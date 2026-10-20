@@ -1120,7 +1120,7 @@ msgstr ""
 msgid "{name} has no way in: {other} already leads from the {side} edge of {here}. Give each its own thirds of that edge by moving the machines on the map, or move one to another side."
 msgstr ""
 
-#: core/ways.py mac_app/kvm_bridge_app.py win_app/pages_win.py
+#: core/ways.py mac_app/kvm_bridge_app.py win_app/kvm_bridge_win.py win_app/pages_win.py
 msgid "another machine"
 msgstr ""
 

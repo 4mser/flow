@@ -105,6 +105,8 @@ import tray_glyph
 import tokens
 from core import updates
 import widgets
+from visitor_badge_win import VisitorBadge
+from core import visitor
 
 QPushButton = widgets.ActionButton
 
@@ -561,6 +563,7 @@ class WindowsApplication(QWidget):
         self._veil_hwnd = 0
         self._driven = False
         self._idle_pointer = self._make_idle_pointer()
+        self._visitor_badge = None
         self.bridge.peers_changed.connect(self._on_peers_changed)
         self.bridge.arrangement.connect(self._on_arrangement)
         self.bridge.settings.connect(self._on_settings)
@@ -5084,6 +5087,7 @@ class WindowsApplication(QWidget):
         """A peer took input on this PC, or gave it back. Either way the outward edge follows:
         this PC's input is never here and elsewhere at once."""
         self.sender.set_receiving(bool(peer))
+        self._show_visitor(peer)
         was_driven, self._driven = self._driven, bool(peer)
         if self._idle_pointer is not None:
             if self._driven:
@@ -5091,6 +5095,20 @@ class WindowsApplication(QWidget):
             elif was_driven and not self._closing and self._hiding_pointer():
                 self._idle_pointer.driver_left()
         self._refresh_tray_state()
+
+    def _show_visitor(self, peer: str) -> None:
+        """FLOW's visitor badge: while a peer drives this PC, a tag in its colour with its name follows
+        the pointer."""
+        try:
+            name = peerlist.label_for(self._peer_entries, peer_id=peer) if peer else None
+            badge = visitor.badge_for(peer, self._shown(name or ""), tr("another machine"))
+            if badge is None and self._visitor_badge is None:
+                return
+            if self._visitor_badge is None:
+                self._visitor_badge = VisitorBadge()
+            self._visitor_badge.show_badge(badge)
+        except Exception:
+            LOGGER.exception("The visitor badge failed")
 
     def _on_peers_changed(self) -> None:
         """A link learnt something about a peer (an address, an id, a name, a hardware address) and

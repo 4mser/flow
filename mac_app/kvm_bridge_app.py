@@ -54,6 +54,7 @@ import login_item
 import machines
 import notices
 import pages
+import visitor_badge
 from core import updates
 from core import protocol
 from core import pairing
@@ -62,6 +63,7 @@ from core import settings_sync
 from core import ways as core_ways
 from core import crossing_state
 from core import profiles
+from core import visitor
 from settings_store import (
     SettingsError,
     SettingsStore,
@@ -5038,6 +5040,8 @@ class TrayApp(rumps.App):
         # with the arrangement the moment either link comes up.
         controller.announce = self._announce
         self.windows_input.settings_callback = self._settings
+        self.visitor_badge = visitor_badge.VisitorBadge(logger)
+        self.windows_input.visitor_callback = self._visitor
         controller.on_settings = self._settings
         self.windows_input.sync(controller.cfg)
         # Pairing, both ways: this Mac shows a code or enters one. `peers` and `store` run on the
@@ -5541,6 +5545,21 @@ class TrayApp(rumps.App):
                 self.effects_overlay.crossed_in()
         except Exception:
             self.logger.exception("arrival feedback failed")
+
+    def _visitor(self, driver):
+        """Another machine took input on this Mac, or gave it back: FLOW's visitor badge follows,
+        off the link's thread. The name is read here, while the peer list still has the driver."""
+        name = self.controller.driver_label if driver is not None else None
+        AppHelper.callAfter(self._visitor_main, driver, name)
+
+    def _visitor_main(self, driver, name):
+        try:
+            if driver != self.controller.driver:
+                # A later change is already on its way; that one decides.
+                return
+            self.visitor_badge.show(visitor.badge_for(driver, name, tr("another machine")))
+        except Exception:
+            self.logger.exception("visitor badge failed")
 
     def _show_landing(self, x, y):
         """Input came to this Mac by a switch rather than a crossing, and the pointer is at (x, y)

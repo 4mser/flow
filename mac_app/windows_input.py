@@ -50,6 +50,8 @@ class WindowsInput:
         self.detail = "Not listening"
         self.settings_callback = None
         self.paired_callback = None
+        # FLOW's visitor badge: called with the driver's id text, or None, after every ownership change.
+        self.visitor_callback = None
         self.server = LinkResponder(
             controller.book,
             controller.identity,
@@ -232,3 +234,5 @@ class WindowsInput:
         # The responder itself releases whatever the owner was holding before this fires.
         self._controller.driver = protocol.id_text(peer) if peer is not None else None
         self._controller.set_receiving(peer is not None)
+        if self.visitor_callback is not None:
+            self.visitor_callback(self._controller.driver)
