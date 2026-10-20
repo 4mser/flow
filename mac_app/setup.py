@@ -73,6 +73,9 @@ setup(
             # PyNaCl (nacl) ships a compiled _sodium extension reached through cffi; naming both
             # packages keeps their data files and submodules in the bundle.
             "packages": ["rumps", "cffi", "nacl"],
+            # Nothing here uses tkinter. python.org's 3.14 ships Tcl/Tk 9 frameworks holding static
+            # stub archives that codesign refuses, so bundling them stops the ad-hoc signing step.
+            "excludes": ["tkinter", "_tkinter"],
             # core/effects.py imports its fx_* modules by name at first use, which py2app's import
             # scan cannot see, so they are named here or the bundle ships without a single effect.
             # The rest of core/ is named too, through the repo root put on sys.path above, so a module

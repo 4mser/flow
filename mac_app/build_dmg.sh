@@ -116,7 +116,9 @@ for archive in "$APP"/Contents/Resources/lib/python3*.zip; do
     zip -q -d "$archive" '*/__pycache__/*' || [ $? -eq 12 ]
 done
 for packages in "$APP"/Contents/Resources/lib/python3.*/; do
-    .venv/bin/python3 -m compileall -q -d "lib/$(basename "$packages")" "$packages" >/dev/null
+    # Without the trailing slash: Python 3.14's compileall ignores -d for a directory given with one,
+    # and the code objects would name this Mac's path again.
+    .venv/bin/python3 -m compileall -q -d "lib/$(basename "$packages")" "${packages%/}" >/dev/null
 done
 /usr/libexec/PlistBuddy -c 'Delete :PythonInfoDict:PythonExecutable' "$APP/Contents/Info.plist"
 # Every Mach-O in the bundle must carry both architectures, or an Intel Mac (or an Apple silicon one
